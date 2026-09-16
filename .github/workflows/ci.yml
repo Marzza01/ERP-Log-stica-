@@ -1,0 +1,83 @@
+name: CI — MarketplaceERP
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  build-and-test:
+    name: Build & Test (.NET 8)
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout del código
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Configurar .NET 8
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # 3. Restaurar dependencias NuGet
+      - name: Restore NuGet packages
+        run: dotnet restore MarketplaceERP.sln
+
+      # 4. Build en modo Release
+      - name: Build solution
+        run: dotnet build MarketplaceERP.sln --no-restore --configuration Release
+
+      # 5. Ejecutar tests unitarios
+      - name: Run tests
+        run: dotnet test MarketplaceERP.sln --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./TestResults
+
+      # Publicar resultados de tests
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results
+          path: TestResults/*.trx
+          reporter: dotnet-trx
+
+  build-frontend:
+    name: Build Frontend (Node 20)
+    runs-on: ubuntu-latest
+
+    steps:
+      # 6. Checkout del código
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 7. Configurar Node.js 20
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/marketplace-ui/package-lock.json
+
+      # 8. Instalar dependencias npm
+      - name: Install npm dependencies
+        working-directory: frontend/marketplace-ui
+        run: npm ci
+
+      # 9. Build del frontend
+      - name: Build frontend
+        working-directory: frontend/marketplace-ui
+        run: npm run build
+
+      # Subir artefactos del build
+      - name: Upload frontend artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/marketplace-ui/dist/
+          retention-days: 7

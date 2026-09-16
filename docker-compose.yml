@@ -1,0 +1,55 @@
+services:
+  # ── PostgreSQL 15 ────────────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: marketplace_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: marketplace_erp
+      POSTGRES_USER: marketplace_user
+      POSTGRES_PASSWORD: marketplace_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketplace_user -d marketplace_erp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── API Backend (.NET 8) ──────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: src/MarketplaceERP.API/Dockerfile
+    container_name: marketplace_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=marketplace_erp;Username=marketplace_user;Password=marketplace_pass;Include Error Detail=true"
+      Jwt__Key: "DEV_ONLY_CLAVE_SECRETA_MINIMO_32_CARACTERES_AQUI!!"
+      Jwt__Issuer: "MarketplaceERP"
+      Jwt__Audience: "MarketplaceERP.Clients"
+      Jwt__ExpirationMinutes: "480"
+
+  # ── Frontend (React + Vite) ───────────────────────────────────────────────────
+  frontend:
+    build:
+      context: frontend/marketplace-ui
+      dockerfile: Dockerfile
+    container_name: marketplace_frontend
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:
+    driver: local
