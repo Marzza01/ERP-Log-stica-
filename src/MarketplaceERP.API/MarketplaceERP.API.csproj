@@ -26,4 +26,8 @@
     <ProjectReference Include="..\MarketplaceERP.Finance\MarketplaceERP.Finance.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\MarketplaceERP.Catalog\SeedData\**" Link="SeedData\%(RecursiveDir)%(FileName)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

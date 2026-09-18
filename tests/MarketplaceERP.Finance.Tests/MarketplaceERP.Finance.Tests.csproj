@@ -23,6 +23,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MarketplaceERP.Finance\MarketplaceERP.Finance.csproj" />
     <ProjectReference Include="..\..\src\MarketplaceERP.Shared\MarketplaceERP.Shared.csproj" />
+    <ProjectReference Include="..\..\src\MarketplaceERP.Core\MarketplaceERP.Core.csproj" />
+    <ProjectReference Include="..\..\src\MarketplaceERP.Catalog\MarketplaceERP.Catalog.csproj" />
   </ItemGroup>
 
 </Project>

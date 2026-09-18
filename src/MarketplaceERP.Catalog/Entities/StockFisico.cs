@@ -1,9 +1,9 @@
 namespace MarketplaceERP.Catalog.Entities;
 
 /// <summary>
-/// Stock físico disponible de un producto en el almacén.
+/// Stock físico disponible de un producto en el almacén central de LOGIMKT.
 /// Esquema DB: catalog.stock_fisico
-/// Relación 1:1 con Producto.
+/// Integra mapeo a WMS dinámico y control de alertas de reorden.
 /// </summary>
 public class StockFisico
 {
@@ -25,8 +25,25 @@ public class StockFisico
     /// </summary>
     public int CantidadDisponible => CantidadTotal - CantidadReservada;
 
+    /// <summary>
+    /// Punto de reorden / stock mínimo configurado
+    /// </summary>
+    public int PuntoReorden { get; set; } = 15;
+
+    /// <summary>
+    /// Alerta si el inventario actual cayó por debajo del punto de reorden
+    /// </summary>
+    public bool EsBajoMinimo => CantidadDisponible <= PuntoReorden;
+
+    /// <summary>
+    /// Ubicación física en el WMS
+    /// </summary>
+    public Guid? UbicacionAlmacenId { get; set; }
+    public string UbicacionCodigo { get; set; } = "PAS-A-RCK-01-NIV-01-POS-01";
+
     public DateTime UltimaActualizacion { get; set; } = DateTime.UtcNow;
 
     // Navegación
     public Producto Producto { get; set; } = null!;
+    public UbicacionAlmacen? UbicacionAlmacen { get; set; }
 }

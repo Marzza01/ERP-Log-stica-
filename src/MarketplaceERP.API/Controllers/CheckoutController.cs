@@ -69,11 +69,12 @@ public class CheckoutController : ControllerBase
         var orden = new Orden
         {
             Id = ordenId,
+            NumeroOrden = $"CHK-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(10000, 99999)}",
             CompradorId = compradorId,
             VendedorId = request.VendedorId,
             MontoTotal = montoTotal,
             Moneda = request.Moneda,
-            Estado = EstadoOrden.Creada,
+            Estado = EstadoOrden.Pendiente,
             FechaCreacion = DateTime.UtcNow,
             Items = new List<ItemOrden>
             {
@@ -105,8 +106,8 @@ public class CheckoutController : ControllerBase
             var resultado = await _orchestrator.ProcesarCheckoutAsync(command);
 
             // Actualizar estado de la orden
-            orden.Estado = EstadoOrden.Completada;
-            orden.FechaCompletada = DateTime.UtcNow;
+            orden.Estado = EstadoOrden.Entregada;
+            orden.FechaEntregaReal = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync();
 
             return Ok(resultado);
@@ -121,7 +122,7 @@ public class CheckoutController : ControllerBase
         }
         catch (PagoFallidoException ex)
         {
-            orden.Estado = EstadoOrden.PagoFallido;
+            orden.Estado = EstadoOrden.Cancelada;
             await _dbContext.SaveChangesAsync();
 
             _logger.LogWarning(ex, "Checkout fallido por pago rechazado. OrdenId={OrdenId}", ordenId);

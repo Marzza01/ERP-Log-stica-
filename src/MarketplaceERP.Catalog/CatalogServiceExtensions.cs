@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace MarketplaceERP.Catalog;
 
 /// <summary>
-/// Extensiones de inyección de dependencias para el módulo Catalog (Equipo 2).
+/// Extensiones de inyección de dependencias para el módulo Catalog (Célula A).
 /// Llamar desde Program.cs: builder.Services.AddCatalogServices(builder.Configuration)
 /// </summary>
 public static class CatalogServiceExtensions
@@ -24,8 +24,11 @@ public static class CatalogServiceExtensions
                 npgsql => npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "catalog")));
 
         // ── Servicios del módulo Catalog ──────────────────────────────────────
-        // TODO: Reemplazar StockServiceMock por StockService real
         services.AddScoped<IStockService, StockServiceMock>();
+        services.AddScoped<ICatalogImportService, CatalogImportService>();
+        services.AddScoped<IWmsService, WmsService>();
+        services.AddScoped<IRmaService, RmaService>();
+        services.AddScoped<IFulfillmentService, FulfillmentService>();
 
         return services;
     }

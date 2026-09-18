@@ -9,7 +9,7 @@ namespace MarketplaceERP.Finance;
 
 /// <summary>
 /// Extensiones de inyección de dependencias para el módulo Finance (Equipo 3).
-/// Llamar desde Program.cs: builder.Services.AddFinanceServices(builder.Configuration)
+/// Llame desde Program.cs: builder.Services.AddFinanceServices(builder.Configuration)
 /// </summary>
 public static class FinanceServiceExtensions
 {
@@ -23,12 +23,20 @@ public static class FinanceServiceExtensions
                 configuration.GetConnectionString("DefaultConnection"),
                 npgsql => npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "finance")));
 
-        // ── Servicios del módulo Finance ──────────────────────────────────────
-        // TODO: Reemplazar PagoServiceMock por integración real con pasarela
+        // ── Pasarela de pago (mock → reemplazar con integración real) ─────────
         services.AddScoped<IPaymentGateway, PagoServiceMock>();
 
-        // El orquestador del checkout se registra como Scoped
+        // ── Checkout ─────────────────────────────────────────────────────────
         services.AddScoped<CheckoutOrchestrator>();
+
+        // ── Procurement / 3-Way Match ─────────────────────────────────────────
+        services.AddScoped<ITresWayMatchingService, TresWayMatchingService>();
+
+        // ── Contabilidad General (Libro Diario / Mayor / Balance) ─────────────
+        services.AddScoped<IContabilidadService, ContabilidadService>();
+
+        // ── Liquidaciones a Vendedores (Split 90/10) ──────────────────────────
+        services.AddScoped<ILiquidacionService, LiquidacionService>();
 
         return services;
     }

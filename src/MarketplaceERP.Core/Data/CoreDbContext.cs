@@ -16,6 +16,7 @@ public class CoreDbContext : DbContext
     public DbSet<Comprador> Compradores => Set<Comprador>();
     public DbSet<Categoria> Categorias => Set<Categoria>();
     public DbSet<ReglaComision> ReglasComision => Set<ReglaComision>();
+    public DbSet<Proveedor> Proveedores => Set<Proveedor>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -82,6 +83,30 @@ public class CoreDbContext : DbContext
                   .WithMany(v => v.ReglasComision)
                   .HasForeignKey(r => r.VendedorId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Proveedor ─────────────────────────────────────────────────────────
+        modelBuilder.Entity<Proveedor>(entity =>
+        {
+            entity.ToTable("proveedores");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Id).ValueGeneratedOnAdd();
+            entity.Property(p => p.NombreComercial).HasMaxLength(200).IsRequired();
+            entity.Property(p => p.RazonSocial).HasMaxLength(250).IsRequired();
+            entity.Property(p => p.Nit).HasMaxLength(50);
+            entity.Property(p => p.Nrc).HasMaxLength(50);
+            entity.Property(p => p.ContactoPrincipal).HasMaxLength(150);
+            entity.Property(p => p.Email).HasMaxLength(254);
+            entity.Property(p => p.Telefono).HasMaxLength(30);
+            entity.Property(p => p.Direccion).HasMaxLength(300);
+            entity.Property(p => p.CategoriaSuministro).HasMaxLength(100);
+            entity.Property(p => p.PlazoCreditoDias).HasDefaultValue(30);
+            entity.Property(p => p.OtifHistorico).HasPrecision(5, 2).HasDefaultValue(95.0m);
+            entity.Property(p => p.Activo).HasDefaultValue(true);
+            entity.Property(p => p.FechaRegistro).HasDefaultValueSql("NOW()");
+
+            entity.HasIndex(p => p.NombreComercial);
+            entity.HasIndex(p => p.Nit);
         });
     }
 }

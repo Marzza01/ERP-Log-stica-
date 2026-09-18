@@ -99,4 +99,41 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
+// ── Auto-seeding del Catálogo de 500 Productos (LOGIMKT S.A. de C.V.) ──────────
+try
+{
+    using var scope = app.Services.CreateScope();
+    var catalogDb = scope.ServiceProvider.GetRequiredService<MarketplaceERP.Catalog.Data.CatalogDbContext>();
+    var importService = scope.ServiceProvider.GetRequiredService<MarketplaceERP.Catalog.Services.ICatalogImportService>();
+
+    if (catalogDb.Database.CanConnect() && !catalogDb.Productos.Any())
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation("Base de datos de catálogo vacía. Iniciando auto-seeding de los 500 SKUs...");
+
+        var defaultVendedorId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var defaultCategoriaId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
+        var posiblesRutas = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "SeedData", "Catalogo_500_Productos.csv"),
+            Path.Combine(Directory.GetCurrentDirectory(), "SeedData", "Catalogo_500_Productos.csv"),
+            Path.Combine(Directory.GetCurrentDirectory(), "..", "MarketplaceERP.Catalog", "SeedData", "Catalogo_500_Productos.csv")
+        };
+
+        string? rutaCsv = posiblesRutas.FirstOrDefault(File.Exists);
+        if (rutaCsv != null)
+        {
+            var res = importService.ImportarCatalogoDesdeArchivoAsync(rutaCsv, defaultVendedorId, defaultCategoriaId).GetAwaiter().GetResult();
+            logger.LogInformation("Auto-seeding completado: {Exitosos}/{Total} SKUs cargados con WMS.", res.Exitosos, res.TotalProcesados);
+        }
+    }
+}
+catch (Exception ex)
+{
+    // No bloquea el inicio de la app si la base de datos no está levantada aún
+    var logger = app.Services.GetService<ILogger<Program>>();
+    logger?.LogWarning("Aviso en auto-seeding (omitido si PostgreSQL aún no está listo): {Message}", ex.Message);
+}
+
 app.Run();
