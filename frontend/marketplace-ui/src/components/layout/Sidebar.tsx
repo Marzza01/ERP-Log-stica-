@@ -1,0 +1,106 @@
+import React, { useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import {
+  LayoutDashboard, ShoppingCart, Warehouse, Truck,
+  RotateCcw, ShoppingBag, BookOpen, Wallet,
+  Package, ChevronLeft, ChevronRight, LogOut,
+} from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+
+interface NavGroup {
+  label: string;
+  items: { to: string; icon: React.ReactNode; label: string }[];
+}
+
+const navGroups: NavGroup[] = [
+  {
+    label: 'Principal',
+    items: [
+      { to: '/dashboard', icon: <LayoutDashboard size={16} />, label: 'Dashboard KPIs' },
+      { to: '/ordenes',   icon: <ShoppingCart size={16} />,    label: 'Órdenes (OMS)' },
+    ],
+  },
+  {
+    label: 'Operaciones',
+    items: [
+      { to: '/wms',         icon: <Warehouse size={16} />,   label: 'WMS — Bodega' },
+      { to: '/fulfillment', icon: <Truck size={16} />,        label: 'Fulfillment' },
+      { to: '/rma',         icon: <RotateCcw size={16} />,    label: 'RMA / Devoluciones' },
+      { to: '/compras',     icon: <ShoppingBag size={16} />,  label: 'Compras / 3-Way' },
+    ],
+  },
+  {
+    label: 'Finanzas',
+    items: [
+      { to: '/contabilidad',  icon: <BookOpen size={16} />, label: 'Contabilidad' },
+      { to: '/liquidaciones', icon: <Wallet size={16} />,   label: 'Liquidaciones' },
+      { to: '/productos',     icon: <Package size={16} />,  label: 'Productos' },
+    ],
+  },
+];
+
+export default function Sidebar() {
+  const [collapsed, setCollapsed] = useState(false);
+  const { logout, usuario } = useAuth();
+  useLocation(); // trigger re-render on route change for active state
+
+  return (
+    <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
+      {/* Logo */}
+      <div className="sidebar-logo">
+        <div className="sidebar-logo-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <polyline points="9 22 9 12 15 12 15 22" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+        <div className="sidebar-logo-text">
+          <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text-primary)', lineHeight: 1.2 }}>LOGIMKT</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500 }}>ERP Marketplace</div>
+        </div>
+      </div>
+
+      {/* Nav */}
+      <nav className="sidebar-nav">
+        {navGroups.map((group) => (
+          <div key={group.label}>
+            <div className="sidebar-section-label">{group.label}</div>
+            {group.items.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+                title={collapsed ? item.label : undefined}
+              >
+                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-label">{item.label}</span>
+              </NavLink>
+            ))}
+          </div>
+        ))}
+      </nav>
+
+      {/* Footer */}
+      <div className="sidebar-footer">
+        {!collapsed && usuario && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px 10px', borderBottom: '1px solid var(--border)', marginBottom: 8 }}>
+            <div className="avatar" style={{ width: 28, height: 28, fontSize: 11 }}>
+              {usuario.nombre.charAt(0).toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{usuario.nombre}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{usuario.rol}</div>
+            </div>
+          </div>
+        )}
+        <button className="sidebar-toggle" onClick={() => setCollapsed(!collapsed)} title={collapsed ? 'Expandir' : 'Colapsar'}>
+          {collapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+        </button>
+        <button className="nav-item btn-ghost" onClick={logout} title="Cerrar sesión" style={{ width: '100%', marginTop: 2, cursor: 'pointer' }}>
+          <LogOut size={16} className="nav-icon" />
+          <span className="nav-label">Cerrar sesión</span>
+        </button>
+      </div>
+    </aside>
+  );
+}
