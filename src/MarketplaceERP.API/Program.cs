@@ -8,6 +8,25 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Soporte para DATABASE_URL de Railway/Heroku ───────────────────────────────
+var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+if (!string.IsNullOrEmpty(databaseUrl))
+{
+    // Railway provee: postgresql://user:pass@host:port/dbname
+    var uri = new Uri(databaseUrl);
+    var userInfo = uri.UserInfo.Split(':');
+    var connStr = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
+    builder.Configuration["ConnectionStrings:DefaultConnection"] = connStr;
+}
+
+// ── Soporte alternativo via variable CONNECTION_STRING ────────────────────────
+var connStrEnv = Environment.GetEnvironmentVariable("CONNECTION_STRING");
+if (!string.IsNullOrEmpty(connStrEnv))
+{
+    builder.Configuration["ConnectionStrings:DefaultConnection"] = connStrEnv;
+}
+
+
 // ── Configuración JWT usando patrón Options ───────────────────────────────────
 builder.Services.Configure<JwtSettings>(
     builder.Configuration.GetSection(JwtSettings.SectionName));

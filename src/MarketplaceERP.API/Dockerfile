@@ -34,10 +34,8 @@ USER appuser
 # Copiar artefactos publicados
 COPY --from=build /app/publish .
 
-# Puerto expuesto (HTTP)
-EXPOSE 8080
-
-ENV ASPNETCORE_URLS=http://+:8080
-ENV ASPNETCORE_ENVIRONMENT=Development
+# Railway asigna $PORT dinámicamente — ASP.NET lo respeta via ASPNETCORE_URLS
+ENV ASPNETCORE_URLS=http://+:${PORT:-8080}
+ENV ASPNETCORE_ENVIRONMENT=Production
 
 ENTRYPOINT ["dotnet", "MarketplaceERP.API.dll"]

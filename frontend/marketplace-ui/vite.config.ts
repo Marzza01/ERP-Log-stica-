@@ -12,17 +12,17 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    port: 5173,
     host: true,
+    allowedHosts: 'all',
     proxy: {
-      // Proxy de API y health hacia el backend en desarrollo local
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:5000',
         changeOrigin: true,
         secure: false,
       },
       '/health': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:5000',
         changeOrigin: true,
         secure: false,
       },
@@ -30,7 +30,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false,
     rollupOptions: {
       output: {
         manualChunks: {
@@ -40,3 +40,4 @@ export default defineConfig({
     },
   },
 })
+
