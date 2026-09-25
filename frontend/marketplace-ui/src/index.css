@@ -51,6 +51,12 @@
   --radius-lg:     12px;
   --radius-xl:     16px;
   --radius-full:   9999px;
+
+  /* ─── Emil Kowalski Motion Tokens (Custom Physics Curves) ─────────────────── */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-spring:     cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out:     cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer:     cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* ─── Base Reset ────────────────────────────────────────────────────────────── */
@@ -362,10 +368,14 @@ body {
   gap: 10px;
   position: relative;
   overflow: hidden;
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition: border-color 150ms ease, transform 180ms var(--ease-out-strong), box-shadow 180ms ease;
 }
 
-.kpi-card:hover { border-color: var(--border-focus); transform: translateY(-1px); }
+.kpi-card:hover {
+  border-color: var(--border-focus);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.45);
+}
 
 .kpi-card::before {
   content: '';
@@ -554,6 +564,10 @@ td {
   white-space: nowrap;
 }
 
+tbody tr {
+  transition: background-color 100ms ease;
+}
+
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--bg-surface); }
 tbody tr:hover td { color: var(--text-primary); }
@@ -604,10 +618,15 @@ tbody tr:hover td { color: var(--text-primary); }
   font-weight: 600;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: all 0.15s ease;
+  transition: transform 140ms var(--ease-out-strong), background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
   white-space: nowrap;
   font-family: var(--font-sans);
   text-decoration: none;
+  user-select: none;
+}
+
+.btn:active {
+  transform: scale(0.97);
 }
 
 .btn-primary {
@@ -667,14 +686,15 @@ select.form-input option { background: var(--bg-surface); }
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.7);
-  backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
-  animation: fadeIn 0.15s ease;
+  animation: modalFadeIn 180ms var(--ease-out-strong) forwards;
 }
 
 .modal {
@@ -685,7 +705,9 @@ select.form-input option { background: var(--bg-surface); }
   max-width: 520px;
   max-height: 90vh;
   overflow-y: auto;
-  animation: slideUp 0.2s ease;
+  transform-origin: center;
+  box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  animation: modalScaleUp 220ms var(--ease-spring) forwards;
 }
 
 .modal-header {
@@ -700,8 +722,21 @@ select.form-input option { background: var(--bg-surface); }
 .modal-body { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
 .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
 
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes modalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalScaleUp {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
 
 /* ─── Charts container ───────────────────────────────────────────────────────── */
 .chart-container {
