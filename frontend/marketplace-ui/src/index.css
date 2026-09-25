@@ -486,9 +486,24 @@ body {
 }
 
 .stat-info { flex: 1; min-width: 0; }
+.stat-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
-.stat-value { font-size: 22px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.03em; }
-.stat-sub { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+.stat-value { font-size: 22px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.stat-sub { font-size: 11px; color: var(--text-secondary); margin-top: 1px; display: flex; align-items: center; gap: 6px; }
+
+.stat-delta {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  letter-spacing: 0.02em;
+}
+.stat-delta.up { color: var(--green); background: var(--green-bg); }
+.stat-delta.down { color: var(--red); background: var(--red-bg); }
+.stat-delta.neutral { color: var(--text-muted); background: var(--bg-surface); }
 
 /* ─── Data Table ────────────────────────────────────────────────────────────── */
 .table-container {
