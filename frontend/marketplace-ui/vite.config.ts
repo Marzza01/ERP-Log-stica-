@@ -15,8 +15,13 @@ export default defineConfig({
     port: 3000,
     host: true,
     proxy: {
-      // Proxy de API hacia el backend en desarrollo local
+      // Proxy de API y health hacia el backend en desarrollo local
       '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/health': {
         target: 'http://localhost:8080',
         changeOrigin: true,
         secure: false,

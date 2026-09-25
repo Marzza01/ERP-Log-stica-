@@ -43,6 +43,7 @@ builder.Services.AddAuthentication(options =>
 });
 
 builder.Services.AddAuthorization();
+builder.Services.AddCors();
 
 // ── Módulos (Equipos 1, 2 y 3) ───────────────────────────────────────────────
 // Cada módulo registra su propio DbContext, servicios y mocks
@@ -84,19 +85,30 @@ builder.Services.AddSwaggerGen(options =>
 var app = builder.Build();
 
 // ── Middleware pipeline ───────────────────────────────────────────────────────
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint("/swagger/v1/swagger.json", "MarketplaceERP v1");
-        options.RoutePrefix = "swagger";
-    });
-}
+app.UseCors(policy => policy
+    .AllowAnyOrigin()
+    .AllowAnyHeader()
+    .AllowAnyMethod());
 
-app.UseHttpsRedirection();
+app.UseSwagger();
+app.UseSwaggerUI(options =>
+{
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "MarketplaceERP v1");
+    options.RoutePrefix = "swagger";
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
+
+// ── Health Check Endpoint ─────────────────────────────────────────────────────
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "healthy",
+    timestamp = DateTime.UtcNow,
+    servicio = "MarketplaceERP.API",
+    version = "1.0.0"
+}));
+
 app.MapControllers();
 
 // ── Auto-seeding del Catálogo de 500 Productos (LOGIMKT S.A. de C.V.) ──────────

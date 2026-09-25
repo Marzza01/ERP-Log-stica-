@@ -24,12 +24,14 @@ export default function Topbar() {
 
   // Ping API health
   useEffect(() => {
-    fetch('http://localhost:8080/health', { signal: AbortSignal.timeout(2000) })
-      .then(() => setApiOnline(true))
+    fetch('/health', { signal: AbortSignal.timeout(2500) })
+      .then(res => {
+        if (res.ok) setApiOnline(true);
+        else throw new Error('Not ok');
+      })
       .catch(() => {
-        // try swagger
-        fetch('http://localhost:8080/swagger/index.html', { signal: AbortSignal.timeout(2000) })
-          .then(() => setApiOnline(true))
+        fetch('http://localhost:8080/health', { signal: AbortSignal.timeout(2500) })
+          .then(res => setApiOnline(res.ok))
           .catch(() => setApiOnline(false));
       });
   }, [location.pathname]);
