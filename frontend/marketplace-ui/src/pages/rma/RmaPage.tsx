@@ -317,6 +317,15 @@ export default function RmaPage() {
         keyExtractor={(item) => item.id}
         loading={loading}
         emptyText="No hay solicitudes de devolución registradas."
+        emptyAction={
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => setModalRegistrar(true)}
+            style={{ margin: '0 auto' }}
+          >
+            + Registrar primera RMA
+          </button>
+        }
       />
 
       {/* Modal Nueva Solicitud RMA */}

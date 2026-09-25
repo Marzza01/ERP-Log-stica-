@@ -574,6 +574,13 @@ tbody tr:hover td { color: var(--text-primary); }
 
 .td-primary { color: var(--text-primary); font-weight: 500; }
 .td-mono { font-family: var(--font-mono); font-size: 11px; }
+.td-right, th.th-right { text-align: right; }
+.td-num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.table-compact td { padding: 8px 12px; }
+.table-compact th { padding: 7px 12px; }
 
 .table-footer {
   display: flex;
@@ -659,6 +666,20 @@ tbody tr:hover td { color: var(--text-primary); }
 .btn-sm { padding: 4px 10px; font-size: 11px; }
 .btn-lg { padding: 10px 20px; font-size: 14px; }
 
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.btn-loading {
+  position: relative;
+  cursor: wait;
+}
+
 /* ─── Forms / Inputs ─────────────────────────────────────────────────────────── */
 .form-group { display: flex; flex-direction: column; gap: 4px; }
 .form-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
@@ -672,12 +693,33 @@ tbody tr:hover td { color: var(--text-primary); }
   color: var(--text-primary);
   font-family: var(--font-sans);
   outline: none;
-  transition: border-color 0.15s ease;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
   width: 100%;
 }
 
 .form-input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--accent-ring); }
 .form-input::placeholder { color: var(--text-muted); }
+.form-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--bg-card);
+  border-color: var(--border-muted);
+}
+
+.form-input.is-error,
+.form-input[aria-invalid="true"] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-bg);
+}
+
+.form-error-msg {
+  font-size: 11px;
+  color: var(--red);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 
 select.form-input { cursor: pointer; }
 select.form-input option { background: var(--bg-surface); }

@@ -21,21 +21,39 @@ interface DataTableProps<T> {
   pageSize?: number;
   emptyMessage?: string;
   emptyText?: string;
+  emptyAction?: React.ReactNode;
+  compact?: boolean;
   onRowClick?: (row: T) => void;
 }
 
 export default function DataTable<T>({
-  title, columns, data, loading, actions, rowKey, keyExtractor, pageSize = 20, emptyMessage, emptyText, onRowClick,
+  title, columns, data, loading, actions, rowKey, keyExtractor, pageSize = 20, emptyMessage, emptyText, emptyAction, compact = false, onRowClick,
 }: DataTableProps<T>) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Keyboard shortcut: Press '/' to focus search, 'Esc' to clear
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (e.key === 'Escape' && document.activeElement === searchInputRef.current) {
+        setSearch('');
+        searchInputRef.current?.blur();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const getColKey = (col: Column<T>, idx: number): string => (col.key ?? col.accessor ?? String(idx)) as string;
   const getRowKey = (row: T, i: number): string =>
     rowKey ? rowKey(row) : keyExtractor ? keyExtractor(row) : ((row as any)?.id ?? String(i));
-  const emptyMsg = emptyMessage ?? emptyText ?? 'Sin datos';
+  const emptyMsg = emptyMessage ?? emptyText ?? 'No hay registros que coincidan con la búsqueda';
 
   const filtered = useMemo(() => {
     if (!search) return data;
@@ -77,17 +95,28 @@ export default function DataTable<T>({
           <div className="search-input">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input
-              placeholder="Buscar..."
+              ref={searchInputRef}
+              placeholder="Buscar... (Presiona '/' para buscar)"
               value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }}
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 4px' }}
+                title="Limpiar búsqueda"
+              >
+                ✕
+              </button>
+            )}
           </div>
           {actions}
         </div>
       </div>
 
       <div style={{ overflowX: 'auto' }}>
-        <table>
+        <table className={compact ? 'table-compact' : undefined}>
           <thead>
             <tr>
               {columns.map((col, idx) => {
@@ -123,8 +152,18 @@ export default function DataTable<T>({
             ) : paged.length === 0 ? (
               <tr>
                 <td colSpan={columns.length}>
-                  <div className="empty-state" style={{ padding: 40 }}>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{emptyMsg}</span>
+                  <div className="empty-state" style={{ padding: '48px 24px', textAlign: 'center' }}>
+                    <div className="empty-state-icon" style={{ margin: '0 auto 8px' }}>
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 8v4M12 16h.01"/>
+                      </svg>
+                    </div>
+                    <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 600 }}>{emptyMsg}</span>
+                    <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '4px 0 12px' }}>
+                      {search ? 'Intenta con otro término o limpia el filtro de búsqueda.' : 'No hay registros cargados en esta vista.'}
+                    </p>
+                    {emptyAction && <div>{emptyAction}</div>}
                   </div>
                 </td>
               </tr>
@@ -146,7 +185,7 @@ export default function DataTable<T>({
       </div>
 
       <div className="table-footer">
-        <span>{filtered.length} registro{filtered.length !== 1 ? 's' : ''}</span>
+        <span className="td-num">{filtered.length} registro{filtered.length !== 1 ? 's' : ''}</span>
         {totalPages > 1 && (
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <button className="btn btn-secondary btn-sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>←</button>
