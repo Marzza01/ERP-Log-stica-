@@ -6,23 +6,23 @@
   --font-sans: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
-  /* Background layers */
+  /* Background layers — Enterprise High-Contrast Zinc (Anti-slop / Linear standard) */
   --bg-base:       #09090b;
-  --bg-card:       #111113;
-  --bg-surface:    #18181b;
-  --bg-muted:      #27272a;
-  --bg-hover:      #3f3f46;
+  --bg-card:       #121215;
+  --bg-surface:    #18181c;
+  --bg-muted:      #26262b;
+  --bg-hover:      #323238;
 
-  /* Borders */
-  --border:        #27272a;
-  --border-muted:  #1c1c1f;
+  /* Borders — Clean 1px high precision */
+  --border:        #27272e;
+  --border-muted:  #1d1d23;
   --border-focus:  #6366f1;
 
-  /* Text */
-  --text-primary:  #fafafa;
-  --text-secondary:#a1a1aa;
-  --text-muted:    #52525b;
-  --text-disabled: #3f3f46;
+  /* Text — Strict WCAG AAA Contrast */
+  --text-primary:  #f8fafc;
+  --text-secondary:#94a3b8;
+  --text-muted:    #64748b;
+  --text-disabled: #475569;
 
   /* Accent — Indigo */
   --accent:        #6366f1;
@@ -190,7 +190,7 @@ body {
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 130ms ease, color 130ms ease, border-color 130ms ease;
   text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
@@ -206,9 +206,10 @@ body {
 }
 
 .nav-item.active {
-  background: var(--accent-muted);
-  color: var(--accent-hover);
-  border-color: var(--border-focus);
+  background: rgba(99, 102, 241, 0.10);
+  color: #818cf8;
+  border-color: rgba(99, 102, 241, 0.28);
+  font-weight: 600;
 }
 
 .nav-item .nav-icon {
