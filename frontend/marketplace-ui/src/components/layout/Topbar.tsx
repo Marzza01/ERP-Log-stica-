@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Bell, Search } from 'lucide-react';
+import { Bell, Search, Menu } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 const routeTitles: Record<string, { label: string; sub: string }> = {
@@ -15,7 +15,11 @@ const routeTitles: Record<string, { label: string; sub: string }> = {
   '/productos':    { label: 'Productos',        sub: 'Catálogo de productos y stock' },
 };
 
-export default function Topbar() {
+interface TopbarProps {
+  onMenuToggle: () => void;
+}
+
+export default function Topbar({ onMenuToggle }: TopbarProps) {
   const location = useLocation();
   const { usuario } = useAuth();
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
@@ -38,9 +42,19 @@ export default function Topbar() {
 
   return (
     <header className="topbar">
+      {/* Hamburger — visible only on mobile/tablet */}
+      <button
+        className="icon-btn topbar-menu-btn"
+        onClick={onMenuToggle}
+        title="Abrir menú"
+        aria-label="Abrir menú de navegación"
+      >
+        <Menu size={16} />
+      </button>
+
       {/* Breadcrumb */}
       <div className="topbar-breadcrumb">
-        <span>LOGIMKT ERP</span>
+        <span className="topbar-brand">LOGIMKT ERP</span>
         <span style={{ color: 'var(--border)' }}>/</span>
         <span className="current">{route.label}</span>
       </div>
@@ -51,7 +65,7 @@ export default function Topbar() {
       <div className="topbar-actions">
         {/* API Status */}
         {apiOnline !== null && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }} className="api-status-label">
             <span className={`api-dot ${apiOnline ? 'online' : 'offline'}`} />
             <span>{apiOnline ? 'API online' : 'API offline'}</span>
           </div>
