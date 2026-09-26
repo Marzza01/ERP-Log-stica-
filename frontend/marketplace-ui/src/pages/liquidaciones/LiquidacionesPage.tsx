@@ -130,6 +130,45 @@ export default function LiquidacionesPage() {
         </div>
       </div>
 
+      {/* Hero Payout Balance Banner (Efferd Dashboard #11: Payout balance & settlement split) */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1.2fr 1fr',
+        gap: '1rem',
+        padding: '20px 24px',
+        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.05) 100%)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)'
+      }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', fontWeight: 600 }}>Saldo Pendiente por Liquidar (Sellers)</span>
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'var(--yellow-bg)', color: 'var(--yellow)', fontWeight: 700 }}>Corte Semanal</span>
+          </div>
+          <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.03em' }} className="td-num">
+            ${totalPendienteLiquidar.toLocaleString('es-SV', { minimumFractionDigits: 2 })}
+          </div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+            Fondos custodiados para desembolso automático mediante ACH / Transferencia bancaria el próximo ciclo.
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', borderLeft: '1px solid var(--border)', paddingLeft: '1.25rem', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+            <span style={{ color: 'var(--text-muted)' }}>Regla de Split:</span>
+            <strong style={{ color: 'var(--text-primary)' }}>90% Vendedor / 10% Plataforma</strong>
+          </div>
+          <div style={{ height: 6, background: 'var(--bg-surface)', borderRadius: 9999, overflow: 'hidden', display: 'flex' }}>
+            <div style={{ width: '90%', background: 'var(--accent)' }} title="90% Sellers" />
+            <div style={{ width: '10%', background: 'var(--green)' }} title="10% Comisión" />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)' }} /> Cuota Sellers</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)' }} /> Utilidad Neta ERP: ${totalComisionRetenida.toLocaleString('es-SV', { minimumFractionDigits: 2 })}</span>
+          </div>
+        </div>
+      </div>
+
       {/* KPI Cards Strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>

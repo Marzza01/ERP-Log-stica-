@@ -256,6 +256,51 @@ export default function ComprasPage() {
         </div>
       </div>
 
+      {/* Attention List (Efferd Dashboard #6: Items requiring operational attention) */}
+      {matches.some(m => m.resultado === 'Discrepante') && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          background: 'rgba(239, 68, 68, 0.08)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          borderRadius: 'var(--radius-lg)',
+          gap: 12
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 32,
+              height: 32,
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--red-bg)',
+              color: 'var(--red)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              <AlertTriangle size={16} />
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                {matches.filter(m => m.resultado === 'Discrepante').length} Discrepancia(s) en 3-Way Match Requieren Atención
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                Se detectaron diferencias entre factura y recepción física de bodega. Los pagos correspondientes han sido retenidos por control interno.
+              </div>
+            </div>
+          </div>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => setActiveTab('match')}
+            style={{ borderColor: 'rgba(239, 68, 68, 0.35)', color: 'var(--red)', flexShrink: 0 }}
+          >
+            Ver Auditorías Retenidas →
+          </button>
+        </div>
+      )}
+
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
         <button
