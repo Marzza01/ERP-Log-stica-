@@ -99,21 +99,30 @@ export default function WmsPage() {
         </div>
       </div>
 
-      {/* Métricas */}
+      {/* Métricas Homogéneas y Neutrales */}
       {resumen && (
         <>
           <div className="stat-grid" style={{ marginBottom: 16 }}>
             {[
-              { label: 'Total Ubicaciones', value: resumen.totalUbicaciones, color: '#6366f1', bg: 'rgba(99,102,241,0.12)', icon: <MapPin size={18} /> },
-              { label: 'Ocupadas', value: resumen.ubicacionesOcupadas, color: 'var(--yellow)', bg: 'var(--yellow-bg)', icon: <MapPin size={18} /> },
-              { label: 'Disponibles', value: resumen.ubicacionesDisponibles, color: 'var(--green)', bg: 'var(--green-bg)', icon: <MapPin size={18} /> },
-              { label: '% Ocupación', value: `${resumen.porcentajeOcupacionTotal}%`, color: resumen.porcentajeOcupacionTotal >= 90 ? 'var(--red)' : resumen.porcentajeOcupacionTotal >= 70 ? 'var(--yellow)' : 'var(--green)', bg: 'var(--bg-surface)', icon: <MapPin size={18} /> },
+              { label: 'Total Ubicaciones', value: resumen.totalUbicaciones, icon: <MapPin size={18} /> },
+              { label: 'Ocupadas', value: resumen.ubicacionesOcupadas, icon: <MapPin size={18} /> },
+              { label: 'Disponibles', value: resumen.ubicacionesDisponibles, icon: <MapPin size={18} /> },
+              {
+                label: '% Ocupación',
+                value: `${resumen.porcentajeOcupacionTotal}%`,
+                icon: <MapPin size={18} />,
+                delta: resumen.porcentajeOcupacionTotal >= 90 ? 'Crítico' : resumen.porcentajeOcupacionTotal >= 70 ? 'Moderado' : 'Óptimo',
+                deltaType: (resumen.porcentajeOcupacionTotal >= 90 ? 'down' : resumen.porcentajeOcupacionTotal >= 70 ? 'neutral' : 'up') as 'down' | 'neutral' | 'up',
+              },
             ].map(s => (
               <div className="stat-card" key={s.label}>
-                <div className="stat-icon-wrap" style={{ background: s.bg, color: s.color }}>{s.icon}</div>
+                <div className="stat-icon-wrap">{s.icon}</div>
                 <div className="stat-info">
-                  <div className="stat-label">{s.label}</div>
-                  <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
+                  <div className="stat-header">
+                    <span className="stat-label">{s.label}</span>
+                    {s.delta && <span className={`stat-delta ${s.deltaType}`}>{s.delta}</span>}
+                  </div>
+                  <div className="stat-value">{s.value}</div>
                 </div>
               </div>
             ))}

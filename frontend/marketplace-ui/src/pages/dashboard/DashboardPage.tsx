@@ -77,7 +77,6 @@ export default function DashboardPage() {
       sub: `Últimos ${period} días`,
       delta: '+8.4%',
       deltaType: 'up' as const,
-      isPrimary: true,
       icon: <ShoppingCart size={18} />,
     },
     {
@@ -137,14 +136,10 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Resumen ejecutivo con jerarquía clara y paleta sobria */}
+      {/* Resumen ejecutivo neutro y uniforme */}
       <div className="stat-grid">
         {statCards.map(s => (
-          <div
-            className="stat-card"
-            key={s.label}
-            style={s.isPrimary ? { borderColor: 'var(--border-focus)', background: 'rgba(99, 102, 241, 0.04)' } : undefined}
-          >
+          <div className="stat-card" key={s.label}>
             <div className="stat-icon-wrap">
               {s.icon}
             </div>
@@ -153,7 +148,7 @@ export default function DashboardPage() {
                 <span className="stat-label">{s.label}</span>
                 <span className={`stat-delta ${s.deltaType}`}>{s.delta}</span>
               </div>
-              <div className="stat-value" style={s.isPrimary ? { fontSize: 24, color: 'var(--text-primary)' } : { color: 'var(--text-primary)' }}>
+              <div className="stat-value">
                 {s.value}
               </div>
               <div className="stat-sub">{s.sub}</div>
