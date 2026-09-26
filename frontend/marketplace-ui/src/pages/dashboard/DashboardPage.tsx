@@ -74,12 +74,11 @@ export default function DashboardPage() {
     {
       label: 'Total Órdenes',
       value: res?.totalOrdenes ?? 0,
-      sub: `Período ${period} días`,
+      sub: `Últimos ${period} días`,
       delta: '+8.4%',
       deltaType: 'up' as const,
+      isPrimary: true,
       icon: <ShoppingCart size={18} />,
-      color: '#6366f1',
-      bg: 'rgba(99,102,241,0.12)',
     },
     {
       label: 'Órdenes Entregadas',
@@ -88,8 +87,6 @@ export default function DashboardPage() {
       delta: `${res?.totalOrdenes ? Math.round(((res.ordenesEntregadas ?? 0) / res.totalOrdenes) * 100) : 0}% tasa`,
       deltaType: 'up' as const,
       icon: <Package size={18} />,
-      color: 'var(--green)',
-      bg: 'var(--green-bg)',
     },
     {
       label: 'Canceladas',
@@ -98,33 +95,23 @@ export default function DashboardPage() {
       delta: `${res?.totalOrdenes ? ((res.ordenesCanceladas ?? 0) / res.totalOrdenes * 100).toFixed(1) : 0}%`,
       deltaType: ((res?.ordenesCanceladas ?? 0) > 10 ? 'down' : 'neutral') as 'down' | 'neutral',
       icon: <TrendingUp size={18} />,
-      color: 'var(--red)',
-      bg: 'var(--red-bg)',
     },
     {
       label: 'Comisión Generada',
       value: `$${(res?.totalComisionGenerada ?? 0).toLocaleString('es-SV', { maximumFractionDigits: 0 })}`,
       sub: 'Marketplace 10%',
       delta: '100% cobrable',
-      deltaType: 'up' as const,
+      deltaType: 'neutral' as const,
       icon: <DollarSign size={18} />,
-      color: 'var(--yellow)',
-      bg: 'var(--yellow-bg)',
     },
   ];
 
   return (
     <div>
-      {/* Header Ejecutivo Efferd #1 Style */}
+      {/* Header Limpio y Profesional */}
       <div className="page-header" style={{ alignItems: 'flex-start' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <h1 className="page-title">Dashboard Ejecutivo</h1>
-            <span style={{ fontSize: 11, background: 'rgba(34,197,94,0.12)', color: 'var(--green)', padding: '2px 8px', borderRadius: 'var(--radius-full)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)' }} />
-              Operaciones en Línea
-            </span>
-          </div>
+          <h1 className="page-title">Dashboard Ejecutivo</h1>
           <p className="page-subtitle">
             Monitoreo en tiempo real de fulfillment, nivel de servicio logístico y flujo financiero.
           </p>
@@ -150,11 +137,15 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Resumen ejecutivo con deltas */}
+      {/* Resumen ejecutivo con jerarquía clara y paleta sobria */}
       <div className="stat-grid">
         {statCards.map(s => (
-          <div className="stat-card" key={s.label}>
-            <div className="stat-icon-wrap" style={{ background: s.bg, color: s.color }}>
+          <div
+            className="stat-card"
+            key={s.label}
+            style={s.isPrimary ? { borderColor: 'var(--border-focus)', background: 'rgba(99, 102, 241, 0.04)' } : undefined}
+          >
+            <div className="stat-icon-wrap">
               {s.icon}
             </div>
             <div className="stat-info">
@@ -162,7 +153,9 @@ export default function DashboardPage() {
                 <span className="stat-label">{s.label}</span>
                 <span className={`stat-delta ${s.deltaType}`}>{s.delta}</span>
               </div>
-              <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
+              <div className="stat-value" style={s.isPrimary ? { fontSize: 24, color: 'var(--text-primary)' } : { color: 'var(--text-primary)' }}>
+                {s.value}
+              </div>
               <div className="stat-sub">{s.sub}</div>
             </div>
           </div>

@@ -130,13 +130,13 @@ export default function LiquidacionesPage() {
         </div>
       </div>
 
-      {/* Hero Payout Balance Banner (Efferd Dashboard #11: Payout balance & settlement split) */}
+      {/* Hero Payout Balance Banner (Solid Professional Enterprise Style) */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: '1.2fr 1fr',
         gap: '1rem',
         padding: '20px 24px',
-        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.05) 100%)',
+        background: 'var(--bg-card)',
         border: '1px solid var(--border)',
         borderRadius: 'var(--radius-lg)'
       }}>

@@ -135,9 +135,9 @@ body {
 }
 
 .sidebar-logo-icon {
-  width: 32px;
-  height: 32px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  width: 28px;
+  height: 28px;
+  background: var(--accent);
   border-radius: var(--radius-md);
   display: flex;
   align-items: center;
@@ -369,13 +369,11 @@ body {
   gap: 10px;
   position: relative;
   overflow: hidden;
-  transition: border-color 150ms ease, transform 180ms var(--ease-out-strong), box-shadow 180ms ease;
+  transition: border-color 140ms ease;
 }
 
 .kpi-card:hover {
   border-color: var(--border-focus);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.45);
 }
 
 .kpi-card::before {
@@ -472,17 +470,23 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 16px 20px;
+  padding: 16px 18px;
   display: flex;
-  align-items: center;
-  gap: 14px;
+  align-items: flex-start;
+  gap: 12px;
 }
 
 .stat-icon-wrap {
-  width: 40px; height: 40px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-md);
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-muted);
 }
 
 .stat-info { flex: 1; min-width: 0; }
