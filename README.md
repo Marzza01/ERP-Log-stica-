@@ -76,9 +76,9 @@ Si eres un nuevo miembro del equipo o estás preparando el entorno para la **Def
 ### Paso 2: Iniciar el Backend (API)
 En la misma terminal del backend, ejecuta:
 ```bash
-dotnet run
+dotnet run --project src/MarketplaceERP.API/MarketplaceERP.API.csproj --urls=http://localhost:5000
 ```
-*El sistema inyectará automáticamente los 500 SKUs del catálogo semilla si la base de datos está vacía. La API estará disponible en `http://localhost:8080`.*
+*El sistema inyectará automáticamente los 500 SKUs del catálogo semilla si la base de datos está vacía. La API estará disponible en `http://localhost:5000` y Swagger en `http://localhost:5000/swagger`.*
 
 ### Paso 3: Iniciar el Frontend (UI)
 Abre otra terminal en la carpeta del frontend (`frontend/marketplace-ui`):
@@ -86,9 +86,21 @@ Abre otra terminal en la carpeta del frontend (`frontend/marketplace-ui`):
 npm install
 npm run dev
 ```
-*El sistema abrirá el navegador en `http://localhost:3000`. El indicador superior derecho deberá mostrar "🟢 API online".*
+*El sistema abrirá el servidor en `http://localhost:5173`. El indicador superior derecho mostrará "🟢 API online".*
+
+### Paso Rápido: Inicio con un solo clic (Windows)
+Puedes ejecutar el script [`INICIAR_LOCAL.bat`](./INICIAR_LOCAL.bat) en la raíz del repositorio, el cual inicia automáticamente ambos servicios y muestra las URLs de acceso local y en red para celulares o tablets.
 
 ---
+
+## 📱 Acceso y Diseño Responsive Multidispositivo
+
+El sistema cuenta con una arquitectura de interfaz adaptable a 4 perfiles de pantalla con directrices UI empresariales:
+- **Desktop / Pantalla Grande (≥1024px):** Barra lateral completa con navegación agrupada y vista de alta densidad.
+- **Laptop / Pantalla Mediana (768px - 1023px):** Navegación adaptativa optimizada para productividad.
+- **Tablets y Celulares (<768px):** Drawer lateral retráctil mediante menú hamburguesa, overlay táctil y etiquetas compactas para evitar desbordes visuales en pantallas reducidas.
+- **Acceso en Red Local:** Disponible en la misma red Wi-Fi mediante `http://<IP-LOCAL>:5173` sin vencimiento de sesión.
+- **Túnel Remoto Seguro:** Compatible con **ngrok** (`ngrok http 5173`) para acceso externo temporal.
 
 ## 📋 Tareas Pendientes (Semana 9 y 10)
 Aunque el código está al 100%, para la calificación final (**40% restante**) cada grupo debe completar:
