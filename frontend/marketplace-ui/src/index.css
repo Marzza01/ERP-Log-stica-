@@ -225,6 +225,10 @@ body {
   transition: opacity 0.2s ease;
 }
 
+/* Desktop: show full label, hide short */
+.nav-label-short { display: none; }
+.nav-label-full  { display: inline; }
+
 .sidebar.collapsed .nav-label { opacity: 0; width: 0; }
 .sidebar.collapsed .nav-item { justify-content: center; padding: 8px; }
 
@@ -999,6 +1003,10 @@ select.form-input option { background: var(--bg-surface); }
 
   /* Tables: horizontal scroll */
   .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Sidebar drawer labels: use short version */
+  .nav-label-full  { display: none; }
+  .nav-label-short { display: inline; }
 }
 
 /* ─── Mobile (<768px) ───────────────────────────────────────────────────────── */
@@ -1011,6 +1019,10 @@ select.form-input option { background: var(--bg-surface); }
   /* Brand text hidden on very small screens */
   .topbar-brand { display: none; }
   .api-status-label { display: none; }
+
+  /* Sidebar labels: show short, hide full */
+  .nav-label-full  { display: none; }
+  .nav-label-short { display: inline; }
 
   /* Grids collapse to single column */
   .grid-2, .grid-3 { grid-template-columns: 1fr; gap: 10px; }

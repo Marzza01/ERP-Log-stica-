@@ -9,32 +9,32 @@ import { useAuth } from '../../context/AuthContext';
 
 interface NavGroup {
   label: string;
-  items: { to: string; icon: React.ReactNode; label: string }[];
+  items: { to: string; icon: React.ReactNode; label: string; shortLabel?: string }[];
 }
 
 const navGroups: NavGroup[] = [
   {
     label: 'Principal',
     items: [
-      { to: '/dashboard', icon: <LayoutDashboard size={16} />, label: 'Dashboard KPIs' },
-      { to: '/ordenes',   icon: <ShoppingCart size={16} />,    label: 'Órdenes (OMS)' },
+      { to: '/dashboard', icon: <LayoutDashboard size={16} />, label: 'Dashboard',     shortLabel: 'Dashboard' },
+      { to: '/ordenes',   icon: <ShoppingCart size={16} />,    label: 'Órdenes',       shortLabel: 'Órdenes' },
     ],
   },
   {
     label: 'Operaciones',
     items: [
-      { to: '/wms',         icon: <Warehouse size={16} />,   label: 'WMS — Bodega' },
-      { to: '/fulfillment', icon: <Truck size={16} />,        label: 'Fulfillment' },
-      { to: '/rma',         icon: <RotateCcw size={16} />,    label: 'RMA / Devoluciones' },
-      { to: '/compras',     icon: <ShoppingBag size={16} />,  label: 'Compras / 3-Way' },
+      { to: '/wms',         icon: <Warehouse size={16} />,   label: 'WMS / Bodega',   shortLabel: 'Bodega' },
+      { to: '/fulfillment', icon: <Truck size={16} />,        label: 'Fulfillment',    shortLabel: 'Fulfillment' },
+      { to: '/rma',         icon: <RotateCcw size={16} />,    label: 'Devoluciones',   shortLabel: 'Devoluciones' },
+      { to: '/compras',     icon: <ShoppingBag size={16} />,  label: 'Compras',        shortLabel: 'Compras' },
     ],
   },
   {
     label: 'Finanzas',
     items: [
-      { to: '/contabilidad',  icon: <BookOpen size={16} />, label: 'Contabilidad' },
-      { to: '/liquidaciones', icon: <Wallet size={16} />,   label: 'Liquidaciones' },
-      { to: '/productos',     icon: <Package size={16} />,  label: 'Productos' },
+      { to: '/contabilidad',  icon: <BookOpen size={16} />, label: 'Contabilidad',   shortLabel: 'Contabilidad' },
+      { to: '/liquidaciones', icon: <Wallet size={16} />,   label: 'Liquidaciones',  shortLabel: 'Pagos' },
+      { to: '/productos',     icon: <Package size={16} />,  label: 'Productos',      shortLabel: 'Productos' },
     ],
   },
 ];
@@ -88,7 +88,10 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                   title={collapsed ? item.label : undefined}
                 >
                   <span className="nav-icon">{item.icon}</span>
-                  <span className="nav-label">{item.label}</span>
+                  <span className="nav-label nav-label-full">{item.label}</span>
+                  {item.shortLabel && (
+                    <span className="nav-label nav-label-short">{item.shortLabel}</span>
+                  )}
                 </NavLink>
               ))}
             </div>
