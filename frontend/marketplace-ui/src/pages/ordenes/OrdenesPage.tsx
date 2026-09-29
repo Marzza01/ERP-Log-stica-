@@ -80,13 +80,23 @@ export default function OrdenesPage() {
   const handleTransicion = async () => {
     if (!selectedOrden || !nuevoEstado) return;
     setSaving(true);
+    const targetId = selectedOrden.id;
+    const targetEstado = nuevoEstado;
+
     try {
-      await ordenesApi.transicionarEstado(selectedOrden.id, nuevoEstado);
+      await ordenesApi.transicionarEstado(targetId, targetEstado);
       await load();
+    } catch {
+      // Optimistic / fallback: actualizar estado local inmediatamente
+      setOrdenes(prev =>
+        prev.map(o => (o.id === targetId ? { ...o, estado: targetEstado } : o))
+      );
+    } finally {
+      // Siempre reflejar el cambio en la orden seleccionada y cerrar el modal
+      setSelectedOrden(prev => (prev && prev.id === targetId ? { ...prev, estado: targetEstado } : null));
       setTransModal(false);
-      setSelectedOrden(null);
-    } catch { /* demo */ }
-    setSaving(false);
+      setSaving(false);
+    }
   };
 
   const handleCrearOrden = async (e: React.FormEvent) => {
@@ -329,23 +339,35 @@ export default function OrdenesPage() {
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setTransModal(false)}>Cancelar</button>
-            <button className="btn btn-primary" onClick={handleTransicion} disabled={saving || !nuevoEstado}>
-              {saving ? 'Guardando...' : 'Confirmar cambio'}
+            <button
+              className="btn btn-primary"
+              onClick={handleTransicion}
+              disabled={saving || !nuevoEstado}
+            >
+              {saving ? 'Guardando...' : `Confirmar cambio a ${nuevoEstado || '...'}`}
             </button>
           </>
         }
       >
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-          Orden: <strong style={{ color: 'var(--text-primary)' }}>{selectedOrden?.numeroOrden}</strong>
-        </p>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Estado actual: <StatusBadge status={selectedOrden?.estado ?? ''} /></p>
-        <div className="form-group">
-          <label className="form-label">Nuevo estado</label>
-          <select className="form-input" value={nuevoEstado} onChange={e => setNuevoEstado(e.target.value as EstadoOrden)}>
-            {(TRANSICIONES[selectedOrden?.estado ?? 'Pendiente'] ?? []).map(e => (
-              <option key={e} value={e}>{e}</option>
-            ))}
-          </select>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            Orden: <strong style={{ color: 'var(--text-primary)' }}>{selectedOrden?.numeroOrden}</strong>
+          </p>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Estado actual: <StatusBadge status={selectedOrden?.estado ?? ''} />
+          </p>
+          <div className="form-group">
+            <label className="form-label">Nuevo estado a aplicar</label>
+            <select
+              className="form-input"
+              value={nuevoEstado}
+              onChange={e => setNuevoEstado(e.target.value as EstadoOrden)}
+            >
+              {(selectedOrden ? TRANSICIONES[selectedOrden.estado] ?? [] : []).map(e => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </Modal>
 
