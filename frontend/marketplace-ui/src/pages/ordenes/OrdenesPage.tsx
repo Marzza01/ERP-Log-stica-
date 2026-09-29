@@ -62,8 +62,8 @@ export default function OrdenesPage() {
         costoEnvio: 5,
         moneda: 'USD',
         tipoComprobante: 'FacturaConsumidorFinal',
-        transportista: i % 2 === 0 ? 'LOGIMKT Express' : 'DHL',
-        guiaEnvio: i > 3 ? `GU-${100000 + i}` : undefined,
+        transportista: ['LOGIMKT Flota Propia', 'C807 Express El Salvador', 'Urbano Express El Salvador', 'Cargo Expreso SV'][i % 4],
+        guiaEnvio: i > 3 ? `C807-${100000 + i}` : undefined,
         direccionEntrega: `Colonia #${i + 1}, San Salvador`,
         zonaEnvio: 'San Salvador y AMSS',
         fechaCreacion: new Date(Date.now() - i * 86400000).toISOString(),
@@ -482,16 +482,18 @@ export default function OrdenesPage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             <div className="form-group">
-              <label className="form-label">Transportista Asignado</label>
+              <label className="form-label">Operador Logístico / Transportista</label>
               <select
                 className="form-input"
                 value={orderForm.transportista}
                 onChange={e => setOrderForm({ ...orderForm, transportista: e.target.value })}
               >
-                <option value="LOGIMKT Express">LOGIMKT Express (Flota Propia)</option>
-                <option value="DHL Express">DHL Express</option>
-                <option value="FedEx Logistics">FedEx Logistics</option>
-                <option value="RetiroEnBodega">Retiro en Bodega Central</option>
+                <option value="C807 Express El Salvador">C807 Express El Salvador (Operador Local 3PL)</option>
+                <option value="LOGIMKT Flota Propia">LOGIMKT Express (Flota Local Propia AMSS)</option>
+                <option value="Urbano Express El Salvador">Urbano Express El Salvador</option>
+                <option value="Cargo Expreso SV">Cargo Expreso El Salvador</option>
+                <option value="DHL Express El Salvador">DHL Express (Nacional / Internacional)</option>
+                <option value="RetiroEnBodega">Retiro en Bodega Central (Pick-Up)</option>
               </select>
             </div>
             <div className="form-group">

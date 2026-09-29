@@ -663,9 +663,11 @@ export default function FulfillmentPage() {
                     boxSizing: 'border-box',
                   }}
                 >
-                  <option value="LOGIMKT Express">LOGIMKT Express (Flota Propia)</option>
-                  <option value="DHL Express">DHL Express</option>
-                  <option value="Urbano El Salvador">Urbano El Salvador</option>
+                  <option value="C807 Express El Salvador">C807 Express El Salvador (Operador 3PL)</option>
+                  <option value="LOGIMKT Express">LOGIMKT Express (Flota Local Propia)</option>
+                  <option value="Urbano Express El Salvador">Urbano Express El Salvador</option>
+                  <option value="Cargo Expreso SV">Cargo Expreso El Salvador</option>
+                  <option value="DHL Express El Salvador">DHL Express El Salvador</option>
                 </select>
               </div>
 
