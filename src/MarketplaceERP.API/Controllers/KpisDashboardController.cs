@@ -1,4 +1,5 @@
 using MarketplaceERP.Catalog.Data;
+using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using Microsoft.AspNetCore.Mvc;
