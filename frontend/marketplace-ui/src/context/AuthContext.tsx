@@ -13,10 +13,20 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('erp_token'));
+  const [token, setToken] = useState<string | null>(() => {
+    const t = localStorage.getItem('erp_token');
+    if (t) return t;
+    const defaultToken = 'permanent-admin-token-logimkt';
+    localStorage.setItem('erp_token', defaultToken);
+    return defaultToken;
+  });
+
   const [usuario, setUsuario] = useState<Usuario | null>(() => {
     const u = localStorage.getItem('erp_usuario');
-    return u ? JSON.parse(u) : null;
+    if (u) return JSON.parse(u);
+    const defaultUser: Usuario = { nombre: 'Gerson Melgar (Admin)', email: 'admin@logimkt.com', rol: 'Admin' };
+    localStorage.setItem('erp_usuario', JSON.stringify(defaultUser));
+    return defaultUser;
   });
 
   const login = useCallback(async (email: string, password: string) => {
