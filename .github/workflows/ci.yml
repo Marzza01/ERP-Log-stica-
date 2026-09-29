@@ -43,10 +43,11 @@ jobs:
       - name: Run tests
         run: dotnet test MarketplaceERP.sln --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./TestResults
 
-      # Publicar resultados de tests
+      # Publicar resultados de tests (si hay permisos)
       - name: Publish test results
         uses: dorny/test-reporter@v1
         if: always()
+        continue-on-error: true
         with:
           name: Test Results
           path: TestResults/*.trx
