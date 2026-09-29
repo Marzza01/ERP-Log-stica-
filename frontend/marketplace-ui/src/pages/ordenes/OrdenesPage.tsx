@@ -4,7 +4,7 @@ import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
 import { ordenesApi } from '../../api/ordenes';
-import type { Orden, EstadoOrden } from '../../types';
+import type { Orden, EstadoOrden, TipoCliente } from '../../types';
 
 const ESTADOS: EstadoOrden[] = ['Pendiente', 'Aprobada', 'EnProceso', 'Enviada', 'Entregada', 'Cancelada'];
 const TRANSICIONES: Partial<Record<EstadoOrden, EstadoOrden[]>> = {
@@ -26,6 +26,23 @@ export default function OrdenesPage() {
   const [nuevoEstado, setNuevoEstado] = useState<EstadoOrden | ''>('');
   const [saving, setSaving] = useState(false);
   const [isCompact, setIsCompact] = useState(false);
+
+  // Modal Nueva Orden
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [creatingOrder, setCreatingOrder] = useState(false);
+  const [orderForm, setOrderForm] = useState({
+    tipoCliente: 'ConsumidorFinal' as TipoCliente,
+    nombreProducto: 'Kit Logístico Starter (Seed SKU)',
+    sku: 'SKU-LOGI-8801',
+    cantidad: 2,
+    precioUnitario: 45.00,
+    transportista: 'LOGIMKT Express',
+    zonaEnvio: 'San Salvador y AMSS',
+    direccionEntrega: 'Av. Las Palmas #404, San Salvador',
+    costoEnvio: 5.00,
+    condicionPago: 'Inmediato',
+    tipoComprobante: 'FacturaConsumidorFinal',
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,6 +87,62 @@ export default function OrdenesPage() {
       setSelectedOrden(null);
     } catch { /* demo */ }
     setSaving(false);
+  };
+
+  const handleCrearOrden = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreatingOrder(true);
+    try {
+      await ordenesApi.crear({
+        compradorId: crypto.randomUUID(),
+        vendedorId: crypto.randomUUID(),
+        tipoCliente: orderForm.tipoCliente,
+        tipoComprobante: orderForm.tipoComprobante,
+        condicionPago: orderForm.condicionPago,
+        transportista: orderForm.transportista,
+        zonaEnvio: orderForm.zonaEnvio,
+        direccionEntrega: orderForm.direccionEntrega,
+        costoEnvio: Number(orderForm.costoEnvio),
+        items: [
+          {
+            productoId: crypto.randomUUID(),
+            sku: orderForm.sku,
+            nombre: orderForm.nombreProducto,
+            cantidad: Number(orderForm.cantidad),
+            precioUnitario: Number(orderForm.precioUnitario),
+          },
+        ],
+      });
+      await load();
+      setCreateModalOpen(false);
+    } catch {
+      // Optimistic demo fallback
+      const sub = Number(orderForm.cantidad) * Number(orderForm.precioUnitario);
+      const iva = Math.round(sub * 0.13 * 100) / 100;
+      const envio = Number(orderForm.costoEnvio);
+      const nueva: Orden = {
+        id: crypto.randomUUID(),
+        numeroOrden: `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(10000 + Math.random() * 90000)}`,
+        estado: 'Pendiente',
+        tipoCliente: orderForm.tipoCliente,
+        montoTotal: sub + iva + envio,
+        subTotal: sub,
+        impuestoIva: iva,
+        costoEnvio: envio,
+        moneda: 'USD',
+        tipoComprobante: orderForm.tipoComprobante,
+        transportista: orderForm.transportista,
+        direccionEntrega: orderForm.direccionEntrega,
+        zonaEnvio: orderForm.zonaEnvio,
+        fechaCreacion: new Date().toISOString(),
+        totalItems: 1,
+        minutosEnEstado: 0,
+      };
+      setOrdenes(prev => [nueva, ...prev]);
+      setCreateModalOpen(false);
+    } finally {
+      setCreatingOrder(false);
+    }
   };
 
   // Métricas del canal (Efferd #2 pattern: Channel breakdown & gross total)
@@ -130,7 +203,7 @@ export default function OrdenesPage() {
             <option value="">Todos los estados</option>
             {ESTADOS.map(e => <option key={e} value={e}>{e}</option>)}
           </select>
-          <button className="btn btn-primary" onClick={load}><Plus size={13} /> Nueva Orden</button>
+          <button className="btn btn-primary" onClick={() => setCreateModalOpen(true)}><Plus size={13} /> Nueva Orden</button>
         </div>
       </div>
 
@@ -274,6 +347,196 @@ export default function OrdenesPage() {
             ))}
           </select>
         </div>
+      </Modal>
+
+      {/* Modal Crear Nueva Orden */}
+      <Modal
+        title="Crear Nueva Orden (OMS)"
+        open={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        size="lg"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setCreateModalOpen(false)}>Cancelar</button>
+            <button
+              className="btn btn-primary"
+              onClick={handleCrearOrden}
+              disabled={creatingOrder || !orderForm.nombreProducto || orderForm.cantidad <= 0 || orderForm.precioUnitario <= 0}
+            >
+              {creatingOrder ? 'Registrando...' : 'Crear y Registrar Orden'}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={handleCrearOrden} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            <div className="form-group">
+              <label className="form-label">Canal / Tipo de Cliente</label>
+              <select
+                className="form-input"
+                value={orderForm.tipoCliente}
+                onChange={e => {
+                  const val = e.target.value as TipoCliente;
+                  setOrderForm({
+                    ...orderForm,
+                    tipoCliente: val,
+                    tipoComprobante: val === 'Empresa' ? 'CreditoFiscalCCF' : 'FacturaConsumidorFinal',
+                    condicionPago: val === 'Empresa' ? 'Credito30' : 'Inmediato',
+                  });
+                }}
+              >
+                <option value="ConsumidorFinal">B2C Retail (Consumidor Final)</option>
+                <option value="Empresa">B2B Empresa (Distribuidor / Mayoreo)</option>
+                <option value="GobiernoPublico">B2G Gobierno / Entidad Pública</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Comprobante Fiscal</label>
+              <select
+                className="form-input"
+                value={orderForm.tipoComprobante}
+                onChange={e => setOrderForm({ ...orderForm, tipoComprobante: e.target.value })}
+              >
+                <option value="FacturaConsumidorFinal">Factura Consumidor Final</option>
+                <option value="CreditoFiscalCCF">Crédito Fiscal (CCF)</option>
+                <option value="FacturaExportacion">Factura de Exportación</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ padding: '10px 14px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+              Detalle del Producto / Ítem
+            </span>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginTop: 8 }}>
+              <div className="form-group">
+                <label className="form-label">Nombre del Producto</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={orderForm.nombreProducto}
+                  onChange={e => setOrderForm({ ...orderForm, nombreProducto: e.target.value })}
+                  placeholder="Ej: Smartphone Galaxy A54"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">SKU</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={orderForm.sku}
+                  onChange={e => setOrderForm({ ...orderForm, sku: e.target.value })}
+                  placeholder="SKU-LOGI-XXXX"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Cantidad</label>
+                <input
+                  type="number"
+                  min="1"
+                  className="form-input"
+                  value={orderForm.cantidad}
+                  onChange={e => setOrderForm({ ...orderForm, cantidad: parseInt(e.target.value) || 1 })}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Precio Unitario ($ USD)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  className="form-input"
+                  value={orderForm.precioUnitario}
+                  onChange={e => setOrderForm({ ...orderForm, precioUnitario: parseFloat(e.target.value) || 0 })}
+                  required
+                />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+            <div className="form-group">
+              <label className="form-label">Transportista Asignado</label>
+              <select
+                className="form-input"
+                value={orderForm.transportista}
+                onChange={e => setOrderForm({ ...orderForm, transportista: e.target.value })}
+              >
+                <option value="LOGIMKT Express">LOGIMKT Express (Flota Propia)</option>
+                <option value="DHL Express">DHL Express</option>
+                <option value="FedEx Logistics">FedEx Logistics</option>
+                <option value="RetiroEnBodega">Retiro en Bodega Central</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Zona de Envío</label>
+              <input
+                type="text"
+                className="form-input"
+                value={orderForm.zonaEnvio}
+                onChange={e => setOrderForm({ ...orderForm, zonaEnvio: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Costo Envío ($ USD)</label>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                className="form-input"
+                value={orderForm.costoEnvio}
+                onChange={e => setOrderForm({ ...orderForm, costoEnvio: parseFloat(e.target.value) || 0 })}
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Dirección de Entrega</label>
+            <input
+              type="text"
+              className="form-input"
+              value={orderForm.direccionEntrega}
+              onChange={e => setOrderForm({ ...orderForm, direccionEntrega: e.target.value })}
+              placeholder="Dirección completa de entrega"
+              required
+            />
+          </div>
+
+          {/* Resumen de Liquidación */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '10px 14px',
+            background: 'rgba(99,102,241,0.08)',
+            border: '1px solid rgba(99,102,241,0.2)',
+            borderRadius: 6,
+            fontSize: 12
+          }}>
+            <div>
+              <span style={{ color: 'var(--text-muted)' }}>Subtotal: </span>
+              <strong>{fmtMoney(orderForm.cantidad * orderForm.precioUnitario)}</strong>
+              <span style={{ color: 'var(--text-muted)', marginLeft: 10 }}>IVA (13%): </span>
+              <strong>{fmtMoney(Math.round(orderForm.cantidad * orderForm.precioUnitario * 0.13 * 100) / 100)}</strong>
+              <span style={{ color: 'var(--text-muted)', marginLeft: 10 }}>Envío: </span>
+              <strong>{fmtMoney(orderForm.costoEnvio)}</strong>
+            </div>
+            <div>
+              <span style={{ color: 'var(--text-muted)' }}>Total a Facturar: </span>
+              <strong style={{ fontSize: 14, color: 'var(--accent-hover)' }}>
+                {fmtMoney(
+                  orderForm.cantidad * orderForm.precioUnitario +
+                  Math.round(orderForm.cantidad * orderForm.precioUnitario * 0.13 * 100) / 100 +
+                  orderForm.costoEnvio
+                )}
+              </strong>
+            </div>
+          </div>
+        </form>
       </Modal>
     </div>
   );
