@@ -46,13 +46,24 @@ export default function OrdenesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Recuperar órdenes guardadas localmente (para persistencia total en recargas)
+    let storedLocal: Orden[] = [];
+    try {
+      const raw = localStorage.getItem('erp_ordenes_creadas');
+      if (raw) storedLocal = JSON.parse(raw);
+    } catch { /* ignore */ }
+
     try {
       const res = await ordenesApi.listar({ estado: filterEstado || undefined, tamano: 100 });
-      setOrdenes(res.ordenes);
+      const apiOrdenes = res.ordenes || [];
+      // Combinar órdenes del backend con las locales creadas por el usuario sin duplicados
+      const ids = new Set(apiOrdenes.map(o => o.id));
+      const combined = [...storedLocal.filter(o => !ids.has(o.id)), ...apiOrdenes];
+      setOrdenes(filterEstado ? combined.filter(o => o.estado === filterEstado) : combined);
     } catch {
-      // Demo data
-      setOrdenes(Array.from({ length: 20 }, (_, i) => ({
-        id: crypto.randomUUID(),
+      // Demo data combinado con las guardadas por el usuario
+      const mock: Orden[] = Array.from({ length: 15 }, (_, i) => ({
+        id: `mock-${i + 1}`,
         numeroOrden: `ORD-2026091${i}-${10000 + i}`,
         estado: ESTADOS[i % ESTADOS.length],
         tipoCliente: i % 3 === 0 ? 'Empresa' : 'ConsumidorFinal',
@@ -69,7 +80,10 @@ export default function OrdenesPage() {
         fechaCreacion: new Date(Date.now() - i * 86400000).toISOString(),
         totalItems: 1 + (i % 4),
         minutosEnEstado: i * 120,
-      })));
+      }));
+      const ids = new Set(storedLocal.map(o => o.id));
+      const combined = [...storedLocal, ...mock.filter(o => !ids.has(o.id))];
+      setOrdenes(filterEstado ? combined.filter(o => o.estado === filterEstado) : combined);
     } finally {
       setLoading(false);
     }
@@ -92,6 +106,16 @@ export default function OrdenesPage() {
         prev.map(o => (o.id === targetId ? { ...o, estado: targetEstado } : o))
       );
     } finally {
+      // Actualizar en localStorage si existe allí
+      try {
+        const raw = localStorage.getItem('erp_ordenes_creadas');
+        if (raw) {
+          const arr: Orden[] = JSON.parse(raw);
+          const updated = arr.map(o => (o.id === targetId ? { ...o, estado: targetEstado } : o));
+          localStorage.setItem('erp_ordenes_creadas', JSON.stringify(updated));
+        }
+      } catch { /* ignore */ }
+
       // Siempre reflejar el cambio en la orden seleccionada y cerrar el modal
       setSelectedOrden(prev => (prev && prev.id === targetId ? { ...prev, estado: targetEstado } : null));
       setTransModal(false);
@@ -102,17 +126,49 @@ export default function OrdenesPage() {
   const handleCrearOrden = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreatingOrder(true);
+
+    const sub = Number(orderForm.cantidad) * Number(orderForm.precioUnitario);
+    const iva = Math.round(sub * 0.13 * 100) / 100;
+    const envio = Number(orderForm.costoEnvio);
+    const nuevaLocal: Orden = {
+      id: crypto.randomUUID(),
+      numeroOrden: `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(10000 + Math.random() * 90000)}`,
+      estado: 'Pendiente',
+      tipoCliente: orderForm.tipoCliente,
+      montoTotal: sub + iva + envio,
+      subTotal: sub,
+      impuestoIva: iva,
+      costoEnvio: envio,
+      moneda: 'USD',
+      tipoComprobante: orderForm.tipoComprobante,
+      transportista: orderForm.transportista,
+      direccionEntrega: orderForm.direccionEntrega,
+      zonaEnvio: orderForm.zonaEnvio,
+      fechaCreacion: new Date().toISOString(),
+      totalItems: 1,
+      minutosEnEstado: 0,
+    };
+
+    // Guardar en localStorage para persistencia instantánea y permanente en el navegador
+    try {
+      const raw = localStorage.getItem('erp_ordenes_creadas');
+      const arr: Orden[] = raw ? JSON.parse(raw) : [];
+      localStorage.setItem('erp_ordenes_creadas', JSON.stringify([nuevaLocal, ...arr]));
+    } catch { /* ignore */ }
+
+    // Enviar al Backend .NET API (mapeando TipoCliente a número de enum: 0=B2C, 1=B2B)
+    const tipoClienteNum = orderForm.tipoCliente === 'Empresa' ? 1 : 0;
     try {
       await ordenesApi.crear({
         compradorId: crypto.randomUUID(),
         vendedorId: crypto.randomUUID(),
-        tipoCliente: orderForm.tipoCliente,
+        tipoCliente: tipoClienteNum as unknown as TipoCliente,
         tipoComprobante: orderForm.tipoComprobante,
         condicionPago: orderForm.condicionPago,
         transportista: orderForm.transportista,
         zonaEnvio: orderForm.zonaEnvio,
         direccionEntrega: orderForm.direccionEntrega,
-        costoEnvio: Number(orderForm.costoEnvio),
+        costoEnvio: envio,
         items: [
           {
             productoId: crypto.randomUUID(),
@@ -124,33 +180,11 @@ export default function OrdenesPage() {
         ],
       });
       await load();
-      setCreateModalOpen(false);
     } catch {
-      // Optimistic demo fallback
-      const sub = Number(orderForm.cantidad) * Number(orderForm.precioUnitario);
-      const iva = Math.round(sub * 0.13 * 100) / 100;
-      const envio = Number(orderForm.costoEnvio);
-      const nueva: Orden = {
-        id: crypto.randomUUID(),
-        numeroOrden: `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(10000 + Math.random() * 90000)}`,
-        estado: 'Pendiente',
-        tipoCliente: orderForm.tipoCliente,
-        montoTotal: sub + iva + envio,
-        subTotal: sub,
-        impuestoIva: iva,
-        costoEnvio: envio,
-        moneda: 'USD',
-        tipoComprobante: orderForm.tipoComprobante,
-        transportista: orderForm.transportista,
-        direccionEntrega: orderForm.direccionEntrega,
-        zonaEnvio: orderForm.zonaEnvio,
-        fechaCreacion: new Date().toISOString(),
-        totalItems: 1,
-        minutosEnEstado: 0,
-      };
-      setOrdenes(prev => [nueva, ...prev]);
-      setCreateModalOpen(false);
+      // Si la API no estuviera disponible, la orden ya está registrada localmente
+      setOrdenes(prev => [nuevaLocal, ...prev]);
     } finally {
+      setCreateModalOpen(false);
       setCreatingOrder(false);
     }
   };
