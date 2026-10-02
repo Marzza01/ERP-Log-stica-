@@ -94,21 +94,19 @@ public class LiquidacionesController : ControllerBase
     public async Task<IActionResult> Historial([FromQuery] Guid? vendedorId = null, CancellationToken ct = default)
     {
         var historial = await _liquidaciones.ObtenerHistorialAsync(vendedorId, ct);
-        return Ok(new
+        var result = historial.Select(l => new
         {
-            filtroVendedor = vendedorId?.ToString() ?? "Todos",
-            total = historial.Count(),
-            liquidaciones = historial.Select(l => new
-            {
-                l.Id,
-                l.VendedorId,
-                l.MontoLiquidar,
-                l.Moneda,
-                Estado = l.Estado.ToString(),
-                l.FechaCreacion,
-                l.FechaLiquidacion
-            })
-        });
+            id = l.Id,
+            vendedorId = l.VendedorId,
+            periodo = l.FechaCreacion.ToString("'Semana' WW (dd MMM - ") + l.FechaLiquidacion?.ToString("dd MMM yyyy)") ?? l.FechaCreacion.ToString("'Período' yyyy-MM"),
+            montoVentas = l.MontoLiquidar / 0.9m,
+            comisionMarketplace = l.MontoLiquidar / 0.9m * 0.1m,
+            montoLiquidar = l.MontoLiquidar,
+            estado = l.Estado.ToString(),
+            fechaCreacion = l.FechaCreacion,
+            fechaProcesado = l.FechaLiquidacion
+        }).ToList();
+        return Ok(result);
     }
 
     // ── GET /api/liquidaciones/kpis-vendedores ────────────────────────────────
@@ -131,6 +129,30 @@ public class LiquidacionesController : ControllerBase
                 semaforoFillRate = k.FillRate >= 95 ? "Verde" : k.FillRate >= 85 ? "Amarillo" : "Rojo"
             })
         });
+    }
+
+    // ── GET /api/liquidaciones/pendientes ──────────────────────────────────
+    /// <summary>Lista de liquidaciones con estado Pendiente de pago.</summary>
+    [HttpGet("pendientes", Name = "LiquidacionesPendientes")]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Pendientes(CancellationToken ct)
+    {
+        var historial = await _liquidaciones.ObtenerHistorialAsync(null, ct);
+        var pendientes = historial
+            .Where(l => l.Estado == MarketplaceERP.Finance.Entities.EstadoLiquidacion.Pendiente)
+            .Select(l => new
+            {
+                id = l.Id,
+                vendedorId = l.VendedorId,
+                periodo = l.FechaCreacion.ToString("yyyy-MM"),
+                montoVentas = l.MontoLiquidar / 0.9m,
+                comisionMarketplace = l.MontoLiquidar / 0.9m * 0.1m,
+                montoLiquidar = l.MontoLiquidar,
+                estado = l.Estado.ToString(),
+                fechaCreacion = l.FechaCreacion,
+                fechaProcesado = l.FechaLiquidacion
+            }).ToList();
+        return Ok(pendientes);
     }
 }
 

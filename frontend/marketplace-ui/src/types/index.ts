@@ -211,6 +211,23 @@ export interface PickList {
   items: ItemPickList[];
 }
 
+// ── PAQUETE (FULFILLMENT) ─────────────────────────────────────────────────────
+export type EstadoPaquete = 'Empacado' | 'Despachado' | 'Entregado';
+
+export interface Paquete {
+  id: string;
+  numeroGuia: string;
+  numeroOrden: string;
+  transportista: string;
+  pesoRealKg: number;
+  volumenM3: number | string;
+  municipioDestino: string;
+  departamentoDestino: string;
+  estado: EstadoPaquete;
+  fechaEmpaque: string;
+  fechaDespacho?: string;
+}
+
 // ── RMA (DEVOLUCIONES) ────────────────────────────────────────────────────────
 export type EstadoRMA = 'Solicitada' | 'Aprobada' | 'Rechazada' | 'Completada';
 export type MotivoRMA =

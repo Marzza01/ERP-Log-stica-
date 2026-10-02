@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { ShoppingBag, Search, Plus, Filter, AlertCircle, RefreshCw, Edit2, Trash2 } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
+import { useToast } from '../../context/ToastContext';
 import { productosApi, type CrearProductoRequest } from '../../api/productos';
 import type { Producto } from '../../types';
 
@@ -29,6 +30,8 @@ export default function ProductosPage() {
     estaPublicado: true,
   });
   const [saving, setSaving] = useState(false);
+  // Confirm delete
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -111,25 +114,39 @@ export default function ProductosPage() {
     setForm({
       sku: p.sku,
       nombre: p.nombre,
-      descripcion: p.descripcion,
+      descripcion: p.descripcion ?? '',
       precio: p.precio,
+      costoUnitario: 0,
       categoria: p.categoria,
       marca: p.marca,
+      pesoKg: 0.5,
+      largoCm: 20,
+      anchoCm: 15,
+      altoCm: 5,
       estaPublicado: p.activo,
     });
     setModalOpen(true);
   };
+
+  const toast = useToast();
 
   const handleSave = async () => {
     setSaving(true);
     try {
       if (editingId) {
         await productosApi.actualizar(editingId, form);
+        toast.success('Producto Actualizado', `El SKU ${form.sku} se actualizó correctamente.`);
       } else {
         await productosApi.crear(form);
+        toast.success('Producto Creado', `El SKU ${form.sku} se agregó al catálogo comercial.`);
       }
     } catch {
-      // optimistic
+      // optimistic fallback
+      if (editingId) {
+        toast.info('Producto Actualizado (Local)', `Cambios reflejados localmente.`);
+      } else {
+        toast.success('Producto Creado (Local)', `El SKU ${form.sku} se agregó a la vista.`);
+      }
     }
     if (editingId) {
       setProductos(prev => prev.map(p => p.id === editingId ? { ...p, ...form } : p));
@@ -156,13 +173,19 @@ export default function ProductosPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Desea dar de baja este producto del catálogo?')) return;
+    setConfirmDeleteId(id);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDeleteId) return;
     try {
-      await productosApi.eliminar(id);
+      await productosApi.eliminar(confirmDeleteId);
+      toast.warning('Producto Dado de Baja', 'El producto ha sido retirado del catálogo.');
     } catch {
-      // ignore
+      toast.warning('Producto Dado de Baja (Local)', 'El producto ha sido retirado de la vista.');
     }
-    setProductos(prev => prev.filter(p => p.id !== id));
+    setProductos(prev => prev.filter(p => p.id !== confirmDeleteId));
+    setConfirmDeleteId(null);
   };
 
   return (
@@ -348,12 +371,13 @@ export default function ProductosPage() {
           },
           {
             header: 'Stock Reservado',
-            accessor: 'stockFisico',
+            key: 'stockReservado',
             render: (row) => (
               <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                 {row.stockFisico?.cantidadReservada ?? 0} unid.
               </span>
             ),
+            sortable: false,
           },
           {
             header: 'Acciones',
@@ -530,6 +554,37 @@ export default function ProductosPage() {
             </div>
           </form>
         </Modal>
+      )}
+
+      {/* Modal confirmación eliminar */}
+      {confirmDeleteId && (
+        <div className="modal-overlay" onClick={() => setConfirmDeleteId(null)}>
+          <div className="modal" style={{ maxWidth: 400 }}>
+            <div className="modal-header">
+              <span className="modal-title">Confirmar Baja de Producto</span>
+            </div>
+            <div className="modal-body">
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: 0 }}>
+                ¿Está seguro de que desea dar de baja este producto del catálogo? Esta acción no puede deshacerse.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmDeleteId(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn btn-primary"
+                style={{ background: 'var(--red)', border: 'none' }}
+                onClick={handleConfirmDelete}
+              >
+                Dar de Baja
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

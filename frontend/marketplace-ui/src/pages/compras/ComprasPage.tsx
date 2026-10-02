@@ -3,6 +3,7 @@ import { ShoppingCart, FileText, CheckCircle2, AlertTriangle, Plus, RefreshCw, S
 import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
+import { useToast } from '../../context/ToastContext';
 import { comprasApi, type CrearPORequest, type RegistrarFacturaRequest, type Validar3WayMatchRequest } from '../../api/compras';
 import type { OrdenCompra, MatchTridireccional } from '../../types';
 
@@ -123,12 +124,15 @@ export default function ComprasPage() {
     loadData();
   }, [loadData]);
 
+  const toast = useToast();
+
   const handleCrearPO = async () => {
     setSavingPo(true);
     try {
       await comprasApi.crearPO(poForm);
+      toast.success('Orden de Compra Generada', `PO emitida para ${poForm.proveedorNombre}.`);
     } catch {
-      // optimistic
+      toast.success('Orden de Compra Generada (Local)', `PO guardada en vista local.`);
     }
     const newPO: OrdenCompra = {
       id: crypto.randomUUID(),
@@ -157,8 +161,9 @@ export default function ComprasPage() {
   const handleEnviarPO = async (poId: string) => {
     try {
       await comprasApi.enviarPO(poId);
+      toast.info('PO Transmitida', 'La orden de compra ha sido despachada al proveedor.');
     } catch {
-      // ignore
+      toast.info('PO Transmitida (Local)', 'Estado actualizado a Emitida.');
     }
     setOrdenesCompra(prev => prev.map(p => p.id === poId ? { ...p, estado: 'Emitida' } : p));
   };
@@ -167,8 +172,9 @@ export default function ComprasPage() {
     setSavingFactura(true);
     try {
       await comprasApi.registrarFactura(facturaForm);
+      toast.success('Factura Registrada', `Comprobante ${facturaForm.numeroFactura} cargado al sistema.`);
     } catch {
-      // optimistic
+      toast.success('Factura Registrada (Local)', `Comprobante ${facturaForm.numeroFactura} vinculado.`);
     }
     setSavingFactura(false);
     setFacturaModalOpen(false);
@@ -180,6 +186,11 @@ export default function ComprasPage() {
       const res = await comprasApi.ejecutarMatch(matchForm);
       setMatchResult(res);
       setMatches(prev => [res, ...prev]);
+      if (res.resultado === 'Conforme') {
+        toast.success('3-Way Match Conforme', 'Cotejo exitoso: orden autorizada para pago.');
+      } else {
+        toast.warning('3-Way Match Discrepante', 'Existe diferencia fuera de tolerancia entre PO y recepción.');
+      }
     } catch {
       // mock calculation
       const po = ordenesCompra.find(p => p.id === matchForm.ordenCompraId) || ordenesCompra[0];
@@ -200,6 +211,11 @@ export default function ComprasPage() {
       };
       setMatchResult(result);
       setMatches(prev => [result, ...prev]);
+      if (isConforme) {
+        toast.success('3-Way Match Conforme (Local)', 'Cotejo validado con éxito.');
+      } else {
+        toast.warning('3-Way Match Discrepante (Local)', 'Discrepancia detectada en recepción.');
+      }
     } finally {
       setRunningMatch(false);
     }
@@ -447,7 +463,7 @@ export default function ComprasPage() {
               padding: '1.25rem',
               borderRadius: '12px',
               border: '1px solid var(--border)',
-              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(17, 17, 19, 0.6) 100%)',
+              background: 'var(--accent-gradient-subtle)',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',

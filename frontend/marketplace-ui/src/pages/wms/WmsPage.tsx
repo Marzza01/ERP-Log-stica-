@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { MapPin, RefreshCw, MoveRight } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
+import AlertBanner from '../../components/ui/AlertBanner';
 import { wmsApi } from '../../api/wms';
 import type { UbicacionAlmacen, ResumenBodega } from '../../types';
 
@@ -129,9 +130,11 @@ export default function WmsPage() {
           </div>
 
           {resumen.alertasCapacidad.length > 0 && (
-            <div style={{ background: 'var(--yellow-bg)', border: '1px solid var(--yellow)', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: 12, color: 'var(--yellow)', marginBottom: 16, display: 'flex', gap: 8 }}>
-              ⚠ {resumen.alertasCapacidad.join(' · ')}
-            </div>
+            <AlertBanner
+              variant="warning"
+              title="Capacidad de Almacenamiento en Riesgo"
+              message={resumen.alertasCapacidad.join(' · ')}
+            />
           )}
         </>
       )}

@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { PickList } from '../types';
+import type { PickList, Paquete } from '../types';
 
 export interface GenerarPickListResponse {
   mensaje: string;
@@ -48,7 +48,7 @@ export const fulfillmentApi = {
     apiClient.post<any>(`/api/fulfillment/picklists/${pickListId}/confirmar`, confirmaciones),
 
   listarPaquetes: (estado?: string) =>
-    apiClient.get<any[]>(`/api/fulfillment/paquetes${estado ? `?estado=${estado}` : ''}`),
+    apiClient.get<Paquete[]>(`/api/fulfillment/paquetes${estado ? `?estado=${estado}` : ''}`),
 
   empacar: (ordenId: string, req: EmpacarRequest) =>
     apiClient.post<any>(`/api/fulfillment/ordenes/${ordenId}/empacar`, req),

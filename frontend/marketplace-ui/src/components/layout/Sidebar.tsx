@@ -7,9 +7,20 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
+interface NavItem {
+  to: string;
+  icon: React.ReactNode;
+  label: string;
+  shortLabel?: string;
+  badge?: {
+    count: number | string;
+    variant: 'danger' | 'warning' | 'info';
+  };
+}
+
 interface NavGroup {
   label: string;
-  items: { to: string; icon: React.ReactNode; label: string; shortLabel?: string }[];
+  items: NavItem[];
 }
 
 const navGroups: NavGroup[] = [
@@ -17,23 +28,53 @@ const navGroups: NavGroup[] = [
     label: 'Principal',
     items: [
       { to: '/dashboard', icon: <LayoutDashboard size={16} />, label: 'Dashboard',     shortLabel: 'Dashboard' },
-      { to: '/ordenes',   icon: <ShoppingCart size={16} />,    label: 'Órdenes',       shortLabel: 'Órdenes' },
+      {
+        to: '/ordenes',
+        icon: <ShoppingCart size={16} />,
+        label: 'Órdenes',
+        shortLabel: 'Órdenes',
+        badge: { count: '3', variant: 'warning' },
+      },
     ],
   },
   {
     label: 'Operaciones',
     items: [
-      { to: '/wms',         icon: <Warehouse size={16} />,   label: 'WMS / Bodega',   shortLabel: 'Bodega' },
+      {
+        to: '/wms',
+        icon: <Warehouse size={16} />,
+        label: 'WMS / Bodega',
+        shortLabel: 'Bodega',
+        badge: { count: '1', variant: 'danger' },
+      },
       { to: '/fulfillment', icon: <Truck size={16} />,        label: 'Fulfillment',    shortLabel: 'Fulfillment' },
-      { to: '/rma',         icon: <RotateCcw size={16} />,    label: 'Devoluciones',   shortLabel: 'Devoluciones' },
-      { to: '/compras',     icon: <ShoppingBag size={16} />,  label: 'Compras',        shortLabel: 'Compras' },
+      {
+        to: '/rma',
+        icon: <RotateCcw size={16} />,
+        label: 'Devoluciones',
+        shortLabel: 'Devoluciones',
+        badge: { count: '2', variant: 'warning' },
+      },
+      {
+        to: '/compras',
+        icon: <ShoppingBag size={16} />,
+        label: 'Compras',
+        shortLabel: 'Compras',
+        badge: { count: '3', variant: 'info' },
+      },
     ],
   },
   {
     label: 'Finanzas',
     items: [
       { to: '/contabilidad',  icon: <BookOpen size={16} />, label: 'Contabilidad',   shortLabel: 'Contabilidad' },
-      { to: '/liquidaciones', icon: <Wallet size={16} />,   label: 'Liquidaciones',  shortLabel: 'Pagos' },
+      {
+        to: '/liquidaciones',
+        icon: <Wallet size={16} />,
+        label: 'Liquidaciones',
+        shortLabel: 'Pagos',
+        badge: { count: '2', variant: 'warning' },
+      },
       { to: '/productos',     icon: <Package size={16} />,  label: 'Productos',      shortLabel: 'Productos' },
     ],
   },
@@ -91,6 +132,11 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                   <span className="nav-label nav-label-full">{item.label}</span>
                   {item.shortLabel && (
                     <span className="nav-label nav-label-short">{item.shortLabel}</span>
+                  )}
+                  {item.badge && !collapsed && (
+                    <span className={`nav-badge-pill nav-badge-${item.badge.variant}`}>
+                      {item.badge.count}
+                    </span>
                   )}
                 </NavLink>
               ))}

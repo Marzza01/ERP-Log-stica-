@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { TrendingUp, ShoppingCart, Package, DollarSign, RefreshCw } from 'lucide-react';
 import KpiCard from '../../components/ui/KpiCard';
+import AlertBanner from '../../components/ui/AlertBanner';
 import { kpisApi } from '../../api/kpis';
 import type { DashboardKpis, ModeloFinanciero } from '../../types';
 
@@ -131,15 +132,22 @@ export default function DashboardPage() {
       </div>
 
       {error && (
-        <div style={{ background: 'var(--yellow-bg)', border: '1px solid var(--yellow)', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: 12, color: 'var(--yellow)', marginBottom: 16 }}>
-          ⚠ {error}
-        </div>
+        <AlertBanner
+          variant="warning"
+          title="Modo Demo / Datos Simulados"
+          message={error}
+          action={{
+            label: 'Reintentar',
+            onClick: load,
+          }}
+          onClose={() => setError(null)}
+        />
       )}
 
       {/* Resumen ejecutivo neutro y uniforme */}
       <div className="stat-grid">
-        {statCards.map(s => (
-          <div className="stat-card" key={s.label}>
+        {statCards.map((s, i) => (
+          <div className={`stat-card animate-in stagger-${i + 1}`} key={s.label}>
             <div className="stat-icon-wrap">
               {s.icon}
             </div>
@@ -178,7 +186,7 @@ export default function DashboardPage() {
       {modelo && (
         <div className="grid-2" style={{ marginTop: 0 }}>
           {/* Proyección 12 meses */}
-          <div className="chart-container">
+          <div className="chart-container animate-in stagger-6">
             <div className="chart-header">
               <div>
                 <div className="card-title">Proyección Financiera 12 Meses</div>
@@ -189,7 +197,7 @@ export default function DashboardPage() {
               <LineChart data={modelo.meses} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
                 <XAxis dataKey="periodo" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => v.slice(5)} />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} />
                 <Tooltip
                   contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11 }}
                   formatter={(v: unknown) => v !== undefined ? [`$${Number(v).toFixed(0)}`, undefined] : []}
@@ -203,7 +211,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Bar chart resumen anual */}
-          <div className="chart-container">
+          <div className="chart-container animate-in stagger-7">
             <div className="chart-header">
               <div>
                 <div className="card-title">Resumen Anual Proyectado</div>
@@ -229,7 +237,7 @@ export default function DashboardPage() {
               <BarChart data={modelo.meses.slice(0, 6)} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
                 <XAxis dataKey="periodo" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => v.slice(5)} />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} />
                 <Tooltip contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11 }} formatter={(v: unknown) => v !== undefined ? [`$${Number(v).toFixed(0)}`] : []} />
                 <Bar dataKey="comisionMarketplace" name="Comisión" fill="#6366f1" radius={[3, 3, 0, 0]} />
                 <Bar dataKey="utilidadNeta" name="Utilidad" fill="#22c55e" radius={[3, 3, 0, 0]} />

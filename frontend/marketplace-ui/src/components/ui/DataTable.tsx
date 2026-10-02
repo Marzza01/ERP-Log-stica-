@@ -126,6 +126,7 @@ export default function DataTable<T>({
                     key={k}
                     onClick={() => col.sortable !== false && handleSort(k)}
                     className={col.className}
+                    style={{ cursor: col.sortable !== false ? 'pointer' : 'default' }}
                   >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       {col.header}
@@ -161,9 +162,20 @@ export default function DataTable<T>({
                     </div>
                     <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 600 }}>{emptyMsg}</span>
                     <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '4px 0 12px' }}>
-                      {search ? 'Intenta con otro término o limpia el filtro de búsqueda.' : 'No hay registros cargados en esta vista.'}
+                      {search ? `No se encontraron coincidencias para "${search}".` : 'No hay registros disponibles en esta vista.'}
                     </p>
-                    {emptyAction && <div>{emptyAction}</div>}
+                    {search ? (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setSearch('')}
+                        style={{ fontSize: 12, padding: '4px 12px' }}
+                      >
+                        Limpiar búsqueda
+                      </button>
+                    ) : (
+                      emptyAction && <div>{emptyAction}</div>
+                    )}
                   </div>
                 </td>
               </tr>

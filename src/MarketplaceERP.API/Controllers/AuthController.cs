@@ -9,14 +9,14 @@ using Microsoft.IdentityModel.Tokens;
 namespace MarketplaceERP.API.Controllers;
 
 /// <summary>
-/// Request de login.
+/// Request de login compatible con Username o Email.
 /// </summary>
-public record LoginRequest(string Username, string Password);
+public record LoginRequest(string? Username, string? Password, string? Email = null);
 
 /// <summary>
-/// Response de login exitoso.
+/// Response de login exitoso con soporte de campos duales para frontend.
 /// </summary>
-public record LoginResponse(string Token, string Role, DateTime ExpiresAt);
+public record LoginResponse(string Token, string Role, DateTime ExpiresAt, string Usuario, string Rol);
 
 /// <summary>
 /// Controlador de autenticación JWT.
@@ -27,14 +27,15 @@ public record LoginResponse(string Token, string Role, DateTime ExpiresAt);
 public class AuthController : ControllerBase
 {
     /// <summary>
-    /// Usuarios de prueba hardcodeados en memoria (solo para desarrollo inicial).
-    /// En producción, reemplazar por consulta a base de datos con hash de contraseñas.
+    /// Usuarios de prueba en memoria para desarrollo.
     /// </summary>
-    private static readonly Dictionary<string, (string Hash, string Role)> _usuarios = new()
+    private static readonly Dictionary<string, (string Hash, string Role, string Nombre)> _usuarios = new()
     {
-        ["admin"]      = ("admin123", "Admin"),
-        ["vendedor1"]  = ("pass",     "Vendedor"),
-        ["comprador1"] = ("pass",     "Comprador"),
+        ["admin"]             = ("admin1234", "Admin", "Administrador"),
+        ["admin123"]          = ("admin123",  "Admin", "Administrador"),
+        ["admin@logimkt.com"] = ("admin1234", "Admin", "Gerson Melgar (Admin)"),
+        ["vendedor1"]         = ("pass",      "Vendedor", "Vendedor Principal"),
+        ["comprador1"]        = ("pass",      "Comprador", "Comprador Demo"),
     };
 
     private readonly JwtSettings _jwtSettings;
@@ -58,23 +59,27 @@ public class AuthController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public IActionResult Login([FromBody] LoginRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
-            return BadRequest(new { mensaje = "Usuario y contraseña son obligatorios." });
+        var loginId = !string.IsNullOrWhiteSpace(request.Username)
+            ? request.Username
+            : request.Email;
 
-        if (!_usuarios.TryGetValue(request.Username.ToLower(), out var userData) ||
+        if (string.IsNullOrWhiteSpace(loginId) || string.IsNullOrWhiteSpace(request.Password))
+            return BadRequest(new { mensaje = "Usuario/correo y contraseña son obligatorios." });
+
+        if (!_usuarios.TryGetValue(loginId.ToLower().Trim(), out var userData) ||
             userData.Hash != request.Password)
         {
-            _logger.LogWarning("Intento de login fallido para el usuario: {Username}", request.Username);
+            _logger.LogWarning("Intento de login fallido para: {LoginId}", loginId);
             return Unauthorized(new { mensaje = "Credenciales inválidas." });
         }
 
-        var token = GenerarToken(request.Username, userData.Role);
+        var token = GenerarToken(loginId, userData.Role);
         var expiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpirationMinutes);
 
         _logger.LogInformation(
-            "Login exitoso. Usuario={Username}, Rol={Role}", request.Username, userData.Role);
+            "Login exitoso. Usuario={LoginId}, Rol={Role}", loginId, userData.Role);
 
-        return Ok(new LoginResponse(token, userData.Role, expiresAt));
+        return Ok(new LoginResponse(token, userData.Role, expiresAt, userData.Nombre, userData.Role));
     }
 
     private string GenerarToken(string username, string role)

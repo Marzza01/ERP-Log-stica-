@@ -23,7 +23,7 @@ namespace MarketplaceERP.API.Controllers;
 ///   8. Margen de Comisión Marketplace (10%)
 /// </summary>
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/kpis-dashboard")]
 [Produces("application/json")]
 public class KpisDashboardController : ControllerBase
 {

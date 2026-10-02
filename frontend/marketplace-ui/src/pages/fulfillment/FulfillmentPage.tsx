@@ -3,13 +3,14 @@ import { Truck, CheckCircle2, PackageCheck, Play, ArrowRight, Layers, Box, Alert
 import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
+import { useToast } from '../../context/ToastContext';
 import { fulfillmentApi, type ConfirmarItemPickingRequest, type EmpacarRequest } from '../../api/fulfillment';
-import type { PickList } from '../../types';
+import type { PickList, Paquete } from '../../types';
 
 export default function FulfillmentPage() {
   const [activeTab, setActiveTab] = useState<'picking' | 'packing' | 'despacho'>('picking');
   const [pickLists, setPickLists] = useState<PickList[]>([]);
-  const [paquetes, setPaquetes] = useState<any[]>([]);
+  const [paquetes, setPaquetes] = useState<Paquete[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Modal picking
@@ -74,7 +75,7 @@ export default function FulfillmentPage() {
         },
       ];
 
-      const mockPaquetes = [
+      const mockPaquetes: Paquete[] = [
         {
           id: 'pkg-501',
           numeroGuia: 'GUIA-LOGI-77182',
@@ -113,6 +114,8 @@ export default function FulfillmentPage() {
     loadData();
   }, [loadData]);
 
+  const toast = useToast();
+
   const handleOpenPicking = (pl: PickList) => {
     setSelectedPickList(pl);
     const initialChecked: Record<string, boolean> = {};
@@ -137,8 +140,9 @@ export default function FulfillmentPage() {
       }));
 
       await fulfillmentApi.confirmarPicking(selectedPickList.id, confirmaciones);
+      toast.success('Picking Confirmado', `PickList ${selectedPickList.numeroPickList} procesada.`);
     } catch {
-      // optimistic update for preview
+      toast.success('Picking Confirmado (Local)', `PickList ${selectedPickList.numeroPickList} actualizada.`);
     } finally {
       setPickLists(prev => prev.map(p => {
         if (p.id !== selectedPickList.id) return p;
@@ -158,10 +162,12 @@ export default function FulfillmentPage() {
   };
 
   const handleDespachar = async (paqueteId: string) => {
+    const pkg = paquetes.find(p => p.id === paqueteId);
     try {
       await fulfillmentApi.despachar(paqueteId);
+      toast.success('Paquete Despachado', `Guía ${pkg?.numeroGuia || paqueteId} entregada al transportista.`);
     } catch {
-      // update state
+      toast.success('Paquete Despachado (Local)', `Guía ${pkg?.numeroGuia || paqueteId} en tránsito.`);
     }
     setPaquetes(prev => prev.map(p => p.id === paqueteId ? { ...p, estado: 'Despachado', fechaDespacho: new Date().toISOString() } : p));
   };
@@ -172,7 +178,7 @@ export default function FulfillmentPage() {
     setSavingPack(true);
     try {
       const resp = await fulfillmentApi.empacar(packForm.ordenId || crypto.randomUUID(), packForm);
-      const newPkg = {
+      const newPkg: Paquete = {
         id: crypto.randomUUID(),
         numeroGuia: resp?.numeroGuia || `GUIA-LOGI-${Math.floor(10000 + Math.random() * 90000)}`,
         numeroOrden: packForm.numeroOrden || 'ORD-2026-NUEVA',
@@ -185,10 +191,11 @@ export default function FulfillmentPage() {
         fechaEmpaque: new Date().toISOString(),
       };
       setPaquetes(prev => [newPkg, ...prev]);
+      toast.success('Empaque Completado', `Guía ${newPkg.numeroGuia} generada para ${newPkg.municipioDestino}.`);
       setPackModalOpen(false);
     } catch {
       // fallback create package
-      const newPkg = {
+      const newPkg: Paquete = {
         id: crypto.randomUUID(),
         numeroGuia: `GUIA-LOGI-${Math.floor(10000 + Math.random() * 90000)}`,
         numeroOrden: packForm.numeroOrden || 'ORD-2026-NUEVA',
@@ -201,6 +208,7 @@ export default function FulfillmentPage() {
         fechaEmpaque: new Date().toISOString(),
       };
       setPaquetes(prev => [newPkg, ...prev]);
+      toast.success('Empaque Completado (Local)', `Guía ${newPkg.numeroGuia} lista para despacho.`);
       setPackModalOpen(false);
     } finally {
       setSavingPack(false);

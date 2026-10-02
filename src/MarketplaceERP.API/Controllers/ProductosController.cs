@@ -157,6 +157,7 @@ public class ProductosController : ControllerBase
     /// Alertas logísticas de inventario: Productos en o bajo el punto de reorden / stock mínimo.
     /// </summary>
     [HttpGet("alertas-stock")]
+    [HttpGet("alertas-reorden")]
     [ProducesResponseType(typeof(IEnumerable<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAlertasStock()
     {

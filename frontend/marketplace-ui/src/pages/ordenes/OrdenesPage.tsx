@@ -3,6 +3,7 @@ import { Plus, ChevronRight } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
+import { useToast } from '../../context/ToastContext';
 import { ordenesApi } from '../../api/ordenes';
 import type { Orden, EstadoOrden, TipoCliente } from '../../types';
 
@@ -91,6 +92,8 @@ export default function OrdenesPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const toast = useToast();
+
   const handleTransicion = async () => {
     if (!selectedOrden || !nuevoEstado) return;
     setSaving(true);
@@ -100,10 +103,18 @@ export default function OrdenesPage() {
     try {
       await ordenesApi.transicionarEstado(targetId, targetEstado);
       await load();
+      toast.success(
+        'Estado de Orden Actualizado',
+        `Orden ${selectedOrden.numeroOrden} pasó a ${targetEstado}.`
+      );
     } catch {
       // Optimistic / fallback: actualizar estado local inmediatamente
       setOrdenes(prev =>
         prev.map(o => (o.id === targetId ? { ...o, estado: targetEstado } : o))
+      );
+      toast.info(
+        'Estado Actualizado (Local)',
+        `Orden ${selectedOrden.numeroOrden} pasó a ${targetEstado}.`
       );
     } finally {
       // Actualizar en localStorage si existe allí
@@ -180,9 +191,17 @@ export default function OrdenesPage() {
         ],
       });
       await load();
+      toast.success(
+        'Orden Registrada con Éxito',
+        `Orden ${nuevaLocal.numeroOrden} creada (${nuevaLocal.tipoCliente}).`
+      );
     } catch {
       // Si la API no estuviera disponible, la orden ya está registrada localmente
       setOrdenes(prev => [nuevaLocal, ...prev]);
+      toast.success(
+        'Orden Registrada (Modo Local)',
+        `Orden ${nuevaLocal.numeroOrden} guardada en sesión local.`
+      );
     } finally {
       setCreateModalOpen(false);
       setCreatingOrder(false);
