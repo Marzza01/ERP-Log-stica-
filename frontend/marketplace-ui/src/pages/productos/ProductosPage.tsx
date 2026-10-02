@@ -37,7 +37,27 @@ export default function ProductosPage() {
     setLoading(true);
     try {
       const res = await productosApi.listar(1, 100);
-      setProductos(res.items || []);
+      const rawItems = res.items || (Array.isArray(res) ? res : []);
+      const mapped: Producto[] = rawItems.map((item: any, idx: number) => ({
+        id: item.id || `prod-${idx + 1}`,
+        sku: item.sku || `SKU-${idx + 1}`,
+        nombre: item.nombre || 'Producto Sin Nombre',
+        descripcion: item.descripcion || '',
+        precio: Number(item.precio ?? item.precioB2C ?? item.precioBase ?? 0),
+        categoria: item.categoria || item.categoriaNombre || 'Tecnología',
+        marca: item.marca || item.proveedorNombre || 'LOGIMKT',
+        activo: item.activo ?? item.estaPublicado ?? true,
+        stockFisico: item.stockFisico || (item.stock ? {
+          cantidadDisponible: item.stock.cantidadDisponible ?? 0,
+          cantidadReservada: item.stock.cantidadReservada ?? 0,
+          cantidadTotal: item.stock.cantidadTotal ?? 0,
+        } : {
+          cantidadDisponible: 15,
+          cantidadReservada: 0,
+          cantidadTotal: 15,
+        }),
+      }));
+      setProductos(mapped);
     } catch {
       // Fallback demo data
       const cats = ['Tecnología', 'Audio & Video', 'Periféricos Gamer', 'Cómputo', 'Accesorios'];
@@ -149,15 +169,32 @@ export default function ProductosPage() {
       }
     }
     if (editingId) {
-      setProductos(prev => prev.map(p => p.id === editingId ? { ...p, ...form } : p));
+      setProductos(prev => prev.map(p => {
+        if (p.id !== editingId) return p;
+        return {
+          ...p,
+          sku: form.sku || p.sku,
+          nombre: form.nombre || p.nombre,
+          descripcion: form.descripcion ?? p.descripcion,
+          precio: Number(form.precio) || 0,
+          categoria: form.categoria || p.categoria || 'Tecnología',
+          marca: form.marca || p.marca || 'N/A',
+          activo: form.estaPublicado ?? p.activo ?? true,
+          stockFisico: p.stockFisico || {
+            cantidadDisponible: 20,
+            cantidadReservada: 0,
+            cantidadTotal: 20,
+          },
+        };
+      }));
     } else {
       const nuevo: Producto = {
         id: crypto.randomUUID(),
-        sku: form.sku,
-        nombre: form.nombre,
-        descripcion: form.descripcion,
-        precio: form.precio,
-        categoria: form.categoria,
+        sku: form.sku || `SKU-LOGI-${Math.floor(1000 + Math.random() * 9000)}`,
+        nombre: form.nombre || 'Nuevo Producto',
+        descripcion: form.descripcion || '',
+        precio: Number(form.precio) || 0,
+        categoria: form.categoria || 'Tecnología',
         marca: form.marca || 'N/A',
         activo: form.estaPublicado ?? true,
         stockFisico: {
@@ -344,7 +381,7 @@ export default function ProductosPage() {
             accessor: 'precio',
             render: (row) => (
               <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text-primary)' }}>
-                ${row.precio.toFixed(2)}
+                ${(Number(row.precio) || 0).toFixed(2)}
               </span>
             ),
           },
