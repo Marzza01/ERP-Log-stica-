@@ -119,6 +119,161 @@ A continuación se presenta la documentación detallada por cada célula de trab
 
 ---
 
+## 🎓 GUÍA MAGISTRAL DE DEFENSA TÉCNICA: CÓMO SE CONSTRUYÓ EL ERP MODULAR
+
+> **Propósito:** Esta sección proporciona a los 3 grupos (A, B y C) la explicación exacta de **cómo se creó cada componente**, **qué arquitectura lo sostiene**, **cómo se conectan entre sí** y **las respuestas clave a las preguntas de auditoría** del docente.
+
+```
+                         ┌────────────────────────────────────────────────────────┐
+                         │               MARKETPLACE-UI (React 18 + Vite)         │
+                         │   Dashboard KPIs · Órdenes · WMS · Compras · Finanzas  │
+                         └───────────────────────────┬────────────────────────────┘
+                                                     │ Proxy /api (CORS Free)
+                                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   CAPA DE COMPOSICIÓN (API Core)                                │
+│                     Program.cs · JWT Bearer (Claims) · Swagger · HealthChecks                   │
+├────────────────────────────────┬────────────────────────────────┬───────────────────────────────┤
+│          GRUPO A               │            GRUPO B             │            GRUPO C            │
+│   MarketplaceERP.Catalog       │     MarketplaceERP.Finance     │      MarketplaceERP.Core      │
+│   (Esquema: "catalog")         │      (Esquema: "finance")      │       (Esquema: "core")       │
+│                                │                                │                               │
+│ • 500 SKUs con 16 atributos    │ • Máquina de 6 estados OMS     │ • Vendedores y Compradores    │
+│ • Stock físico vs Reservado    │ • 3-Way Matching automatizado  │ • Motor de comisiones (10%)   │
+│ • WMS (Pasillos, Racks, Nivel) │ • Split de pagos (90 / 10)     │ • Contratos de interfaz DTOs  │
+│ • Fulfillment (Pick/Pack)      │ • Saga del Checkout            │ • Auditoría y conciliación    │
+└────────────────────────────────┴────────────────────────────────┴───────────────────────────────┘
+                                                 │
+                                                 ▼
+                                     POSTGRESQL 15 (Multi-Schema)
+```
+
+---
+
+### 1. Arquitectura Base: ¿Por qué es un Monolito Modular y cómo se "separó y unió"?
+
+#### ¿Cómo se creó técnicamente?
+1. **Solución desacoplada en .NET 8:** No es un proyecto único ni espagueti. La solución [`MarketplaceERP.sln`](MarketplaceERP.sln) contiene bibliotecas de clases (`.csproj`) independientes:
+   - `MarketplaceERP.Catalog` (Grupo A)
+   - `MarketplaceERP.Finance` (Grupo B)
+   - `MarketplaceERP.Core` (Grupo B / Maestro)
+   - `MarketplaceERP.Shared` (Contratos, excepciones e interfaces)
+   - `MarketplaceERP.API` (Punto de entrada y composición)
+2. **Aislamiento a nivel de Base de Datos (PostgreSQL):** Cada grupo tiene su propio `DbContext` y su propio esquema SQL aislado en Postgres (`catalog`, `finance`, `core`). **No existen llaves foráneas directas en SQL entre esquemas diferentes.** La relación se hace mediante identificadores universales (`Guid`) y DTOs en `Shared`.
+3. **Inyección de Dependencias Limpia:** En [`Program.cs`](src/MarketplaceERP.API/Program.cs), cada grupo tiene su propio método de extensión (`AddCatalogServices`, `AddFinanceServices`, `AddCoreServices`). Cada uno registra sus servicios sin conocer los detalles internos de los demás.
+
+> **💡 Argumento para la defensa:**  
+> *"Profesor, adoptamos el patrón Monolito Modular alineado con SAFe Enterprise. Cada grupo trabajó en su propio proyecto y esquema de base de datos. La 'unión' no fue mezclar código en un archivo, sino inyectar las dependencias en `Program.cs` y comunicarnos mediante interfaces de contrato definidas en `MarketplaceERP.Shared`."*
+
+---
+
+### 2. GRUPO A: Módulo de Inventario, WMS y Catálogo Maestro
+
+#### ¿Cómo se crearon los avances del Grupo A?
+1. **El Catálogo de 500 SKUs con 16 atributos:**
+   - **Problema:** Un catálogo ERP real no es solo "nombre y precio", requiere dimensiones, cubicaje, peso y precios B2B/B2C.
+   - **Implementación:** Se construyó la entidad [`Producto.cs`](src/MarketplaceERP.Catalog/Entities/Producto.cs) y el servicio `CatalogImportService`. Se diseñó un parser capaz de leer el archivo `Catalogo_500_Productos.csv` e importar los 500 registros con validación de tipos, evitando duplicados de SKU y asignando proveedores salvadoreños y puntos de reorden automático.
+2. **Control de Stock Físico vs. Stock Reservado:**
+   - **Implementación:** Se modeló [`StockFisico.cs`](src/MarketplaceERP.Catalog/Entities/StockFisico.cs) con 3 contadores vitales:
+     - `CantidadDisponible`: Lo que realmente se puede vender en la tienda.
+     - `CantidadReservada`: Lo que está comprometido en órdenes pendientes o en empaque.
+     - `CantidadTotal`: $Disponible + Reservada$.
+   - Esto previene el **overselling (sobreventa)**: cuando entra una orden en el OMS, se reserva inmediatamente sin descontar físicamente hasta el despacho.
+3. **Mapeo Dinámico de Bodega WMS:**
+   - **Implementación:** Se crearon las entidades de ubicación (`Pasillo`, `Rack`, `Nivel`, `Posición`). En la vista `/wms`, el sistema consulta la capacidad de cada pasillo y emite alertas automáticas cuando un pasillo supera el 90% de saturación.
+4. **Fulfillment (Picking, Packing y Despacho):**
+   - **Implementación:** Al confirmarse una orden, se genera un `PickList` con los artículos ordenados por secuencia óptima de pasillo para reducir tiempos de recorrido del operario. Al empacar, se calcula el **peso volumétrico** (`(Largo × Ancho × Alto) / 5000`) y se asigna la guía de transporte (ej. `LOGIMKT Express`).
+
+> **💡 Pregunta de Examen Grupo A:**  
+> *"¿Cómo evita el sistema que dos clientes compren el último artículo al mismo tiempo?"*  
+> **Respuesta:**  
+> *"A través de la entidad `ReservaStock`. Al procesar el checkout, el OMS llama a `IStockService.ReservarStockAsync()`. Esta operación valida atómicamente el stock disponible. Si la cantidad disponible es menor a la solicitada, se lanza `StockInsuficienteException` (HTTP 409) antes de cobrar el dinero en la pasarela."*
+
+---
+
+### 3. GRUPO B: OMS (Order Management System), Finanzas y Compras
+
+#### ¿Cómo se crearon los avances del Grupo B?
+1. **Máquina de Estados del Pedido (Flujo de 6 Estados):**
+   - **Implementación:** En [`OrdenesPage.tsx`](frontend/marketplace-ui/src/pages/ordenes/OrdenesPage.tsx) y en el backend se implementó una máquina de transiciones estrictas:  
+     $$\text{Pendiente} \longrightarrow \text{Aprobada} \longrightarrow \text{EnProceso} \longrightarrow \text{Enviada} \longrightarrow \text{Entregada}$$  
+     No se puede saltar de *Pendiente* a *Entregada* directamente. Si se cancela en estados tempranos, se dispara la compensación para liberar el stock reservado.
+2. **Diferenciación B2B vs. B2C:**
+   - **B2C:** Compra inmediata desde $5 con Factura de Consumidor Final y cálculo de IVA al 13%.
+   - **B2B:** Pedidos mayoristas con compras mínimas de $500, generación de Crédito Fiscal (CCF) y condiciones de crédito comercial (30 a 60 días).
+3. **Match Tridireccional (3-Way Matching):**
+   - **Problema:** En compras empresariales, pagar facturas sin cotejar la recepción física genera fraudes y fugas de capital.
+   - **Implementación:** Se creó el servicio `TresWayMatchingService`. El sistema compara en tiempo real 3 documentos:
+     1. **Orden de Compra (PO):** Cantidad y precio pactados con el proveedor.
+     2. **Recepción de Almacén (WMS):** Cantidad de unidades físicas realmente recibidas en muelle.
+     3. **Factura del Proveedor:** Monto total cobrado.
+   - Si la variación porcentual está dentro de la tolerancia (2%), se marca como **Conforme** y se autoriza el pago. Si excede la tolerancia, se marca como **Discrepante** y se bloquea el desembolso.
+4. **Liquidaciones a Vendedores y Split 90/10:**
+   - **Implementación:** En [`LiquidacionesController.cs`](src/MarketplaceERP.API/Controllers/LiquidacionesController.cs), cada orden entregada genera una retención del 10% para LOGIMKT y el 90% se custodia para dispersión semanal vía transferencia ACH al vendedor.
+
+> **💡 Pregunta de Examen Grupo B:**  
+> *"¿Cómo calcula el sistema el OTIF y el Lead Time en el OMS?"*  
+> **Respuesta:**  
+> *"En `KpisDashboardController.cs`, el **OTIF** filtra las órdenes cerradas y verifica qué porcentaje cumplió simultáneamente que `FechaEntregaReal <= FechaEntregaEstimada` (On-Time) y sin devoluciones (In-Full). El **Lead Time** calcula la diferencia en horas entre `FechaEntregaReal` y `FechaCreacion` promediada en el período."*
+
+---
+
+### 4. GRUPO C: Marketplace, Dashboard Analytics y UI/UX
+
+#### ¿Cómo se crearon los avances del Grupo C?
+1. **Frontend Moderno con React 18, TypeScript y Vite:**
+   - Se estructuró un cliente web de alto rendimiento sin recargas de página (SPA), con tipado estricto mediante interfaces compartidas ([`src/types/index.ts`](frontend/marketplace-ui/src/types/index.ts)).
+2. **Dashboard Ejecutivo de los 8 KPIs (SCOR Framework):**
+   - **Implementación:** En [`DashboardPage.tsx`](frontend/marketplace-ui/src/pages/dashboard/DashboardPage.tsx), se crearon tarjetas de visualización con Recharts (`LineChart` y `BarChart`) para el modelo financiero proyectado a 12 meses (crecimiento 8% mensual) y los 8 indicadores clave:
+     1. **Fill Rate** (meta $\ge 95\%$)
+     2. **OTIF** (meta $\ge 95\%$)
+     3. **Tasa de Cancelación** (meta $\le 5\%$)
+     4. **Tiempo Ciclo Pedido** (meta $\le 48\text{ h}$)
+     5. **Rotación de Inventario** (meta $\ge 4\text{ veces}$)
+     6. **Tasa Devolución RMA** (meta $\le 3\%$)
+     7. **Precisión 3-Way Match** (meta $\ge 98\%$)
+     8. **Margen de Comisión Marketplace** (10%)
+3. **Semáforo Automático de Rendimiento:**
+   - Cada KPI cuenta con una función de evaluación que compara el valor actual contra la meta de LOGIMKT, pintando badges y micro-barras en verde esmeralda (Óptimo), ámbar (Atención) o carmesí (Crítico).
+4. **Diseño Profesional Corporativo (Stripe UI + `ui-ux-pro-max`):**
+   - **Sistema de Toasts (`ToastContext`):** Alertas flotantes animadas con descarte automático (4s) y barra de progreso temporal.
+   - **Alert Banners Reutilizables (`AlertBanner`):** Diseñados con iconos Lucide y opciones de reintento.
+   - **Centro de Notificaciones en el Topbar:** Campana con badge animado que despliega las alertas en tiempo real (stock crítico, ocupación WMS y pagos pendientes).
+   - **Sidebar Dinámico:** Badges de conteo de pendientes (`nav-badge-pill`) y colapso responsive en 4 breakpoints (Mobile, Tablet, Laptop, Desktop).
+
+---
+
+### 5. Resumen Ejecutivo del Flujo de 10 Pasos ("De Clic a Entrega")
+
+Si el docente te dice: *"Muéstreme el flujo completo del pedido en vivo"*, este es el recorrido exacto que debes mostrar en pantalla:
+
+```
+① Cliente hace clic en 'Comprar' en el Catálogo de Productos (/productos)
+    │
+② El OMS crea el pedido y consulta stock en tiempo real (/ordenes)
+    │
+③ El Módulo A (Catálogo) reserva el stock preventivo (Stock Reservado +1)
+    │
+④ Se genera la PickList en el almacén con pasillo, rack y nivel (/fulfillment)
+    │
+⑤ Se realiza el Picking y el pedido avanza a: Confirmado → En preparación
+    │
+⑥ Se empaca el pedido, se calcula el peso volumétrico y se genera la guía (/fulfillment)
+    │
+⑦ El cliente y el sistema reciben la notificación de tracking en tiempo real
+    │
+⑧ El transportista entrega el pedido y se marca como 'Entregada'
+    │
+⑨ Se actualiza automáticamente el KPI OTIF y Fill Rate en el Dashboard (/dashboard)
+    │
+⑩ Se genera el Split del 90% al vendedor y 10% de comisión en Liquidaciones (/liquidaciones)
+```
+
+> **🛡️ Recomendación de Oro para la Presentación:**  
+> Cuando expongas, usa el vocabulario técnico logístico del PDF: habla de *3-Way Matching*, *OTIF*, *Fill Rate*, *Stock Reservado*, *Máquina de estados*, *Cubicaje volumétrico* y *Monolito Modular con esquemas independientes*. Eso demuestra que dominas tanto la ingeniería de software como la gestión de la cadena de suministro.
+
+---
+
 ## 🏗️ Arquitectura y Stack Tecnológico
 
 El proyecto sigue una arquitectura desacoplada Frontend/Backend diseñada para simular un entorno corporativo real:
