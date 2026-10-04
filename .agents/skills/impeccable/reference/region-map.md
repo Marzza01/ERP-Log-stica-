@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # Region map
 
 A region map names what is actually visible in the approved comp before asset production. It is not a page build or an asset approval.

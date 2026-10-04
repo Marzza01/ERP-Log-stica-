@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # $impeccable hooks
 
 Manage the **design detector hook** for the current project.

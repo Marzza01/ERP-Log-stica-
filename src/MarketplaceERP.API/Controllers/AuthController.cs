@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;

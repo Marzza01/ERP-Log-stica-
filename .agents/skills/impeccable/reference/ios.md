@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # iOS platform
 
 For native iOS / iPadOS apps: SwiftUI, UIKit, React Native, Expo, Flutter shipping to Apple hardware.

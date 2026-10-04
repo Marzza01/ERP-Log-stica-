@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 import React from 'react';
 import type { Kpi, SemaforoColor } from '../../types';
 

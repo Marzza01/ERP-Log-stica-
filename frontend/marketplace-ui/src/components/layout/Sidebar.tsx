@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 import React, { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {

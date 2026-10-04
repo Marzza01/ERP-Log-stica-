@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # Plan Template
 
 Every plan written by `improve-animations` follows this structure. The executor may be a less capable model with zero context and zero taste — the plan must contain everything, exactly. No references to "the audit above" or "the easing we discussed."

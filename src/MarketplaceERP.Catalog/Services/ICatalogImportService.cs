@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 namespace MarketplaceERP.Catalog.Services;
 
 public record ImportResult(int TotalProcesados, int Exitosos, int Errores, List<string> MensajesError);

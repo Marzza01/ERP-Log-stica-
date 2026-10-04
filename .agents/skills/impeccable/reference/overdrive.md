@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 Start your response with:
 
 ```

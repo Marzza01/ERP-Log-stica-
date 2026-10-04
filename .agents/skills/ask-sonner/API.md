@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # Sonner API Reference
 
 Exact props, types, and defaults. Options passed to `toast()` override the same options set via the Toaster's `toastOptions`.

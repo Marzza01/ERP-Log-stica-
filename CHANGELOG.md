@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # Registro de Cambios y Mejoras del Proyecto — MarketplaceERP
 
 Este documento centraliza y documenta cada una de las fases, cambios de arquitectura, nuevas entidades, servicios de negocio, endpoints y cobertura de pruebas implementadas en el sistema de acuerdo con los requerimientos logísticos y contables del proyecto.

@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 import React, { useEffect, useState, useCallback } from 'react';
 import { BookOpen, Scale, CheckCircle2, FileSpreadsheet, RefreshCw, ChevronRight } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';

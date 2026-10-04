@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 namespace MarketplaceERP.Shared.DTOs;
 
 /// <summary>

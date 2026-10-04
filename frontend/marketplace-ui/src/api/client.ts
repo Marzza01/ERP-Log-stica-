@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 // ─────────────────────────────────────────────────────────────────────────────
 // API Client — Base HTTP client con JWT interceptor
 // ─────────────────────────────────────────────────────────────────────────────

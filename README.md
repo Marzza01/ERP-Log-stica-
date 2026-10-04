@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # LOGIMKT S.A. de C.V. — Sistema Integrado ERP, OMS y Marketplace 🚀
 
 Bienvenido al repositorio oficial del **Proyecto Integrador Final: Implementación de ERP y Marketplace B2B/B2C** para LOGIMKT S.A. de C.V. Este proyecto digitaliza completamente la cadena de suministro, automatiza el flujo de pedidos y genera KPIs de logística digital en tiempo real.

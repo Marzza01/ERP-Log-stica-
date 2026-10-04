@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 using FluentAssertions;
 using MarketplaceERP.Catalog.Services;
 using Microsoft.Extensions.Logging.Abstractions;

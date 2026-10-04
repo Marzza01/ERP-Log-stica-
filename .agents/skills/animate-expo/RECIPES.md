@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # Expo Animation Recipes
 
 Ready-to-build implementations for the cases that come up most in a React Native app. Start from the recipe, then adapt.

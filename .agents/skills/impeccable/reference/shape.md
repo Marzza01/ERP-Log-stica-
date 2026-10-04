@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # Shape
 
 Discover what should be made and how it should work, then return a confirmed design brief without code.

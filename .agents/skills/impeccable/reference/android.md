@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # Android platform
 
 For native Android apps: Jetpack Compose, Android Views, React Native, Expo, Flutter shipping to Android hardware.

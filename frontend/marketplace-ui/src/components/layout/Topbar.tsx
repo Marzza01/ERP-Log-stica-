@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 import React, { useEffect, useState, useRef } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { Bell, Search, Menu, Package, AlertTriangle, AlertCircle, CheckCircle2, ChevronRight } from 'lucide-react';

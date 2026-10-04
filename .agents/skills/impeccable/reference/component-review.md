@@ -1,3 +1,5 @@
+<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+
 # Component review
 
 Use this checkpoint on comp-led builds after producing the initial component kit and before composing the page. The approved comp is the reference. The user reviews the actual produced components, including code; a list of planned assets or screenshots supplied by the builder is not a review of what will ship.

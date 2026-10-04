@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 using MarketplaceERP.Core.Data;
 using MarketplaceERP.Core.Interfaces;
 using MarketplaceERP.Core.Services;

@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 import { useEffect, useState, useCallback } from 'react';
 import { Truck, CheckCircle2, PackageCheck, Play, ArrowRight, Layers, Box, AlertCircle, RefreshCw } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';

@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 import React, { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import type { Usuario } from '../types';
 import { authApi } from '../api/auth';

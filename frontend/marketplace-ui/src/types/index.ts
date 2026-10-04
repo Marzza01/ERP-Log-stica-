@@ -1,3 +1,8 @@
+/**
+ * ERP desarrollado por Marcelo Zepeda
+ * Todos los derechos reservados © 2026
+ */
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MarketplaceERP — TypeScript Interfaces
 // Mapeadas exactamente a los DTOs del backend ASP.NET Core
