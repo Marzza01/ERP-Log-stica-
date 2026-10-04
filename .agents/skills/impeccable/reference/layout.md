@@ -1,4 +1,4 @@
-<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+<!-- ERP desarrollado por Marcelo Zepeda (@Marzza01) | Todos los derechos reservados © 2026 -->
 
 Layout turns product priority into reading order, grouping, rhythm, and usable space. Diagnose the structural problem before moving boxes.
 

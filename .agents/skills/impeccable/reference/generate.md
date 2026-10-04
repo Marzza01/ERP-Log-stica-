@@ -1,4 +1,4 @@
-<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+<!-- ERP desarrollado por Marcelo Zepeda (@Marzza01) | Todos los derechos reservados © 2026 -->
 
 > **Additional context needed**: only the target element, when the request does not name one that resolves uniquely on the page.
 

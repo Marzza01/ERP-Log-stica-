@@ -1,4 +1,4 @@
-<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+<!-- ERP desarrollado por Marcelo Zepeda (@Marzza01) | Todos los derechos reservados © 2026 -->
 
 # Estructura del Libro Excel: Catalogo_500_Productos.xlsx
 **LOGIMKT S.A. de C.V. — Asignatura: Logística de Negocios Digitales**

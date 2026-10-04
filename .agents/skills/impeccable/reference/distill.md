@@ -1,4 +1,4 @@
-<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+<!-- ERP desarrollado por Marcelo Zepeda (@Marzza01) | Todos los derechos reservados © 2026 -->
 
 Strip a design to its essence. Remove anything that doesn't earn its place: redundant elements, repeated information, decorative noise, cosmetic complexity.
 

@@ -1,4 +1,4 @@
-<!-- ERP desarrollado por Marcelo Zepeda | Todos los derechos reservados © 2026 -->
+<!-- ERP desarrollado por Marcelo Zepeda (@Marzza01) | Todos los derechos reservados © 2026 -->
 
 Report and repair drift between this project's Impeccable artifacts and what the installed version reads: PRODUCT.md, DESIGN.md and its `.impeccable/design.json` sidecar, `.impeccable/config.json`, persisted surface briefs, and the design hook.
 

@@ -1,5 +1,5 @@
 /**
- * ERP desarrollado por Marcelo Zepeda
+ * ERP desarrollado por Marcelo Zepeda (@Marzza01)
  * Todos los derechos reservados © 2026
  */
 
