@@ -11,6 +11,7 @@ import Modal from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
 import { ordenesApi } from '../../api/ordenes';
 import type { Orden, EstadoOrden, TipoCliente } from '../../types';
+import { OPERADORES_LOGISTICOS, obtenerTarifaTransportista } from '../../constants/transportistas';
 
 const ESTADOS: EstadoOrden[] = ['Pendiente', 'Aprobada', 'EnProceso', 'Enviada', 'Entregada', 'Cancelada'];
 const TRANSICIONES: Partial<Record<EstadoOrden, EstadoOrden[]>> = {
@@ -68,25 +69,31 @@ export default function OrdenesPage() {
       setOrdenes(filterEstado ? combined.filter(o => o.estado === filterEstado) : combined);
     } catch {
       // Demo data combinado con las guardadas por el usuario
-      const mock: Orden[] = Array.from({ length: 15 }, (_, i) => ({
-        id: `mock-${i + 1}`,
-        numeroOrden: `ORD-2026091${i}-${10000 + i}`,
-        estado: ESTADOS[i % ESTADOS.length],
-        tipoCliente: i % 3 === 0 ? 'Empresa' : 'ConsumidorFinal',
-        montoTotal: 85 + i * 47.5,
-        subTotal: 75 + i * 42,
-        impuestoIva: 9.75 + i * 5.46,
-        costoEnvio: 5,
-        moneda: 'USD',
-        tipoComprobante: 'FacturaConsumidorFinal',
-        transportista: ['LOGIMKT Flota Propia', 'C807 Express El Salvador', 'Urbano Express El Salvador', 'Cargo Expreso SV'][i % 4],
-        guiaEnvio: i > 3 ? `C807-${100000 + i}` : undefined,
-        direccionEntrega: `Colonia #${i + 1}, San Salvador`,
-        zonaEnvio: 'San Salvador y AMSS',
-        fechaCreacion: new Date(Date.now() - i * 86400000).toISOString(),
-        totalItems: 1 + (i % 4),
-        minutosEnEstado: i * 120,
-      }));
+      const mock: Orden[] = Array.from({ length: 15 }, (_, i) => {
+        const trans = ['LOGIMKT Express', 'C807 Express El Salvador', 'Urbano Express El Salvador', 'Cargo Expreso SV'][i % 4];
+        const envioCost = obtenerTarifaTransportista(trans);
+        const sub = 75 + i * 42;
+        const iva = 9.75 + i * 5.46;
+        return {
+          id: `mock-${i + 1}`,
+          numeroOrden: `ORD-2026091${i}-${10000 + i}`,
+          estado: ESTADOS[i % ESTADOS.length],
+          tipoCliente: i % 3 === 0 ? 'Empresa' : 'ConsumidorFinal',
+          montoTotal: sub + iva + envioCost,
+          subTotal: sub,
+          impuestoIva: iva,
+          costoEnvio: envioCost,
+          moneda: 'USD',
+          tipoComprobante: 'FacturaConsumidorFinal',
+          transportista: trans,
+          guiaEnvio: i > 3 ? `C807-${100000 + i}` : undefined,
+          direccionEntrega: `Colonia #${i + 1}, San Salvador`,
+          zonaEnvio: 'San Salvador y AMSS',
+          fechaCreacion: new Date(Date.now() - i * 86400000).toISOString(),
+          totalItems: 1 + (i % 4),
+          minutosEnEstado: i * 120,
+        };
+      });
       const ids = new Set(storedLocal.map(o => o.id));
       const combined = [...storedLocal, ...mock.filter(o => !ids.has(o.id))];
       setOrdenes(filterEstado ? combined.filter(o => o.estado === filterEstado) : combined);
@@ -544,14 +551,21 @@ export default function OrdenesPage() {
               <select
                 className="form-input"
                 value={orderForm.transportista}
-                onChange={e => setOrderForm({ ...orderForm, transportista: e.target.value })}
+                onChange={e => {
+                  const nuevoTransportista = e.target.value;
+                  const tarifaAuto = obtenerTarifaTransportista(nuevoTransportista);
+                  setOrderForm({
+                    ...orderForm,
+                    transportista: nuevoTransportista,
+                    costoEnvio: tarifaAuto,
+                  });
+                }}
               >
-                <option value="C807 Express El Salvador">C807 Express El Salvador (Operador Local 3PL)</option>
-                <option value="LOGIMKT Flota Propia">LOGIMKT Express (Flota Local Propia AMSS)</option>
-                <option value="Urbano Express El Salvador">Urbano Express El Salvador</option>
-                <option value="Cargo Expreso SV">Cargo Expreso El Salvador</option>
-                <option value="DHL Express El Salvador">DHL Express (Nacional / Internacional)</option>
-                <option value="RetiroEnBodega">Retiro en Bodega Central (Pick-Up)</option>
+                {OPERADORES_LOGISTICOS.map(op => (
+                  <option key={op.id} value={op.id}>
+                    {op.nombre} — {fmtMoney(op.tarifaEnvio)} USD
+                  </option>
+                ))}
               </select>
             </div>
             <div className="form-group">
@@ -564,10 +578,15 @@ export default function OrdenesPage() {
               />
             </div>
             <div className="form-group">
-              <label className="form-label">Costo Envío ($ USD)</label>
+              <label className="form-label">
+                Costo Envío ($ USD)
+                <span style={{ fontSize: 10, color: 'var(--accent)', marginLeft: 6, fontWeight: 600 }}>
+                  (Automático)
+                </span>
+              </label>
               <input
                 type="number"
-                step="0.5"
+                step="0.01"
                 min="0"
                 className="form-input"
                 value={orderForm.costoEnvio}

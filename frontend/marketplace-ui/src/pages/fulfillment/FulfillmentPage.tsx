@@ -11,6 +11,7 @@ import Modal from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
 import { fulfillmentApi, type ConfirmarItemPickingRequest, type EmpacarRequest } from '../../api/fulfillment';
 import type { PickList, Paquete } from '../../types';
+import { OPERADORES_LOGISTICOS } from '../../constants/transportistas';
 
 export default function FulfillmentPage() {
   const [activeTab, setActiveTab] = useState<'picking' | 'packing' | 'despacho'>('picking');
@@ -676,11 +677,11 @@ export default function FulfillmentPage() {
                     boxSizing: 'border-box',
                   }}
                 >
-                  <option value="C807 Express El Salvador">C807 Express El Salvador (Operador 3PL)</option>
-                  <option value="LOGIMKT Express">LOGIMKT Express (Flota Local Propia)</option>
-                  <option value="Urbano Express El Salvador">Urbano Express El Salvador</option>
-                  <option value="Cargo Expreso SV">Cargo Expreso El Salvador</option>
-                  <option value="DHL Express El Salvador">DHL Express El Salvador</option>
+                  {OPERADORES_LOGISTICOS.map(op => (
+                    <option key={op.id} value={op.id}>
+                      {op.nombre} (${op.tarifaEnvio.toFixed(2)} USD)
+                    </option>
+                  ))}
                 </select>
               </div>
 
