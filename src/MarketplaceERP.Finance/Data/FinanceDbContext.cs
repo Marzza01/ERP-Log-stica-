@@ -118,6 +118,13 @@ public class FinanceDbContext : DbContext
                   .WithOne(o => o.SplitPago)
                   .HasForeignKey<SplitPago>(s => s.OrdenId)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(s => s.Liquidacion)
+                  .WithMany(l => l.Splits)
+                  .HasForeignKey(s => s.LiquidacionId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(s => s.LiquidacionId);
         });
 
         // ── Liquidacion ───────────────────────────────────────────────────────
@@ -133,14 +140,21 @@ public class FinanceDbContext : DbContext
                   .HasMaxLength(20);
             entity.Property(l => l.FechaCreacion).HasDefaultValueSql("NOW()");
 
+            // Token de concurrencia optimista
+            if (Database.IsNpgsql())
+            {
+                entity.Property(l => l.Version)
+                      .IsRowVersion();
+            }
+            else
+            {
+                entity.Property(l => l.Version)
+                      .IsConcurrencyToken();
+            }
+
             entity.Property(l => l.VendedorId).IsRequired();
             entity.HasIndex(l => l.VendedorId);
             entity.HasIndex(l => l.Estado);
-
-            entity.HasOne(l => l.SplitPago)
-                  .WithOne(s => s.Liquidacion)
-                  .HasForeignKey<Liquidacion>(l => l.SplitPagoId)
-                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         // ── OrdenCompra (PO) ──────────────────────────────────────────────────

@@ -40,6 +40,11 @@ public class SplitPago
     public string TransaccionId { get; set; } = string.Empty;
     public DateTime FechaProcesado { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// FK hacia la liquidación que consolidó este split (nullable: null = no liquidado).
+    /// </summary>
+    public Guid? LiquidacionId { get; set; }
+
     // Navegación
     public Orden Orden { get; set; } = null!;
     public Liquidacion? Liquidacion { get; set; }

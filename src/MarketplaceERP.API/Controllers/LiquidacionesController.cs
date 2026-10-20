@@ -7,6 +7,7 @@ using System.Security.Claims;
 using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace MarketplaceERP.API.Controllers;
 
@@ -87,11 +88,20 @@ public class LiquidacionesController : ControllerBase
                 detalle = "DEBE: 2108 Pasivo Vendedores | HABER: 1101 Caja"
             });
         }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            _logger.LogWarning("Conflicto de concurrencia al procesar liquidación {Id}: {Message}", id, ex.Message);
+            return Conflict(new { mensaje = "Conflicto de concurrencia: La liquidación ya fue modificada o procesada simultáneamente por otra transacción." });
+        }
         catch (InvalidOperationException ex)
         {
-            return ex.Message.Contains("no encontrada")
-                ? NotFound(new { mensaje = ex.Message })
-                : BadRequest(new { mensaje = ex.Message });
+            if (ex.Message.Contains("no encontrada"))
+                return NotFound(new { mensaje = ex.Message });
+
+            if (ex.Message.Contains("ya está en estado"))
+                return Conflict(new { mensaje = ex.Message });
+
+            return BadRequest(new { mensaje = ex.Message });
         }
     }
 

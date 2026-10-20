@@ -45,6 +45,7 @@ public class FlujoIntegralE2ETests
             .Options;
         var financeOptions = new DbContextOptionsBuilder<FinanceDbContext>()
             .UseInMemoryDatabase($"Finance_{dbName}")
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         await using var coreDb = new CoreDbContext(coreOptions);

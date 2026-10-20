@@ -30,13 +30,17 @@ public class Liquidacion
     /// </summary>
     public Guid VendedorId { get; set; }
 
-    public Guid SplitPagoId { get; set; }
     public decimal MontoLiquidar { get; set; }
     public string Moneda { get; set; } = "USD";
     public EstadoLiquidacion Estado { get; set; } = EstadoLiquidacion.Pendiente;
     public DateTime FechaCreacion { get; set; } = DateTime.UtcNow;
     public DateTime? FechaLiquidacion { get; set; }
 
-    // Navegación
-    public SplitPago SplitPago { get; set; } = null!;
+    /// <summary>
+    /// Token de concurrencia optimista (xmin en PostgreSQL / byte[] RowVersion).
+    /// </summary>
+    public uint Version { get; set; }
+
+    // Navegación 1:N con SplitPago
+    public ICollection<SplitPago> Splits { get; set; } = new List<SplitPago>();
 }
