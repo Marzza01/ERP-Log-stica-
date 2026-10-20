@@ -120,8 +120,11 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // ── CORS desde Cors:AllowedOrigins o Cors__AllowedOrigins ────────────────────
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? (builder.Environment.IsDevelopment() ? new[] { "http://localhost:5173" } : Array.Empty<string>());
+// Si Cors:AllowedOrigins está vacío fuera de Development, NO se permite ningún origen. Nunca se usa AllowAnyOrigin.
+var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+var allowedOrigins = configuredOrigins.Length > 0
+    ? configuredOrigins
+    : (builder.Environment.IsDevelopment() ? new[] { "http://localhost:5173" } : Array.Empty<string>());
 
 builder.Services.AddCors(options =>
 {
@@ -133,12 +136,7 @@ builder.Services.AddCors(options =>
                   .AllowAnyHeader()
                   .AllowAnyMethod();
         }
-        else
-        {
-            policy.AllowAnyOrigin()
-                  .AllowAnyHeader()
-                  .AllowAnyMethod();
-        }
+        // Si no hay orígenes configurados (Production vacío), la política no permite ningún origen
     });
 });
 
@@ -190,10 +188,19 @@ var app = builder.Build();
 // ── Middleware pipeline ───────────────────────────────────────────────────────
 if (app.Environment.IsProduction())
 {
-    app.UseForwardedHeaders(new ForwardedHeadersOptions
+    // Railway (u otro proxy/load balancer en la nube) actúa como reverse proxy de confianza.
+    // Al limpiar KnownNetworks y KnownProxies y configurar ForwardLimit = 1, ASP.NET Core
+    // confía en el header X-Forwarded-For inyectado por Railway para resolver la IP pública real del cliente
+    // en HttpContext.Connection.RemoteIpAddress (vital para rate limiting por IP y auditoría de seguridad).
+    var forwardedOptions = new ForwardedHeadersOptions
     {
-        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
-    });
+        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+        ForwardLimit = 1
+    };
+    forwardedOptions.KnownNetworks.Clear();
+    forwardedOptions.KnownProxies.Clear();
+    app.UseForwardedHeaders(forwardedOptions);
+
     app.UseHsts();
     app.UseHttpsRedirection();
 }
@@ -226,14 +233,13 @@ app.MapGet("/health", () => Results.Ok(new
 app.MapControllers();
 
 // ── Seed Inicial de Usuario Admin ─────────────────────────────────────────────
-try
 {
     using var scope = app.Services.CreateScope();
     var coreDb = scope.ServiceProvider.GetRequiredService<CoreDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-    var adminEmail = Environment.GetEnvironmentVariable("ADMIN_EMAIL");
-    var adminPassword = Environment.GetEnvironmentVariable("ADMIN_PASSWORD");
+    var adminEmail = app.Configuration["ADMIN_EMAIL"] ?? Environment.GetEnvironmentVariable("ADMIN_EMAIL");
+    var adminPassword = app.Configuration["ADMIN_PASSWORD"] ?? Environment.GetEnvironmentVariable("ADMIN_PASSWORD");
 
     if (app.Environment.IsProduction())
     {
@@ -241,42 +247,91 @@ try
         {
             throw new InvalidOperationException("ADMIN_EMAIL y ADMIN_PASSWORD son obligatorios en entorno de Production.");
         }
-    }
 
-    if (!string.IsNullOrWhiteSpace(adminEmail) && !string.IsNullOrWhiteSpace(adminPassword))
-    {
-        if (coreDb.Database.CanConnect())
+        // En Production, la base de datos debe ser alcanzable tras reintentos; si no, lanza excepción
+        bool dbConectada = false;
+        for (int intento = 1; intento <= 3; intento++)
         {
-            var adminExistente = coreDb.Usuarios.FirstOrDefault(u => u.Email.ToLower() == adminEmail.ToLower());
-            if (adminExistente is null)
+            try
             {
-                var hasher = new PasswordHasher<Usuario>();
-                var adminUsuario = new Usuario
+                if (coreDb.Database.CanConnect())
                 {
-                    Id = Guid.NewGuid(),
-                    Email = adminEmail.ToLower().Trim(),
-                    Nombre = "Administrador del Sistema",
-                    Rol = "Admin",
-                    Activo = true,
-                    FechaRegistro = DateTime.UtcNow
-                };
-                adminUsuario.PasswordHash = hasher.HashPassword(adminUsuario, adminPassword);
-
-                coreDb.Usuarios.Add(adminUsuario);
-                coreDb.SaveChanges();
-                logger.LogInformation("Usuario Admin inicial creado exitosamente con email: {Email}", adminEmail);
+                    dbConectada = true;
+                    break;
+                }
             }
+            catch (Exception ex)
+            {
+                logger.LogWarning("Intento {Intento}/3 de conexión a base de datos falló: {Message}", intento, ex.Message);
+            }
+            Thread.Sleep(500);
+        }
+
+        if (!dbConectada)
+        {
+            throw new InvalidOperationException("La base de datos no es alcanzable tras 3 intentos en entorno de Production. Imposible inicializar el Admin.");
+        }
+
+        var adminExistente = coreDb.Usuarios.FirstOrDefault(u => u.Email == adminEmail.ToLower().Trim());
+        if (adminExistente is null)
+        {
+            var hasher = new PasswordHasher<Usuario>();
+            var adminUsuario = new Usuario
+            {
+                Id = Guid.NewGuid(),
+                Email = adminEmail.ToLower().Trim(),
+                Nombre = "Administrador del Sistema",
+                Rol = "Admin",
+                Activo = true,
+                FechaRegistro = DateTime.UtcNow
+            };
+            adminUsuario.PasswordHash = hasher.HashPassword(adminUsuario, adminPassword);
+
+            coreDb.Usuarios.Add(adminUsuario);
+            coreDb.SaveChanges();
+            logger.LogInformation("Usuario Admin inicial creado exitosamente con email: {Email}", adminEmail);
         }
     }
     else
     {
-        logger.LogWarning("Variables ADMIN_EMAIL o ADMIN_PASSWORD no configuradas en entorno {Env}. Omitiendo creación de Admin inicial.", app.Environment.EnvironmentName);
+        // En Development: si faltan credenciales o la BD no está lista, omitir con warning
+        if (!string.IsNullOrWhiteSpace(adminEmail) && !string.IsNullOrWhiteSpace(adminPassword))
+        {
+            try
+            {
+                if (coreDb.Database.CanConnect())
+                {
+                    var adminExistente = coreDb.Usuarios.FirstOrDefault(u => u.Email == adminEmail.ToLower().Trim());
+                    if (adminExistente is null)
+                    {
+                        var hasher = new PasswordHasher<Usuario>();
+                        var adminUsuario = new Usuario
+                        {
+                            Id = Guid.NewGuid(),
+                            Email = adminEmail.ToLower().Trim(),
+                            Nombre = "Administrador del Sistema",
+                            Rol = "Admin",
+                            Activo = true,
+                            FechaRegistro = DateTime.UtcNow
+                        };
+                        adminUsuario.PasswordHash = hasher.HashPassword(adminUsuario, adminPassword);
+
+                        coreDb.Usuarios.Add(adminUsuario);
+                        coreDb.SaveChanges();
+                        logger.LogInformation("Usuario Admin inicial creado exitosamente en Development.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning("Aviso en seed de Admin en Development: {Message}", ex.Message);
+            }
+        }
+        else
+        {
+            logger.LogWarning("Variables ADMIN_EMAIL o ADMIN_PASSWORD no configuradas en entorno {Env}. Omitiendo creación de Admin inicial.", app.Environment.EnvironmentName);
+        }
     }
-}
-catch (Exception ex) when (!app.Environment.IsProduction())
-{
-    var logger = app.Services.GetService<ILogger<Program>>();
-    logger?.LogWarning("Aviso en seed de Admin (omitido si BD no está lista aún): {Message}", ex.Message);
 }
 
 // ── Auto-seeding del Catálogo de 500 Productos (LOGIMKT S.A. de C.V.) ──────────
