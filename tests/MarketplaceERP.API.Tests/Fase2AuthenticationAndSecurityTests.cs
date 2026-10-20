@@ -265,6 +265,54 @@ public class Fase2AuthenticationAndSecurityTests : IClassFixture<CustomWebApplic
     }
 
     [Fact]
+    public async Task VendedorA_NoVeLiquidacionesDeVendedorB_AdminVeTodas()
+    {
+        var vendedorAId = Guid.NewGuid();
+        var vendedorBId = Guid.NewGuid();
+        var liqBId = Guid.NewGuid();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var financeDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            var liqB = new MarketplaceERP.Finance.Entities.Liquidacion
+            {
+                Id = liqBId,
+                VendedorId = vendedorBId,
+                MontoLiquidar = 450m,
+                Estado = MarketplaceERP.Finance.Entities.EstadoLiquidacion.Completada,
+                FechaCreacion = DateTime.UtcNow,
+                FechaLiquidacion = DateTime.UtcNow
+            };
+            financeDb.Liquidaciones.Add(liqB);
+            await financeDb.SaveChangesAsync();
+        }
+
+        // Vendedor A consulta historial: no debe ver la liquidación de Vendedor B
+        var clientVendedorA = _factory.CreateClientWithAuth("Vendedor", vendedorId: vendedorAId.ToString());
+        var resVendedorA = await clientVendedorA.GetAsync("/api/liquidaciones/historial");
+        Assert.Equal(HttpStatusCode.OK, resVendedorA.StatusCode);
+        var bodyA = await resVendedorA.Content.ReadFromJsonAsync<List<Dictionary<string, object>>>();
+        Assert.NotNull(bodyA);
+        Assert.DoesNotContain(bodyA, x => x.ContainsKey("id") && x["id"]?.ToString() == liqBId.ToString());
+
+        // Vendedor B consulta historial: ve su propia liquidación
+        var clientVendedorB = _factory.CreateClientWithAuth("Vendedor", vendedorId: vendedorBId.ToString());
+        var resVendedorB = await clientVendedorB.GetAsync("/api/liquidaciones/historial");
+        Assert.Equal(HttpStatusCode.OK, resVendedorB.StatusCode);
+        var bodyB = await resVendedorB.Content.ReadFromJsonAsync<List<Dictionary<string, object>>>();
+        Assert.NotNull(bodyB);
+        Assert.Contains(bodyB, x => x.ContainsKey("id") && x["id"]?.ToString() == liqBId.ToString());
+
+        // Admin consulta historial: ve todas las liquidaciones (incluyendo la de Vendedor B)
+        var clientAdmin = _factory.CreateClientWithAuth("Admin");
+        var resAdmin = await clientAdmin.GetAsync("/api/liquidaciones/historial");
+        Assert.Equal(HttpStatusCode.OK, resAdmin.StatusCode);
+        var bodyAdmin = await resAdmin.Content.ReadFromJsonAsync<List<Dictionary<string, object>>>();
+        Assert.NotNull(bodyAdmin);
+        Assert.Contains(bodyAdmin, x => x.ContainsKey("id") && x["id"]?.ToString() == liqBId.ToString());
+    }
+
+    [Fact]
     public async Task Usuarios_Crear_SinToken_Retorna401()
     {
         var client = _factory.CreateClient();

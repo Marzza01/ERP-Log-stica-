@@ -31,7 +31,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=${POSTGRES_DB:-marketplace_erp};Username=${POSTGRES_USER:-marketplace_user};Password=${POSTGRES_PASSWORD}"
       Jwt__Key: ${JWT_KEY}
       Jwt__Issuer: ${JWT_ISSUER:-MarketplaceERP}

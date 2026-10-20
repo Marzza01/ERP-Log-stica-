@@ -273,6 +273,9 @@ Este documento centraliza y documenta cada una de las fases, cambios de arquitec
   - **Admin y Vendedor**: Órdenes (`/ordenes`), WMS / Bodega (`/wms`), Fulfillment (`/fulfillment`), RMA (`/rma`), Productos (`/productos`, con escritura permitida).
   - **Admin y Vendedor**: Liquidaciones (`/liquidaciones`), filtrando las liquidaciones para que el Vendedor únicamente visualice las propias (`vendedorId`).
   - **Solo Comprador**: Checkout y Catálogo de Compra (`/checkout`).
+    > [!NOTE]
+    > **Aviso de Implementación Provisional (`CheckoutPage.tsx`):**
+    > La vista y payload de `CheckoutPage.tsx` (que envía `{ direccionEnvio, zonaEnvio, metodoPago, items }` al endpoint `/api/checkout`) es una implementación provisional para soporte de interfaz y rol de Comprador. El contrato definitivo del endpoint de checkout y su flujo transaccional se rehará formalmente en la FASE 7.
   - Redirección automática a pantalla amigable **"Sin Acceso"** (`SinAccesoPage.tsx`) ante rutas no autorizadas (evitando pantallas en blanco).
 - **`Sidebar.tsx`**:
   - Ocultación dinámica de enlaces y secciones de navegación según el rol del usuario autenticado.
