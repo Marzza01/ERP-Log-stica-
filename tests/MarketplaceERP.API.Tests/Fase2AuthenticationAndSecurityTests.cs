@@ -167,6 +167,42 @@ public class Fase2AuthenticationAndSecurityTests : IClassFixture<CustomWebApplic
     }
 
     [Fact]
+    public void Startup_EnProductionSinAdminEmail_LanzaExcepcion()
+    {
+        var factoryProd = new CustomWebApplicationFactory()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Production");
+                builder.UseSetting("Jwt:Key", "ESTA_ES_UNA_CLAVE_VALIDA_DE_PRODUCCION_SIN_PLACEHOLDERS_64CHARS!!");
+                builder.UseSetting("ADMIN_EMAIL", "");
+                builder.UseSetting("ADMIN_PASSWORD", "SuperPassword123!");
+            });
+
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            _ = factoryProd.CreateClient();
+        });
+    }
+
+    [Fact]
+    public void Startup_EnProductionSinAdminPassword_LanzaExcepcion()
+    {
+        var factoryProd = new CustomWebApplicationFactory()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Production");
+                builder.UseSetting("Jwt:Key", "ESTA_ES_UNA_CLAVE_VALIDA_DE_PRODUCCION_SIN_PLACEHOLDERS_64CHARS!!");
+                builder.UseSetting("ADMIN_EMAIL", "admin@prod.com");
+                builder.UseSetting("ADMIN_PASSWORD", "");
+            });
+
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            _ = factoryProd.CreateClient();
+        });
+    }
+
+    [Fact]
     public async Task Cors_EnProductionSinOrigenesConfigurados_NoRetornaHeaderAllowOrigin()
     {
         var factoryProd = new CustomWebApplicationFactory()
