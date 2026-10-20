@@ -18,6 +18,8 @@ const routeTitles: Record<string, { label: string; sub: string }> = {
   '/contabilidad': { label: 'Contabilidad',    sub: 'Libro diario y balance general' },
   '/liquidaciones':{ label: 'Liquidaciones',   sub: 'Pagos y splits de comisión' },
   '/productos':    { label: 'Productos',        sub: 'Catálogo de productos y stock' },
+  '/checkout':     { label: 'Catálogo de Compra', sub: 'Selección y checkout de productos' },
+  '/sin-acceso':   { label: 'Acceso Restringido', sub: 'Permisos insuficientes' },
 };
 
 interface NotificationItem {
@@ -90,15 +92,14 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
 
   // Ping API health
   useEffect(() => {
-    fetch('/health', { signal: AbortSignal.timeout(2500) })
+    const apiBase = import.meta.env.VITE_API_URL ?? '';
+    const healthUrl = apiBase ? `${apiBase}/health` : '/health';
+    fetch(healthUrl, { signal: AbortSignal.timeout(2500) })
       .then(res => {
-        if (res.ok) setApiOnline(true);
-        else throw new Error('Not ok');
+        setApiOnline(res.ok);
       })
       .catch(() => {
-        fetch('http://localhost:5000/health', { signal: AbortSignal.timeout(2500) })
-          .then(res => setApiOnline(res.ok))
-          .catch(() => setApiOnline(false));
+        setApiOnline(false);
       });
   }, [location.pathname]);
 

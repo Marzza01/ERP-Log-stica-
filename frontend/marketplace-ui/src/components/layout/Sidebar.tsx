@@ -17,6 +17,7 @@ interface NavItem {
   icon: React.ReactNode;
   label: string;
   shortLabel?: string;
+  allowedRoles: string[]; // 'Admin' | 'Vendedor' | 'Comprador'
   badge?: {
     count: number | string;
     variant: 'danger' | 'warning' | 'info';
@@ -32,12 +33,26 @@ const navGroups: NavGroup[] = [
   {
     label: 'Principal',
     items: [
-      { to: '/dashboard', icon: <LayoutDashboard size={16} />, label: 'Dashboard',     shortLabel: 'Dashboard' },
+      {
+        to: '/dashboard',
+        icon: <LayoutDashboard size={16} />,
+        label: 'Dashboard KPIs',
+        shortLabel: 'Dashboard',
+        allowedRoles: ['Admin'],
+      },
+      {
+        to: '/checkout',
+        icon: <ShoppingCart size={16} />,
+        label: 'Catálogo / Checkout',
+        shortLabel: 'Comprar',
+        allowedRoles: ['Comprador'],
+      },
       {
         to: '/ordenes',
         icon: <ShoppingCart size={16} />,
-        label: 'Órdenes',
+        label: 'Órdenes (OMS)',
         shortLabel: 'Órdenes',
+        allowedRoles: ['Admin', 'Vendedor'],
         badge: { count: '3', variant: 'warning' },
       },
     ],
@@ -50,37 +65,59 @@ const navGroups: NavGroup[] = [
         icon: <Warehouse size={16} />,
         label: 'WMS / Bodega',
         shortLabel: 'Bodega',
+        allowedRoles: ['Admin', 'Vendedor'],
         badge: { count: '1', variant: 'danger' },
       },
-      { to: '/fulfillment', icon: <Truck size={16} />,        label: 'Fulfillment',    shortLabel: 'Fulfillment' },
+      {
+        to: '/fulfillment',
+        icon: <Truck size={16} />,
+        label: 'Fulfillment',
+        shortLabel: 'Fulfillment',
+        allowedRoles: ['Admin', 'Vendedor'],
+      },
       {
         to: '/rma',
         icon: <RotateCcw size={16} />,
-        label: 'Devoluciones',
+        label: 'Devoluciones RMA',
         shortLabel: 'Devoluciones',
+        allowedRoles: ['Admin', 'Vendedor'],
         badge: { count: '2', variant: 'warning' },
       },
       {
         to: '/compras',
         icon: <ShoppingBag size={16} />,
-        label: 'Compras',
+        label: 'Compras / 3-Way',
         shortLabel: 'Compras',
+        allowedRoles: ['Admin'],
         badge: { count: '3', variant: 'info' },
       },
     ],
   },
   {
-    label: 'Finanzas',
+    label: 'Finanzas & Catálogo',
     items: [
-      { to: '/contabilidad',  icon: <BookOpen size={16} />, label: 'Contabilidad',   shortLabel: 'Contabilidad' },
+      {
+        to: '/contabilidad',
+        icon: <BookOpen size={16} />,
+        label: 'Contabilidad',
+        shortLabel: 'Contabilidad',
+        allowedRoles: ['Admin'],
+      },
       {
         to: '/liquidaciones',
         icon: <Wallet size={16} />,
         label: 'Liquidaciones',
         shortLabel: 'Pagos',
+        allowedRoles: ['Admin', 'Vendedor'],
         badge: { count: '2', variant: 'warning' },
       },
-      { to: '/productos',     icon: <Package size={16} />,  label: 'Productos',      shortLabel: 'Productos' },
+      {
+        to: '/productos',
+        icon: <Package size={16} />,
+        label: 'Productos',
+        shortLabel: 'Productos',
+        allowedRoles: ['Admin', 'Vendedor'],
+      },
     ],
   },
 ];
@@ -94,6 +131,14 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const { logout, usuario } = useAuth();
   useLocation(); // trigger re-render on route change for active state
+
+  const userRole = usuario?.rol || '';
+
+  // Filtrar grupos y sus items por rol
+  const visibleGroups = navGroups.map(group => ({
+    ...group,
+    items: group.items.filter(item => item.allowedRoles.includes(userRole)),
+  })).filter(group => group.items.length > 0);
 
   return (
     <>
@@ -123,7 +168,7 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
 
         {/* Nav */}
         <nav className="sidebar-nav">
-          {navGroups.map((group) => (
+          {visibleGroups.map((group) => (
             <div key={group.label}>
               <div className="sidebar-section-label">{group.label}</div>
               {group.items.map((item) => (
@@ -154,10 +199,12 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
           {!collapsed && usuario && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px 10px', borderBottom: '1px solid var(--border)', marginBottom: 8 }}>
               <div className="avatar" style={{ width: 28, height: 28, fontSize: 11 }}>
-                {usuario.nombre.charAt(0).toUpperCase()}
+                {usuario.nombre ? usuario.nombre.charAt(0).toUpperCase() : 'U'}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{usuario.nombre}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {usuario.nombre}
+                </div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{usuario.rol}</div>
               </div>
             </div>

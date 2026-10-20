@@ -9,10 +9,12 @@ import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 import { liquidacionesApi } from '../../api/liquidaciones';
 import type { Liquidacion } from '../../types';
 
 export default function LiquidacionesPage() {
+  const { usuario } = useAuth();
   const [activeTab, setActiveTab] = useState<'pendientes' | 'historial'>('pendientes');
   const [pendientes, setPendientes] = useState<Liquidacion[]>([]);
   const [historial, setHistorial] = useState<Liquidacion[]>([]);
@@ -38,14 +40,23 @@ export default function LiquidacionesPage() {
         : Array.isArray((histRes as any)?.liquidaciones) ? (histRes as any).liquidaciones
         : Array.isArray((histRes as any)?.value) ? (histRes as any).value
         : [];
-      setPendientes(pendArray);
-      setHistorial(histArray);
+      const isVendedor = usuario?.rol === 'Vendedor';
+      const vendId = usuario?.vendedorId;
+
+      const filterByVendedor = (list: Liquidacion[]) => {
+        if (!isVendedor) return list;
+        if (!vendId) return list; // Si aún no tiene vendedorId asociado, muestra lista general o vacía según endpoint
+        return list.filter(l => l.vendedorId === vendId);
+      };
+
+      setPendientes(filterByVendedor(pendArray));
+      setHistorial(filterByVendedor(histArray));
     } catch {
       // Demo mock
       const mockPendientes: Liquidacion[] = [
         {
           id: 'liq-01',
-          vendedorId: 'vend-101',
+          vendedorId: usuario?.vendedorId || 'vend-101',
           periodo: 'Semana 37 (11 Sep - 17 Sep 2026)',
           montoVentas: 8450.00,
           comisionMarketplace: 845.00,
@@ -68,7 +79,7 @@ export default function LiquidacionesPage() {
       const mockHistorial: Liquidacion[] = [
         {
           id: 'liq-00',
-          vendedorId: 'vend-101',
+          vendedorId: usuario?.vendedorId || 'vend-101',
           periodo: 'Semana 36 (04 Sep - 10 Sep 2026)',
           montoVentas: 12500.00,
           comisionMarketplace: 1250.00,
@@ -79,12 +90,19 @@ export default function LiquidacionesPage() {
         },
       ];
 
-      setPendientes(mockPendientes);
-      setHistorial(mockHistorial);
+      const isVendedor = usuario?.rol === 'Vendedor';
+      const vendId = usuario?.vendedorId;
+      const filterByVendedor = (list: Liquidacion[]) => {
+        if (!isVendedor) return list;
+        return list.filter(l => l.vendedorId === (vendId || 'vend-101'));
+      };
+
+      setPendientes(filterByVendedor(mockPendientes));
+      setHistorial(filterByVendedor(mockHistorial));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [usuario]);
 
   useEffect(() => {
     loadData();
@@ -315,10 +333,10 @@ export default function LiquidacionesPage() {
               accessor: 'estado',
               render: (row) => <StatusBadge status={row.estado} />,
             },
-            {
+            ...(usuario?.rol === 'Admin' ? [{
               header: 'Acción Bancaria',
-              accessor: 'id',
-              render: (row) => (
+              accessor: 'id' as const,
+              render: (row: Liquidacion) => (
                 <button
                   onClick={() => setSelectedLiq(row)}
                   style={{
@@ -339,7 +357,7 @@ export default function LiquidacionesPage() {
                   Procesar Pago
                 </button>
               ),
-            },
+            }] : []),
           ]}
           data={pendientes}
           keyExtractor={(item) => item.id}

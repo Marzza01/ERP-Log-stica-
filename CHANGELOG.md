@@ -248,25 +248,38 @@ Este documento centraliza y documenta cada una de las fases, cambios de arquitec
 
 ---
 
-## Matriz de Control y Cobertura de Pruebas
+## Fase 3 (Seguridad & Frontend): Eliminación del Bypass de Autenticación y Route Guards por Rol
 
-Toda la solución compila sin advertencias y ejecuta con éxito el 100% de la suite de pruebas automatizadas:
+### 1. Eliminación de Tokens Mock y Cuentas Falsas
+- **`AuthContext.tsx`**:
+  - Eliminado el token permanente `'permanent-admin-token-logimkt'` y la cuenta falsa por defecto.
+  - Validación de expiración de sesión (`expiresAt` y claim `exp` de JWT) al cargar la aplicación; si la sesión expiró o es inválida, se limpian los datos en almacenamiento local.
+  - Eliminado el bypass de credenciales en el bloque catch: si el backend no responde o rechaza la autenticación, se lanza un error y **no** se genera sesión ficticia.
+- **`LoginPage.tsx`**:
+  - Campos de correo electrónico y contraseña inicializados vacíos por defecto (`""`), sin credenciales expuestas en el código fuente.
+  - Mensajes de error específicos: mensaje genérico para 401 (*"Correo electrónico o contraseña incorrectos."*), mensaje específico para 429 (*"Demasiados intentos fallidos. Has alcanzado el límite de seguridad..."*) y para red caída (*"No es posible conectar con el servidor de autenticación..."*).
 
-```bash
-dotnet test MarketplaceERP.sln
-```
+### 2. Cliente HTTP y Manejo Centralizado de Respuestas
+- **`client.ts`**:
+  - Inyección del token Bearer en el encabezado `Authorization` para cada petición.
+  - Intercepción ante HTTP 401: ejecución de logout y redirección a `/login` (excepto en `/api/auth/login`).
+  - Intercepción ante HTTP 403: notificación de acceso denegado sin destruir la sesión activa del usuario.
+  - Intercepción ante HTTP 429: mensaje claro de tasa límite excedida.
+  - Consumo exclusivo de URL base desde la variable de entorno `VITE_API_URL` (sin URLs hardcodeadas).
 
-### Resultados de Ejecución:
-- **`MarketplaceERP.Core.Tests`**: 6 pasadas (0 errores)
-  - Validaciones de dominio, entidades y tipos de valor.
-- **`MarketplaceERP.Catalog.Tests`**: 13 pasadas (0 errores)
-  - Pruebas de stock, cubicaje, almacenes, flujo de movimientos WMS y Fulfillment (Picking óptimo S-Shape, packing y emisión de guía).
-- **`MarketplaceERP.Finance.Tests`**: 22 pasadas (0 errores) *(+1 prueba integral E2E)*
-  - Validaciones de partida doble contable (Debe == Haber).
-  - Cálculo de IVA salvadoreño (13%).
-  - Auditoría de 4 casos de 3-Way Matching (conforme, discrepancia de precio, discrepancia de cantidad, faltante).
-  - Máquina de estados OMS de 6 etapas.
-  - Conciliación de split 90/10 y generación de liquidaciones.
-  - **Prueba Integral E2E de ciclo de vida completo transaccionado.**
+### 3. Matriz de Autorización y Guards de Ruta
+- **`App.tsx` & `RoleRouteGuard`**:
+  - **Solo Admin**: Contabilidad (`/contabilidad`), Compras / 3-Way Match (`/compras`), Dashboard KPIs (`/dashboard`).
+  - **Admin y Vendedor**: Órdenes (`/ordenes`), WMS / Bodega (`/wms`), Fulfillment (`/fulfillment`), RMA (`/rma`), Productos (`/productos`, con escritura permitida).
+  - **Admin y Vendedor**: Liquidaciones (`/liquidaciones`), filtrando las liquidaciones para que el Vendedor únicamente visualice las propias (`vendedorId`).
+  - **Solo Comprador**: Checkout y Catálogo de Compra (`/checkout`).
+  - Redirección automática a pantalla amigable **"Sin Acceso"** (`SinAccesoPage.tsx`) ante rutas no autorizadas (evitando pantallas en blanco).
+- **`Sidebar.tsx`**:
+  - Ocultación dinámica de enlaces y secciones de navegación según el rol del usuario autenticado.
 
-**Total general:** **41 pruebas ejecutadas, 41 superadas, 0 fallidas.**
+### 4. Riesgo de Seguridad Documentado: Almacenamiento de Token en localStorage
+> [!WARNING]
+> **Riesgo Documentado (Almacenamiento de Token JWT):**
+> En esta fase, el token JWT se almacena temporalmente en el `localStorage` del navegador.
+> - **Riesgo:** Los tokens almacenados en `localStorage` son accesibles mediante scripts del lado del cliente, haciéndolos vulnerables a ataques de Cross-Site Scripting (XSS) si existiera alguna brecha en el renderizado de datos externos.
+> - **Mitigación futura recomendada:** Migrar la persistencia de autenticación a **cookies `httpOnly`, `Secure` y `SameSite=Strict`**, lo cual requerirá ajustes coordinados en los endpoints de autenticación del backend ASP.NET Core (`Set-Cookie` con refresh tokens).

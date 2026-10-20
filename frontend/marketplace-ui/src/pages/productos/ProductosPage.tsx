@@ -8,10 +8,12 @@ import { ShoppingBag, Search, Plus, Filter, AlertCircle, RefreshCw, Edit2, Trash
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 import { productosApi, type CrearProductoRequest } from '../../api/productos';
 import type { Producto } from '../../types';
 
 export default function ProductosPage() {
+  const { usuario } = useAuth();
   const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -260,24 +262,26 @@ export default function ProductosPage() {
             <RefreshCw size={15} />
             Refrescar
           </button>
-          <button
-            onClick={handleOpenCrear}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              padding: '0.5rem 1rem',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'var(--accent)',
-              color: '#fff',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus size={16} />
-            Nuevo Producto (SKU)
-          </button>
+          {(usuario?.rol === 'Admin' || usuario?.rol === 'Vendedor') && (
+            <button
+              onClick={handleOpenCrear}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.5rem 1rem',
+                borderRadius: '8px',
+                border: 'none',
+                background: 'var(--accent)',
+                color: '#fff',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              <Plus size={16} />
+              Nuevo Producto (SKU)
+            </button>
+          )}
         </div>
       </div>
 
@@ -421,10 +425,10 @@ export default function ProductosPage() {
             ),
             sortable: false,
           },
-          {
+          ...(usuario?.rol === 'Admin' || usuario?.rol === 'Vendedor' ? [{
             header: 'Acciones',
-            accessor: 'id',
-            render: (row) => (
+            accessor: 'id' as const,
+            render: (row: Producto) => (
               <div style={{ display: 'flex', gap: '0.4rem' }}>
                 <button
                   onClick={() => handleOpenEditar(row)}
@@ -456,7 +460,7 @@ export default function ProductosPage() {
                 </button>
               </div>
             ),
-          },
+          }] : []),
         ]}
         data={filtered}
         keyExtractor={(item) => item.id}
