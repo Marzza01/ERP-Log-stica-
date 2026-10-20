@@ -15,7 +15,7 @@ namespace MarketplaceERP.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/wms")]
-[Authorize]
+[Authorize(Roles = "Admin,Vendedor")]
 public class WmsController : ControllerBase
 {
     private readonly IWmsService _wmsService;

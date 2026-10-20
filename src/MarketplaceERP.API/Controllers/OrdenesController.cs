@@ -5,6 +5,7 @@
 
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,6 +19,7 @@ namespace MarketplaceERP.API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[Authorize]
 public class OrdenesController : ControllerBase
 {
     private readonly MarketplaceERP.Finance.Data.FinanceDbContext _db;
@@ -37,6 +39,7 @@ public class OrdenesController : ControllerBase
     // ── GET /api/ordenes ──────────────────────────────────────────────────────
     /// <summary>Lista todas las órdenes con KPIs de tiempo de ciclo.</summary>
     [HttpGet(Name = "ListarOrdenes")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(IEnumerable<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Listar(
         [FromQuery] string? estado = null,
@@ -44,6 +47,7 @@ public class OrdenesController : ControllerBase
         [FromQuery] int tamano = 50,
         CancellationToken cancellationToken = default)
     {
+        // TODO-FASE2: filtrar por vendedor del claim
         var query = _db.Ordenes
             .Include(o => o.Items)
             .AsQueryable();
@@ -82,10 +86,12 @@ public class OrdenesController : ControllerBase
 
     // ── GET /api/ordenes/{id} ─────────────────────────────────────────────────
     [HttpGet("{id:guid}", Name = "ObtenerOrden")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Obtener(Guid id, CancellationToken cancellationToken)
     {
+        // TODO-FASE2: filtrar por vendedor del claim
         var orden = await _db.Ordenes
             .Include(o => o.Items)
             .Include(o => o.SplitPago)
@@ -98,6 +104,7 @@ public class OrdenesController : ControllerBase
     // ── POST /api/ordenes ─────────────────────────────────────────────────────
     /// <summary>Crea una nueva orden en estado Pendiente.</summary>
     [HttpPost(Name = "CrearOrden")]
+    [Authorize(Roles = "Admin,Comprador")]
     [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Crear([FromBody] CrearOrdenRequest req, CancellationToken cancellationToken)
@@ -155,6 +162,7 @@ public class OrdenesController : ControllerBase
     // ── PUT /api/ordenes/{id}/estado ──────────────────────────────────────────
     /// <summary>Transiciona la orden entre estados del OMS.</summary>
     [HttpPut("{id:guid}/estado", Name = "TransicionarEstadoOrden")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -221,6 +229,7 @@ public class OrdenesController : ControllerBase
     // ── GET /api/ordenes/kpis ─────────────────────────────────────────────────
     /// <summary>KPIs del OMS: fill rate, tiempos de ciclo, semáforo.</summary>
     [HttpGet("kpis", Name = "KpisOms")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> ObtenerKpis(CancellationToken cancellationToken)
     {

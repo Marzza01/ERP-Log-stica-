@@ -7,6 +7,7 @@ using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +20,7 @@ namespace MarketplaceERP.API.Controllers;
 [ApiController]
 [Route("api/fulfillment")]
 [Produces("application/json")]
+[Authorize(Roles = "Admin,Vendedor")]
 public class FulfillmentController : ControllerBase
 {
     private readonly IFulfillmentService _fulfillmentService;

@@ -3,7 +3,9 @@
  * Todos los derechos reservados © 2026
  */
 
+using System.Security.Claims;
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MarketplaceERP.API.Controllers;
@@ -17,6 +19,7 @@ namespace MarketplaceERP.API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[Authorize]
 public class LiquidacionesController : ControllerBase
 {
     private readonly ILiquidacionService _liquidaciones;
@@ -34,6 +37,7 @@ public class LiquidacionesController : ControllerBase
     /// Agrega todos los SplitPagos no liquidados de órdenes entregadas.
     /// </summary>
     [HttpPost("generar", Name = "GenerarLiquidacion")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Generar([FromBody] GenerarLiquidacionRequest req, CancellationToken ct)
@@ -63,6 +67,7 @@ public class LiquidacionesController : ControllerBase
     /// Genera el asiento contable: DEBE 2108 (Pasivo Vendedores) → HABER 1101 (Caja).
     /// </summary>
     [HttpPost("procesar-pago/{id:guid}", Name = "ProcesarPagoLiquidacion")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -93,11 +98,31 @@ public class LiquidacionesController : ControllerBase
     // ── GET /api/liquidaciones/historial ──────────────────────────────────────
     /// <summary>
     /// Historial de liquidaciones. Filtrable por vendedorId.
+    /// Admin ve todas o filtra por vendedorId. Vendedor solo ve las suyas.
     /// </summary>
     [HttpGet("historial", Name = "HistorialLiquidaciones")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> Historial([FromQuery] Guid? vendedorId = null, CancellationToken ct = default)
     {
+        if (User.IsInRole("Vendedor") && !User.IsInRole("Admin"))
+        {
+            // TODO-FASE2: filtrar por vendedor del claim
+            var claimVal = User.FindFirstValue("VendedorId")
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? User.FindFirstValue("sub");
+
+            if (Guid.TryParse(claimVal, out var parsedVendedorId))
+            {
+                vendedorId = parsedVendedorId;
+            }
+            else
+            {
+                // Si el claim no es un Guid válido de vendedor, no debe ver datos de otros
+                return Ok(new List<object>());
+            }
+        }
+
         var historial = await _liquidaciones.ObtenerHistorialAsync(vendedorId, ct);
         var result = historial.Select(l => new
         {
@@ -117,6 +142,7 @@ public class LiquidacionesController : ControllerBase
     // ── GET /api/liquidaciones/kpis-vendedores ────────────────────────────────
     /// <summary>KPIs de desempeño por vendedor: fill rate, órdenes y montos liquidados.</summary>
     [HttpGet("kpis-vendedores", Name = "KpisVendedores")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> KpisVendedores(CancellationToken ct)
     {
@@ -139,6 +165,7 @@ public class LiquidacionesController : ControllerBase
     // ── GET /api/liquidaciones/pendientes ──────────────────────────────────
     /// <summary>Lista de liquidaciones con estado Pendiente de pago.</summary>
     [HttpGet("pendientes", Name = "LiquidacionesPendientes")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> Pendientes(CancellationToken ct)
     {

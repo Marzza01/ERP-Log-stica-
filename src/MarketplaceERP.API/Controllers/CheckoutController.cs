@@ -36,7 +36,7 @@ public class CheckoutController : ControllerBase
     private readonly FinanceDbContext _dbContext;
     private readonly ILogger<CheckoutController> _logger;
 
-    internal CheckoutController(
+    public CheckoutController(
         CheckoutOrchestrator orchestrator,
         FinanceDbContext dbContext,
         ILogger<CheckoutController> logger)

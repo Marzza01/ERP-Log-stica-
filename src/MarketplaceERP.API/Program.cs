@@ -66,7 +66,12 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});
 builder.Services.AddCors();
 
 // ── Módulos (Equipos 1, 2 y 3) ───────────────────────────────────────────────
@@ -134,7 +139,7 @@ app.MapGet("/health", () => Results.Ok(new
     timestamp = DateTime.UtcNow,
     servicio = "MarketplaceERP.API",
     version = "1.0.0"
-}));
+})).AllowAnonymous();
 
 app.MapControllers();
 
@@ -176,3 +181,6 @@ catch (Exception ex)
 }
 
 app.Run();
+
+public partial class Program { }
+

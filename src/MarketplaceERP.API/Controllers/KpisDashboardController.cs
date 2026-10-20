@@ -7,6 +7,7 @@ using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,6 +31,7 @@ namespace MarketplaceERP.API.Controllers;
 [ApiController]
 [Route("api/kpis-dashboard")]
 [Produces("application/json")]
+[Authorize(Roles = "Admin")]
 public class KpisDashboardController : ControllerBase
 {
     private readonly FinanceDbContext _financeDb;

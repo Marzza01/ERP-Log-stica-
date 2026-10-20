@@ -16,7 +16,7 @@ namespace MarketplaceERP.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/rma")]
-[Authorize]
+[Authorize(Roles = "Admin,Vendedor")]
 public class RmaController : ControllerBase
 {
     private readonly IRmaService _rmaService;

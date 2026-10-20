@@ -42,6 +42,7 @@ public class ProductosController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<Producto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPublicados([FromQuery] int pagina = 1, [FromQuery] int tamano = 50)
     {
+        // TODO-FASE2: filtrar por vendedor del claim
         var query = _dbContext.Productos
             .Include(p => p.Stock)
             .Where(p => p.EstaPublicado)

@@ -4,6 +4,7 @@
  */
 
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MarketplaceERP.API.Controllers;
@@ -16,6 +17,7 @@ namespace MarketplaceERP.API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[Authorize(Roles = "Admin")]
 public class ContabilidadController : ControllerBase
 {
     private readonly IContabilidadService _contabilidad;

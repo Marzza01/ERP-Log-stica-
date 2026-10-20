@@ -47,7 +47,7 @@ public record CheckoutResult(
 /// 5. ConfirmarDespacho
 /// 6. Retornar CheckoutResult
 /// </summary>
-internal sealed class CheckoutOrchestrator
+public sealed class CheckoutOrchestrator
 {
     private readonly IStockService _stockService;
     private readonly ICommissionService _commissionService;

@@ -5,6 +5,7 @@
 
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,6 +19,7 @@ namespace MarketplaceERP.API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[Authorize(Roles = "Admin")]
 public class ComprasController : ControllerBase
 {
     private readonly MarketplaceERP.Finance.Data.FinanceDbContext _db;
