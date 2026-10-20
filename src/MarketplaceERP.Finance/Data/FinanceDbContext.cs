@@ -122,7 +122,7 @@ public class FinanceDbContext : DbContext
             entity.HasOne(s => s.Liquidacion)
                   .WithMany(l => l.Splits)
                   .HasForeignKey(s => s.LiquidacionId)
-                  .OnDelete(DeleteBehavior.SetNull);
+                  .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasIndex(s => s.LiquidacionId);
         });

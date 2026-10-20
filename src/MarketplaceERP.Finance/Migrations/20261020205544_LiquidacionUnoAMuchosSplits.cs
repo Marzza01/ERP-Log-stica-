@@ -64,7 +64,7 @@ namespace MarketplaceERP.Finance.Migrations
                 principalSchema: "finance",
                 principalTable: "liquidaciones",
                 principalColumn: "Id",
-                onDelete: ReferentialAction.SetNull);
+                onDelete: ReferentialAction.Restrict);
         }
 
         /// <inheritdoc />

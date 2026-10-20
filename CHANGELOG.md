@@ -286,3 +286,28 @@ Este documento centraliza y documenta cada una de las fases, cambios de arquitec
 > En esta fase, el token JWT se almacena temporalmente en el `localStorage` del navegador.
 > - **Riesgo:** Los tokens almacenados en `localStorage` son accesibles mediante scripts del lado del cliente, haciéndolos vulnerables a ataques de Cross-Site Scripting (XSS) si existiera alguna brecha en el renderizado de datos externos.
 > - **Mitigación futura recomendada:** Migrar la persistencia de autenticación a **cookies `httpOnly`, `Secure` y `SameSite=Strict`**, lo cual requerirá ajustes coordinados en los endpoints de autenticación del backend ASP.NET Core (`Set-Cookie` con refresh tokens).
+
+---
+
+## Fase 4: Liquidaciones 1 a N sin Pago Doble, Concurrencia y Bloqueo Pesimista
+
+### 1. Modelo de Datos y Relación 1:N (`SplitPago` -> `Liquidacion`)
+- Eliminada la columna `SplitPagoId` en la tabla `finance.liquidaciones`.
+- Añadida la columna `LiquidacionId` (UUID nullable) con índice en `finance.splits_pago`, con clave foránea hacia `finance.liquidaciones` con regla de borrado `ON DELETE RESTRICT` para proteger la integridad contable.
+- Migración de datos automatizada en EF Core: migra el histórico preservando los vínculos 1 a 1 preexistentes antes de descartar la columna anterior.
+- Token de concurrencia optimista mediante el pseudocampo nativo `xmin` de PostgreSQL (`uint Version` mapeado con `IsRowVersion()` en Npgsql).
+
+### 2. Prevención de Carreras Críticas en Liquidaciones
+- **`GenerarLiquidacionAsync` (Bloqueo Pesimista):** Se implementó `SELECT ... FOR UPDATE OF s` sobre los registros candidatos de `finance.splits_pago` dentro de una transacción atómica. Si dos ejecuciones simultáneas intentan generar liquidación para el mismo vendedor, la segunda se bloquea hasta que la primera confirma, procesando 0 splits pendientes y retornando conflicto o excepción de falta de saldos pendientes, garantizando que ningún split pueda quedar asignado a dos liquidaciones distintas.
+- **`ProcesarPagoAsync` (Transacción Atómica y Concurrencia Optimista):** El cambio de estado de la liquidación a `Completada` y el asiento contable de desembolso (`DEBE 2108 / HABER 1101`) se ejecutan dentro de la misma transacción atómica con validación de estado previo y token `xmin`. Dos llamadas concurrentes resultan en exactamente una liquidación pagada y un rechazo por conflicto (HTTP 409).
+
+### 3. Códigos HTTP Restituidos en API
+- `POST /api/liquidaciones/generar`: Retorna `409 Conflict` cuando el vendedor no tiene saldos pendientes.
+- `POST /api/liquidaciones/procesar-pago/{id}`: Retorna `404 NotFound` si la liquidación no existe, o `409 Conflict` si ya fue procesada previamente o colisiona por concurrencia (`DbUpdateConcurrencyException`).
+
+### 4. Riesgo de Datos Históricos: Splits Huérfanos
+> [!WARNING]
+> **Riesgo Operativo en Producción (Splits Huérfanos):**
+> En bases de datos existentes donde operaba el modelo anterior (1 liquidación a 1 split), si un vendedor acumuló múltiples órdenes entregadas pero solo se vinculó un split por liquidación, los splits restantes permanecen con `LiquidacionId IS NULL`.
+> Al ejecutar la nueva lógica 1 a N, `GenerarLiquidacionAsync` consolidará y liquidará todos los splits pendientes de ese vendedor.
+> **Mitigación obligatoria:** Antes de habilitar la generación en bases de datos con histórico previo, debe ejecutarse el script de solo lectura `docs/sql/auditoria_splits_huerfanos.sql` para identificar y validar los splits huérfanos antes de emitir nuevos pagos.

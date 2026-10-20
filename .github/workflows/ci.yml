@@ -20,6 +20,24 @@ jobs:
     name: Build & Test (.NET 8)
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TEST_PG_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgrespassword"
+
     steps:
       # 1. Checkout del código
       - name: Checkout

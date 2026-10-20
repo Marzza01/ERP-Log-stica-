@@ -327,6 +327,23 @@ El script levantará automáticamente la API de .NET (puerto 5000) y la interfaz
    ```
    *Disponible en: `http://localhost:5173`.*
 
+3. **Ejecución de Tests Automatizados:**
+   - **Tests unitarios e integración en memoria:**
+     ```bash
+     dotnet test MarketplaceERP.sln
+     ```
+   - **Tests contra PostgreSQL Real (Concurrencia, Transacciones y Migraciones):**
+     Requieren la variable de entorno `TEST_PG_CONNECTION`. Si no se define, estos tests se omiten automáticamente sin fallar:
+     ```bash
+     # PowerShell (Windows):
+     $env:TEST_PG_CONNECTION="Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=tu_password"
+     dotnet test tests/MarketplaceERP.Finance.Tests/MarketplaceERP.Finance.Tests.csproj
+
+     # Linux / macOS / Bash:
+     export TEST_PG_CONNECTION="Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=tu_password"
+     dotnet test tests/MarketplaceERP.Finance.Tests/MarketplaceERP.Finance.Tests.csproj
+     ```
+
 ---
 
 ## 📱 Acceso y Diseño Responsive Multidispositivo

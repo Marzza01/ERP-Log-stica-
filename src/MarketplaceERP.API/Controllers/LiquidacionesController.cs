@@ -40,7 +40,7 @@ public class LiquidacionesController : ControllerBase
     [HttpPost("generar", Name = "GenerarLiquidacion")]
     [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Generar([FromBody] GenerarLiquidacionRequest req, CancellationToken ct)
     {
         try
@@ -58,7 +58,10 @@ public class LiquidacionesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { mensaje = ex.Message });
+            if (ex.Message.Contains("no tiene saldos pendientes"))
+                return Conflict(new { mensaje = ex.Message });
+
+            return Conflict(new { mensaje = ex.Message });
         }
     }
 
@@ -70,8 +73,8 @@ public class LiquidacionesController : ControllerBase
     [HttpPost("procesar-pago/{id:guid}", Name = "ProcesarPagoLiquidacion")]
     [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> ProcesarPago(Guid id, CancellationToken ct)
     {
         try
@@ -93,15 +96,19 @@ public class LiquidacionesController : ControllerBase
             _logger.LogWarning("Conflicto de concurrencia al procesar liquidación {Id}: {Message}", id, ex.Message);
             return Conflict(new { mensaje = "Conflicto de concurrencia: La liquidación ya fue modificada o procesada simultáneamente por otra transacción." });
         }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { mensaje = ex.Message });
+        }
         catch (InvalidOperationException ex)
         {
             if (ex.Message.Contains("no encontrada"))
                 return NotFound(new { mensaje = ex.Message });
 
-            if (ex.Message.Contains("ya está en estado"))
+            if (ex.Message.Contains("ya está en estado") || ex.Message.Contains("ya ha sido procesada"))
                 return Conflict(new { mensaje = ex.Message });
 
-            return BadRequest(new { mensaje = ex.Message });
+            return Conflict(new { mensaje = ex.Message });
         }
     }
 

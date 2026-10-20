@@ -53,7 +53,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.AddDbContext<CatalogDbContext>(o =>
                 o.UseInMemoryDatabase($"Catalog_{_dbName}"));
             services.AddDbContext<FinanceDbContext>(o =>
-                o.UseInMemoryDatabase($"Finance_{_dbName}"));
+            {
+                o.UseInMemoryDatabase($"Finance_{_dbName}");
+                o.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning));
+            });
         });
     }
 

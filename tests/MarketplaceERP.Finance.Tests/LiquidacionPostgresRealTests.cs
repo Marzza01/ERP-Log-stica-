@@ -18,17 +18,33 @@ namespace MarketplaceERP.Finance.Tests;
 
 /// <summary>
 /// Tests para Liquidaciones sin pago doble contra PostgreSQL real.
-/// Valida transacciones, concurrencia (xmin), exclusión mutua de pagos y migración de datos.
+/// Valida transacciones, exclusión mutua mediante FOR UPDATE / xmin, y migración de datos.
+/// Requiere TEST_PG_CONNECTION (ej: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=xxx").
+/// Si no está definida en el entorno, los tests se omiten limpiamente.
 /// </summary>
 public class LiquidacionPostgresRealTests : IAsyncLifetime
 {
+    private static readonly string? RawConnStr = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION");
     private readonly string _dbName = $"test_liq_{Guid.NewGuid():N}";
-    private readonly string _adminConnStr = "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres";
+    private string _adminConnStr = "";
     private string _testConnStr = "";
+    private bool _skip = false;
 
     public async Task InitializeAsync()
     {
-        _testConnStr = $"Host=localhost;Port=5432;Database={_dbName};Username=postgres;Password=postgres;Include Error Detail=true";
+        if (string.IsNullOrWhiteSpace(RawConnStr))
+        {
+            _skip = true;
+            return;
+        }
+
+        var builder = new NpgsqlConnectionStringBuilder(RawConnStr);
+        builder.Database = "postgres";
+        _adminConnStr = builder.ConnectionString;
+
+        builder.Database = _dbName;
+        builder.IncludeErrorDetail = true;
+        _testConnStr = builder.ConnectionString;
 
         // Crear base de datos aislada para esta ejecución
         await using var adminConn = new NpgsqlConnection(_adminConnStr);
@@ -48,9 +64,10 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        if (_skip) return;
+
         try
         {
-            // Forzar desconexión y drop de la base de datos de test
             await using var adminConn = new NpgsqlConnection(_adminConnStr);
             await adminConn.OpenAsync();
             await using var cmd = adminConn.CreateCommand();
@@ -119,6 +136,8 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
     [Fact]
     public async Task Test_A_TresSplitsDeUnVendedor_GeneraUnaLiquidacionConSumaTotal_YTodosLosSplitsMarcados()
     {
+        if (_skip) return;
+
         await using var db = CreateDbContext();
         var (vendedorId, splits) = await CrearSplitsPendientes(db, 3, 100m);
 
@@ -146,6 +165,8 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
     [Fact]
     public async Task Test_B_SegundaGeneracionInmediata_LanzaExcepcion_SinCrearNuevaLiquidacion()
     {
+        if (_skip) return;
+
         await using var db = CreateDbContext();
         var (vendedorId, _) = await CrearSplitsPendientes(db, 2, 50m);
 
@@ -171,8 +192,78 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Test_B2_DosGenerarSimultaneos_ExactamenteUnaLiquidacionCreada_LaOtraFalla()
+    {
+        if (_skip) return;
+
+        await using var dbInit = CreateDbContext();
+        var (vendedorId, splits) = await CrearSplitsPendientes(dbInit, 3, 100m);
+
+        await using var db1 = CreateDbContext();
+        await using var db2 = CreateDbContext();
+
+        var service1 = new LiquidacionService(db1, new ContabilidadService(db1, NullLogger<ContabilidadService>.Instance), NullLogger<LiquidacionService>.Instance);
+        var service2 = new LiquidacionService(db2, new ContabilidadService(db2, NullLogger<ContabilidadService>.Instance), NullLogger<LiquidacionService>.Instance);
+
+        // Act: Disparar GenerarLiquidacionAsync en paralelo para el mismo vendedor
+        var task1 = Task.Run(async () =>
+        {
+            try
+            {
+                var l = await service1.GenerarLiquidacionAsync(vendedorId);
+                return (Exito: true, Liquidacion: (Liquidacion?)l, Error: (Exception?)null);
+            }
+            catch (Exception ex)
+            {
+                return (Exito: false, Liquidacion: (Liquidacion?)null, Error: ex);
+            }
+        });
+
+        var task2 = Task.Run(async () =>
+        {
+            try
+            {
+                var l = await service2.GenerarLiquidacionAsync(vendedorId);
+                return (Exito: true, Liquidacion: (Liquidacion?)l, Error: (Exception?)null);
+            }
+            catch (Exception ex)
+            {
+                return (Exito: false, Liquidacion: (Liquidacion?)null, Error: ex);
+            }
+        });
+
+        var results = await Task.WhenAll(task1, task2);
+
+        // Assert: Exactamente una debe tener éxito y una debe fallar
+        var exitosos = results.Count(r => r.Exito);
+        var fallidos = results.Count(r => !r.Exito);
+
+        exitosos.Should().Be(1, "exactamente una generación debe completar con éxito");
+        fallidos.Should().Be(1, "la otra generación simultánea debe fallar por falta de saldos o conflicto");
+
+        var error = results.First(r => !r.Exito).Error;
+        if (error is AggregateException agg) error = agg.Flatten().InnerException ?? error;
+        error.Should().Match(e => e is InvalidOperationException || e is DbUpdateConcurrencyException || e is PostgresException);
+
+        // Ningún split queda asignado a dos liquidaciones
+        await using var verifyDb = CreateDbContext();
+        var liquidacionesVendedor = await verifyDb.Liquidaciones
+            .Where(l => l.VendedorId == vendedorId)
+            .ToListAsync();
+        liquidacionesVendedor.Should().HaveCount(1, "debe existir exactamente una liquidación");
+
+        var splitsDb = await verifyDb.SplitsPago
+            .Where(s => s.Orden.VendedorId == vendedorId)
+            .ToListAsync();
+
+        splitsDb.Should().OnlyContain(s => s.LiquidacionId == liquidacionesVendedor[0].Id);
+    }
+
+    [Fact]
     public async Task Test_C_DosProcesarPagoSimultaneos_ExactamenteUnoCompleta_YUnoFallaPorConcurrencia_UnaSolaPartidaContable()
     {
+        if (_skip) return;
+
         await using var db = CreateDbContext();
         var (vendedorId, _) = await CrearSplitsPendientes(db, 1, 200m);
 
@@ -239,18 +330,27 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
         liqFinal!.Estado.Should().Be(EstadoLiquidacion.Completada);
 
         var partidas = await verifyDb.PartidasContables
+            .Include(p => p.Lineas)
             .Where(p => p.ReferenciaOrigenId == liq.Id)
             .ToListAsync();
 
         partidas.Should().HaveCount(1, "debe generarse una única partida contable en libros, sin duplicar desembolsos");
+        var partida = partidas.First();
+        partida.TotalDebe.Should().Be(partida.TotalHaber, "la partida debe tener Debe == Haber");
+        partida.Lineas.Sum(l => l.Debe).Should().Be(partida.Lineas.Sum(l => l.Haber));
     }
 
     [Fact]
     public async Task Test_D_MigracionDeDatos_ConservaVinculoDeLiquidacionPreexistente()
     {
+        if (_skip) return;
+
         // En una base temporal, crear el esquema previo (con SplitPagoId en liquidaciones), insertar datos, y ejecutar la migración nueva
         var legacyDbName = $"test_mig_{Guid.NewGuid():N}";
-        var legacyConnStr = $"Host=localhost;Port=5432;Database={legacyDbName};Username=postgres;Password=postgres;Include Error Detail=true";
+        var builder = new NpgsqlConnectionStringBuilder(_adminConnStr);
+        builder.Database = legacyDbName;
+        builder.IncludeErrorDetail = true;
+        var legacyConnStr = builder.ConnectionString;
 
         try
         {

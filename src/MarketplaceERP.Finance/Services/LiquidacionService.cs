@@ -47,13 +47,32 @@ public class LiquidacionService : ILiquidacionService
         {
             await using var tx = await _db.Database.BeginTransactionAsync(cancellationToken);
 
-            // Obtener todos los splits de este vendedor pendientes de liquidar (LiquidacionId == null)
-            var splitsPendientes = await _db.SplitsPago
-                .Include(s => s.Orden)
-                .Where(s => s.Orden.VendedorId == vendedorId
-                         && s.LiquidacionId == null
-                         && s.Orden.Estado == EstadoOrden.Entregada)
-                .ToListAsync(cancellationToken);
+            // Si el proveedor de base de datos soporta raw SQL (PostgreSQL), bloqueamos con SELECT ... FOR UPDATE
+            // para evitar que dos transacciones concurrentes lean y procesen los mismos splits en paralelo.
+            List<SplitPago> splitsPendientes;
+            if (_db.Database.IsRelational())
+            {
+                splitsPendientes = await _db.SplitsPago
+                    .FromSqlRaw(@"
+                        SELECT s.* FROM finance.splits_pago s
+                        INNER JOIN finance.ordenes o ON o.""Id"" = s.""OrdenId""
+                        WHERE o.""VendedorId"" = {0}
+                          AND s.""LiquidacionId"" IS NULL
+                          AND o.""Estado"" = 'Entregada'
+                        FOR UPDATE OF s
+                    ", vendedorId)
+                    .Include(s => s.Orden)
+                    .ToListAsync(cancellationToken);
+            }
+            else
+            {
+                splitsPendientes = await _db.SplitsPago
+                    .Include(s => s.Orden)
+                    .Where(s => s.Orden.VendedorId == vendedorId
+                             && s.LiquidacionId == null
+                             && s.Orden.Estado == EstadoOrden.Entregada)
+                    .ToListAsync(cancellationToken);
+            }
 
             if (!splitsPendientes.Any())
                 throw new InvalidOperationException(
@@ -111,6 +130,9 @@ public class LiquidacionService : ILiquidacionService
             liquidacion.Estado = EstadoLiquidacion.Completada;
             liquidacion.FechaLiquidacion = DateTime.UtcNow;
 
+            // Generar asiento contable de desembolso:
+            // DEBE: 2108 Pasivo Vendedores (se cancela la obligación)
+            // HABER: 1101 Caja (sale el dinero)
             var asientoMonto = liquidacion.MontoLiquidar;
             var partida = new PartidaContable
             {
