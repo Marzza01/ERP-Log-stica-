@@ -268,24 +268,17 @@ public class CatalogLogisticsTests
         using var dbContext = CreateInMemoryDbContext();
         var service = new CatalogImportService(dbContext, NullLogger<CatalogImportService>.Instance);
 
-        var posiblesRutas = new[]
+        var rutaCsv = Path.Combine(Path.GetTempPath(), $"Catalogo_500_{Guid.NewGuid():N}.csv");
+        try
         {
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "docs", "data", "Catalogo_500_Productos.csv"),
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "MarketplaceERP.Catalog", "SeedData", "Catalogo_500_Productos.csv"),
-            Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..", "..", "..", "docs", "data", "Catalogo_500_Productos.csv")
-        };
+            // Asegurar que el archivo tenga codificación UTF-8 pura en carpeta temporal
+            CatalogDataGenerator.GenerarCsv(rutaCsv);
 
-        string? rutaCsv = posiblesRutas.FirstOrDefault(File.Exists) 
-            ?? Path.Combine(AppContext.BaseDirectory, "Catalogo_500_Productos.csv");
+            var defaultVendedorId = Guid.NewGuid();
+            var defaultCategoriaId = Guid.NewGuid();
 
-        // Asegurar que el archivo tenga codificación UTF-8 pura
-        CatalogDataGenerator.GenerarCsv(rutaCsv);
-
-        var defaultVendedorId = Guid.NewGuid();
-        var defaultCategoriaId = Guid.NewGuid();
-
-        // Act
-        var result = await service.ImportarCatalogoDesdeArchivoAsync(rutaCsv!, defaultVendedorId, defaultCategoriaId);
+            // Act
+            var result = await service.ImportarCatalogoDesdeArchivoAsync(rutaCsv, defaultVendedorId, defaultCategoriaId);
 
         // Assert
         result.TotalProcesados.Should().Be(500);
@@ -314,4 +307,13 @@ public class CatalogLogisticsTests
         var ubicacionesGeneradas = await dbContext.UbicacionesAlmacen.CountAsync();
         ubicacionesGeneradas.Should().BeGreaterThan(0);
     }
+    finally
+    {
+        if (File.Exists(rutaCsv))
+        {
+            try { File.Delete(rutaCsv); } catch { }
+        }
+    }
 }
+}
+

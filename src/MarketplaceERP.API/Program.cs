@@ -4,11 +4,18 @@
  */
 
 using System.Text;
+using System.Threading.RateLimiting;
 using MarketplaceERP.Catalog;
 using MarketplaceERP.Core;
+using MarketplaceERP.Core.Data;
+using MarketplaceERP.Core.Entities;
 using MarketplaceERP.Finance;
 using MarketplaceERP.Shared.Settings;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -31,18 +38,39 @@ if (!string.IsNullOrEmpty(connStrEnv))
     builder.Configuration["ConnectionStrings:DefaultConnection"] = connStrEnv;
 }
 
-
-// ── Configuración JWT usando patrón Options ───────────────────────────────────
+// ── Configuración JWT usando patrón Options y validación estricta ─────────────
 builder.Services.Configure<JwtSettings>(
     builder.Configuration.GetSection(JwtSettings.SectionName));
 
 var jwtSettings = builder.Configuration
     .GetSection(JwtSettings.SectionName)
     .Get<JwtSettings>()
-    ?? throw new InvalidOperationException("La configuración JWT es obligatoria. Verifica appsettings.json.");
+    ?? throw new InvalidOperationException("La configuración JWT es obligatoria. Verifica appsettings.json o variables de entorno.");
 
-if (string.IsNullOrWhiteSpace(jwtSettings.Key) || jwtSettings.Key.Length < 32)
-    throw new InvalidOperationException("Jwt:Key debe tener al menos 32 caracteres. Configura appsettings.json.");
+// Validación estricta de Key y Expiration
+var isProduction = builder.Environment.IsProduction();
+if (isProduction)
+{
+    if (string.IsNullOrWhiteSpace(jwtSettings.Key) ||
+        jwtSettings.Key.Length < 32 ||
+        jwtSettings.Key.Contains("CAMBIA", StringComparison.OrdinalIgnoreCase) ||
+        jwtSettings.Key.Contains("DEV_ONLY", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException("En Production, Jwt:Key no puede estar vacía, debe tener mínimo 32 caracteres y no puede contener palabras placeholder ('CAMBIA' o 'DEV_ONLY').");
+    }
+}
+else
+{
+    if (string.IsNullOrWhiteSpace(jwtSettings.Key) || jwtSettings.Key.Length < 32)
+    {
+        throw new InvalidOperationException("Jwt:Key debe tener al menos 32 caracteres. Configura appsettings.json o variables de entorno.");
+    }
+}
+
+if (jwtSettings.ExpirationMinutes > 1440)
+{
+    throw new InvalidOperationException("Jwt:ExpirationMinutes no puede superar el límite máximo de 1440 minutos (24 horas).");
+}
 
 // ── Autenticación JWT Bearer ──────────────────────────────────────────────────
 builder.Services.AddAuthentication(options =>
@@ -72,10 +100,49 @@ builder.Services.AddAuthorization(options =>
         .RequireAuthenticatedUser()
         .Build();
 });
-builder.Services.AddCors();
+
+// ── Rate Limiting nativo para Login ───────────────────────────────────────────
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("LoginLimiter", httpContext =>
+    {
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ip,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            });
+    });
+});
+
+// ── CORS desde Cors:AllowedOrigins o Cors__AllowedOrigins ────────────────────
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? (builder.Environment.IsDevelopment() ? new[] { "http://localhost:5173" } : Array.Empty<string>());
+
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        if (allowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        }
+        else
+        {
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        }
+    });
+});
 
 // ── Módulos (Equipos 1, 2 y 3) ───────────────────────────────────────────────
-// Cada módulo registra su propio DbContext, servicios y mocks
 builder.Services.AddCoreServices(builder.Configuration);
 builder.Services.AddCatalogServices(builder.Configuration);
 builder.Services.AddFinanceServices(builder.Configuration);
@@ -85,50 +152,65 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new()
-    {
-        Title = "MarketplaceERP API",
-        Version = "v1",
-        Description = "API del Marketplace ERP — Monolito Modular con 3 equipos"
-    });
 
-    // Soporte JWT en Swagger UI
-    options.AddSecurityDefinition("Bearer", new()
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(options =>
     {
-        Name = "Authorization",
-        Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT",
-        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-        Description = "Ingresa el token JWT. Ejemplo: Bearer {tu_token}"
-    });
-    options.AddSecurityRequirement(new()
-    {
+        options.SwaggerDoc("v1", new()
         {
-            new() { Reference = new() { Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme, Id = "Bearer" } },
-            Array.Empty<string>()
-        }
+            Title = "MarketplaceERP API",
+            Version = "v1",
+            Description = "API del Marketplace ERP — Monolito Modular con 3 equipos"
+        });
+
+        // Soporte JWT en Swagger UI
+        options.AddSecurityDefinition("Bearer", new()
+        {
+            Name = "Authorization",
+            Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+            Description = "Ingresa el token JWT. Ejemplo: Bearer {tu_token}"
+        });
+        options.AddSecurityRequirement(new()
+        {
+            {
+                new() { Reference = new() { Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme, Id = "Bearer" } },
+                Array.Empty<string>()
+            }
+        });
     });
-});
+}
 
 var app = builder.Build();
 
 // ── Middleware pipeline ───────────────────────────────────────────────────────
-app.UseCors(policy => policy
-    .AllowAnyOrigin()
-    .AllowAnyHeader()
-    .AllowAnyMethod());
-
-app.UseSwagger();
-app.UseSwaggerUI(options =>
+if (app.Environment.IsProduction())
 {
-    options.SwaggerEndpoint("/swagger/v1/swagger.json", "MarketplaceERP v1");
-    options.RoutePrefix = "swagger";
-});
+    app.UseForwardedHeaders(new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+    });
+    app.UseHsts();
+    app.UseHttpsRedirection();
+}
 
+app.UseCors();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "MarketplaceERP v1");
+        options.RoutePrefix = "swagger";
+    });
+}
+
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -142,6 +224,60 @@ app.MapGet("/health", () => Results.Ok(new
 })).AllowAnonymous();
 
 app.MapControllers();
+
+// ── Seed Inicial de Usuario Admin ─────────────────────────────────────────────
+try
+{
+    using var scope = app.Services.CreateScope();
+    var coreDb = scope.ServiceProvider.GetRequiredService<CoreDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    var adminEmail = Environment.GetEnvironmentVariable("ADMIN_EMAIL");
+    var adminPassword = Environment.GetEnvironmentVariable("ADMIN_PASSWORD");
+
+    if (app.Environment.IsProduction())
+    {
+        if (string.IsNullOrWhiteSpace(adminEmail) || string.IsNullOrWhiteSpace(adminPassword))
+        {
+            throw new InvalidOperationException("ADMIN_EMAIL y ADMIN_PASSWORD son obligatorios en entorno de Production.");
+        }
+    }
+
+    if (!string.IsNullOrWhiteSpace(adminEmail) && !string.IsNullOrWhiteSpace(adminPassword))
+    {
+        if (coreDb.Database.CanConnect())
+        {
+            var adminExistente = coreDb.Usuarios.FirstOrDefault(u => u.Email.ToLower() == adminEmail.ToLower());
+            if (adminExistente is null)
+            {
+                var hasher = new PasswordHasher<Usuario>();
+                var adminUsuario = new Usuario
+                {
+                    Id = Guid.NewGuid(),
+                    Email = adminEmail.ToLower().Trim(),
+                    Nombre = "Administrador del Sistema",
+                    Rol = "Admin",
+                    Activo = true,
+                    FechaRegistro = DateTime.UtcNow
+                };
+                adminUsuario.PasswordHash = hasher.HashPassword(adminUsuario, adminPassword);
+
+                coreDb.Usuarios.Add(adminUsuario);
+                coreDb.SaveChanges();
+                logger.LogInformation("Usuario Admin inicial creado exitosamente con email: {Email}", adminEmail);
+            }
+        }
+    }
+    else
+    {
+        logger.LogWarning("Variables ADMIN_EMAIL o ADMIN_PASSWORD no configuradas en entorno {Env}. Omitiendo creación de Admin inicial.", app.Environment.EnvironmentName);
+    }
+}
+catch (Exception ex) when (!app.Environment.IsProduction())
+{
+    var logger = app.Services.GetService<ILogger<Program>>();
+    logger?.LogWarning("Aviso en seed de Admin (omitido si BD no está lista aún): {Message}", ex.Message);
+}
 
 // ── Auto-seeding del Catálogo de 500 Productos (LOGIMKT S.A. de C.V.) ──────────
 try
@@ -175,7 +311,6 @@ try
 }
 catch (Exception ex)
 {
-    // No bloquea el inicio de la app si la base de datos no está levantada aún
     var logger = app.Services.GetService<ILogger<Program>>();
     logger?.LogWarning("Aviso en auto-seeding (omitido si PostgreSQL aún no está listo): {Message}", ex.Message);
 }
@@ -183,4 +318,3 @@ catch (Exception ex)
 app.Run();
 
 public partial class Program { }
-

@@ -107,10 +107,7 @@ public class LiquidacionesController : ControllerBase
     {
         if (User.IsInRole("Vendedor") && !User.IsInRole("Admin"))
         {
-            // TODO-FASE2: filtrar por vendedor del claim
-            var claimVal = User.FindFirstValue("VendedorId")
-                ?? User.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? User.FindFirstValue("sub");
+            var claimVal = User.FindFirstValue("VendedorId");
 
             if (Guid.TryParse(claimVal, out var parsedVendedorId))
             {
@@ -118,7 +115,6 @@ public class LiquidacionesController : ControllerBase
             }
             else
             {
-                // Si el claim no es un Guid válido de vendedor, no debe ver datos de otros
                 return Ok(new List<object>());
             }
         }

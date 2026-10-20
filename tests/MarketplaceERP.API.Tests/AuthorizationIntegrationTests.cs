@@ -456,6 +456,36 @@ public class AuthorizationIntegrationTests : IClassFixture<CustomWebApplicationF
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task CheckoutProcesar_RolAdmin_Retorna403()
+    {
+        var client = _factory.CreateClientWithAuth("Admin");
+        var body = new
+        {
+            VendedorId = Guid.NewGuid(),
+            ProductoId = Guid.NewGuid(),
+            Cantidad = 1,
+            PrecioUnitario = 10m
+        };
+        var response = await client.PostAsJsonAsync("/api/checkout", body);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CheckoutProcesar_RolVendedor_Retorna403()
+    {
+        var client = _factory.CreateClientWithAuth("Vendedor");
+        var body = new
+        {
+            VendedorId = Guid.NewGuid(),
+            ProductoId = Guid.NewGuid(),
+            Cantidad = 1,
+            PrecioUnitario = 10m
+        };
+        var response = await client.PostAsJsonAsync("/api/checkout", body);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     // ── 13. AuthController (Fallback vs AllowAnonymous) ───────────────────────
 
     [Fact]

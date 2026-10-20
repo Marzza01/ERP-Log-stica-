@@ -57,15 +57,14 @@ public class CheckoutController : ControllerBase
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> ProcesarCheckout([FromBody] CheckoutRequest request)
     {
-        // Extraer CompradorId del claim JWT
+        // Extraer CompradorId del claim JWT NameIdentifier (Guid)
         var compradorIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+            ?? User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
 
-        // Para el mock usamos un Guid determinístico basado en el username
-        var compradorId = compradorIdClaim is not null
-            ? new Guid(System.Security.Cryptography.MD5.HashData(
-                System.Text.Encoding.UTF8.GetBytes(compradorIdClaim)))
-            : Guid.NewGuid();
+        if (!Guid.TryParse(compradorIdClaim, out var compradorId))
+        {
+            return Unauthorized(new { mensaje = "Identificador de comprador inválido en el token." });
+        }
 
         var ordenId = Guid.NewGuid();
         var montoTotal = request.Cantidad * request.PrecioUnitario;

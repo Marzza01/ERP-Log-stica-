@@ -5,15 +5,15 @@ services:
     container_name: marketplace_db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: marketplace_erp
-      POSTGRES_USER: marketplace_user
-      POSTGRES_PASSWORD: marketplace_pass
+      POSTGRES_DB: ${POSTGRES_DB:-marketplace_erp}
+      POSTGRES_USER: ${POSTGRES_USER:-marketplace_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U marketplace_user -d marketplace_erp"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-marketplace_user} -d ${POSTGRES_DB:-marketplace_erp}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,12 +31,14 @@ services:
     ports:
       - "8080:8080"
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=marketplace_erp;Username=marketplace_user;Password=marketplace_pass;Include Error Detail=true"
-      Jwt__Key: "DEV_ONLY_CLAVE_SECRETA_MINIMO_32_CARACTERES_AQUI!!"
-      Jwt__Issuer: "MarketplaceERP"
-      Jwt__Audience: "MarketplaceERP.Clients"
-      Jwt__ExpirationMinutes: "480"
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=${POSTGRES_DB:-marketplace_erp};Username=${POSTGRES_USER:-marketplace_user};Password=${POSTGRES_PASSWORD}"
+      Jwt__Key: ${JWT_KEY}
+      Jwt__Issuer: ${JWT_ISSUER:-MarketplaceERP}
+      Jwt__Audience: ${JWT_AUDIENCE:-MarketplaceERP.Clients}
+      Jwt__ExpirationMinutes: ${JWT_EXPIRATION_MINUTES:-60}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
 
   # ── Frontend (React + Vite) ───────────────────────────────────────────────────
   frontend:

@@ -3,6 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
+using System.Security.Claims;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -47,10 +48,22 @@ public class OrdenesController : ControllerBase
         [FromQuery] int tamano = 50,
         CancellationToken cancellationToken = default)
     {
-        // TODO-FASE2: filtrar por vendedor del claim
         var query = _db.Ordenes
             .Include(o => o.Items)
             .AsQueryable();
+
+        if (User.IsInRole("Vendedor") && !User.IsInRole("Admin"))
+        {
+            var vendedorIdClaim = User.FindFirstValue("VendedorId");
+            if (Guid.TryParse(vendedorIdClaim, out var vendedorId))
+            {
+                query = query.Where(o => o.VendedorId == vendedorId);
+            }
+            else
+            {
+                return Ok(new { total = 0, pagina, tamano, ordenes = Array.Empty<object>() });
+            }
+        }
 
         if (!string.IsNullOrWhiteSpace(estado) && Enum.TryParse<EstadoOrden>(estado, true, out var estadoEnum))
             query = query.Where(o => o.Estado == estadoEnum);
@@ -91,12 +104,22 @@ public class OrdenesController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Obtener(Guid id, CancellationToken cancellationToken)
     {
-        // TODO-FASE2: filtrar por vendedor del claim
-        var orden = await _db.Ordenes
+        var query = _db.Ordenes
             .Include(o => o.Items)
             .Include(o => o.SplitPago)
-            .FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
+            .AsQueryable();
 
+        if (User.IsInRole("Vendedor") && !User.IsInRole("Admin"))
+        {
+            var vendedorIdClaim = User.FindFirstValue("VendedorId");
+            if (!Guid.TryParse(vendedorIdClaim, out var vendedorId))
+            {
+                return NotFound(new { mensaje = $"Orden {id} no encontrada." });
+            }
+            query = query.Where(o => o.VendedorId == vendedorId);
+        }
+
+        var orden = await query.FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
         if (orden == null) return NotFound(new { mensaje = $"Orden {id} no encontrada." });
         return Ok(orden);
     }
@@ -112,11 +135,23 @@ public class OrdenesController : ControllerBase
         if (req.Items == null || req.Items.Count == 0)
             return BadRequest(new { mensaje = "Una orden debe tener al menos un ítem." });
 
+        Guid compradorId = req.CompradorId;
+        if (User.IsInRole("Comprador"))
+        {
+            var compradorClaim = User.FindFirstValue(System.Security.Claims.ClaimTypes.NameIdentifier)
+                ?? User.FindFirstValue(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub);
+
+            if (Guid.TryParse(compradorClaim, out var parsedCompradorId))
+            {
+                compradorId = parsedCompradorId;
+            }
+        }
+
         var orden = new Orden
         {
             Id = Guid.NewGuid(),
             NumeroOrden = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(10000, 99999)}",
-            CompradorId = req.CompradorId,
+            CompradorId = compradorId,
             VendedorId = req.VendedorId,
             Estado = EstadoOrden.Pendiente,
             TipoCliente = req.TipoCliente,
