@@ -57,6 +57,14 @@ jobs:
       - name: Build solution
         run: dotnet build MarketplaceERP.sln --no-restore --configuration Release
 
+      # 4.1 Validar que TEST_PG_CONNECTION esté configurada
+      - name: Verify TEST_PG_CONNECTION is set
+        run: |
+          if [ -z "$TEST_PG_CONNECTION" ]; then
+            echo "ERROR: TEST_PG_CONNECTION is not set!"
+            exit 1
+          fi
+
       # 5. Ejecutar tests unitarios
       - name: Run tests
         run: dotnet test MarketplaceERP.sln --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./TestResults

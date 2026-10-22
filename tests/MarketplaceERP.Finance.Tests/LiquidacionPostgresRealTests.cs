@@ -13,6 +13,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace MarketplaceERP.Finance.Tests;
 
@@ -28,13 +29,12 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
     private readonly string _dbName = $"test_liq_{Guid.NewGuid():N}";
     private string _adminConnStr = "";
     private string _testConnStr = "";
-    private bool _skip = false;
 
     public async Task InitializeAsync()
     {
         if (string.IsNullOrWhiteSpace(RawConnStr))
         {
-            _skip = true;
+            // Skip.If se invoca en cada test; InitializeAsync no hace nada si no hay conexión.
             return;
         }
 
@@ -64,7 +64,7 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        if (_skip) return;
+        if (string.IsNullOrWhiteSpace(RawConnStr)) return;
 
         try
         {
@@ -133,10 +133,10 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
         return (vendedorId, splits);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Test_A_TresSplitsDeUnVendedor_GeneraUnaLiquidacionConSumaTotal_YTodosLosSplitsMarcados()
     {
-        if (_skip) return;
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no definida; se requiere PostgreSQL real.");
 
         await using var db = CreateDbContext();
         var (vendedorId, splits) = await CrearSplitsPendientes(db, 3, 100m);
@@ -162,10 +162,10 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
         splitsActualizados.Select(s => s.Id).Should().BeEquivalentTo(splits.Select(s => s.Id));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Test_B_SegundaGeneracionInmediata_LanzaExcepcion_SinCrearNuevaLiquidacion()
     {
-        if (_skip) return;
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no definida; se requiere PostgreSQL real.");
 
         await using var db = CreateDbContext();
         var (vendedorId, _) = await CrearSplitsPendientes(db, 2, 50m);
@@ -191,10 +191,10 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
         totalLiqs.Should().Be(1, "no se debe haber creado ninguna liquidación duplicada");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Test_B2_DosGenerarSimultaneos_ExactamenteUnaLiquidacionCreada_LaOtraFalla()
     {
-        if (_skip) return;
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no definida; se requiere PostgreSQL real.");
 
         await using var dbInit = CreateDbContext();
         var (vendedorId, splits) = await CrearSplitsPendientes(dbInit, 3, 100m);
@@ -259,10 +259,10 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
         splitsDb.Should().OnlyContain(s => s.LiquidacionId == liquidacionesVendedor[0].Id);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Test_C_DosProcesarPagoSimultaneos_ExactamenteUnoCompleta_YUnoFallaPorConcurrencia_UnaSolaPartidaContable()
     {
-        if (_skip) return;
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no definida; se requiere PostgreSQL real.");
 
         await using var db = CreateDbContext();
         var (vendedorId, _) = await CrearSplitsPendientes(db, 1, 200m);
@@ -340,10 +340,10 @@ public class LiquidacionPostgresRealTests : IAsyncLifetime
         partida.Lineas.Sum(l => l.Debe).Should().Be(partida.Lineas.Sum(l => l.Haber));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Test_D_MigracionDeDatos_ConservaVinculoDeLiquidacionPreexistente()
     {
-        if (_skip) return;
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no definida; se requiere PostgreSQL real.");
 
         // En una base temporal, crear el esquema previo (con SplitPagoId en liquidaciones), insertar datos, y ejecutar la migración nueva
         var legacyDbName = $"test_mig_{Guid.NewGuid():N}";

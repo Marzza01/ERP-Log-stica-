@@ -68,6 +68,10 @@ namespace MarketplaceERP.Finance.Migrations
         }
 
         /// <inheritdoc />
+        /// <remarks>
+        /// Este Down() solo es seguro ejecutarlo sin datos o en escenarios donde cada liquidación tenga a lo sumo un split asociado,
+        /// debido a que recrea la relación 1:1 original mediante IX_liquidaciones_SplitPagoId único.
+        /// </remarks>
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropForeignKey(
