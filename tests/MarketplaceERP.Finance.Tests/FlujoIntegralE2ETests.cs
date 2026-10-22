@@ -211,7 +211,7 @@ public class FlujoIntegralE2ETests
             ordenVenta.TipoComprobante
         );
         partidaVenta.EstaCuadrada.Should().BeTrue();
-        partidaVenta.TotalDebe.Should().Be(226m);
+        partidaVenta.TotalDebe.Should().Be(ordenVenta.MontoTotal);
 
         // ── 5. Fulfillment: Pick List con Enrutamiento Óptimo S-Shape ─────────
         var pickList = await fulfillmentService.GenerarPickListAsync(new GenerarPickListRequest(

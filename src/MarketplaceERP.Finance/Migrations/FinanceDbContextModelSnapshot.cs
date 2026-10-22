@@ -23,6 +23,8 @@ namespace MarketplaceERP.Finance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.HasSequence("PartidaContableNumeroSeq", "finance");
+
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.FacturaProveedor", b =>
                 {
                     b.Property<Guid>("Id")
@@ -602,6 +604,10 @@ namespace MarketplaceERP.Finance.Migrations
 
                     b.HasIndex("TipoOperacion");
 
+                    b.HasIndex("TipoOperacion", "ReferenciaOrigenId")
+                        .IsUnique()
+                        .HasFilter("\"ReferenciaOrigenId\" IS NOT NULL");
+
                     b.ToTable("partidas_contables", "finance");
                 });
 
@@ -728,7 +734,7 @@ namespace MarketplaceERP.Finance.Migrations
                     b.HasOne("MarketplaceERP.Finance.Entities.Liquidacion", "Liquidacion")
                         .WithMany("Splits")
                         .HasForeignKey("LiquidacionId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("MarketplaceERP.Finance.Entities.Orden", "Orden")
                         .WithOne("SplitPago")

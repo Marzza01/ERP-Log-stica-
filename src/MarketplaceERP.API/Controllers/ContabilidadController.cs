@@ -31,23 +31,28 @@ public class ContabilidadController : ControllerBase
 
     // ── GET /api/contabilidad/libro-diario ────────────────────────────────────
     /// <summary>
-    /// Retorna el Libro Diario con todos los asientos de partida doble.
-    /// Filtrable por rango de fechas.
+    /// Retorna el Libro Diario con todos los asientos de partida doble paginados.
+    /// Filtrable por rango de fechas, page y pageSize (máximo 200).
     /// </summary>
     [HttpGet("libro-diario", Name = "LibroDiario")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> LibroDiario(
         [FromQuery] DateTime? desde = null,
         [FromQuery] DateTime? hasta = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
         CancellationToken cancellationToken = default)
     {
-        var partidas = await _contabilidad.ObtenerLibroDiarioAsync(desde, hasta, cancellationToken);
+        var resultado = await _contabilidad.ObtenerLibroDiarioPaginadoAsync(desde, hasta, page, pageSize, cancellationToken);
 
         return Ok(new
         {
             filtro = new { desde, hasta },
-            totalPartidas = partidas.Count(),
-            partidas
+            totalPartidas = resultado.Total,
+            page = resultado.Page,
+            pageSize = resultado.PageSize,
+            totalPaginas = (int)Math.Ceiling((double)resultado.Total / resultado.PageSize),
+            partidas = resultado.Partidas
         });
     }
 
@@ -98,7 +103,7 @@ public class ContabilidadController : ControllerBase
     // ── POST /api/contabilidad/asiento-manual ─────────────────────────────────
     /// <summary>
     /// Registra un asiento de ajuste manual (Debe == Haber obligatorio).
-    /// Útil para reversiones, correcciones o asientos de cierre.
+    /// Valida cuentas, no duplicidad de signos en líneas, y persiste exactamente las líneas enviadas.
     /// </summary>
     [HttpPost("asiento-manual", Name = "AsientoManual")]
     [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
@@ -106,26 +111,47 @@ public class ContabilidadController : ControllerBase
     public async Task<IActionResult> AsientoManual(
         [FromBody] AsientoManualRequest req, CancellationToken cancellationToken)
     {
-        decimal totalDebe  = req.Lineas.Sum(l => l.Debe);
-        decimal totalHaber = req.Lineas.Sum(l => l.Haber);
+        if (req == null || req.Lineas == null || !req.Lineas.Any())
+            return BadRequest(new { mensaje = "Debe proporcionar los datos del asiento y sus líneas." });
 
-        if (Math.Abs(totalDebe - totalHaber) > 0.01m)
-            return BadRequest(new
-            {
-                mensaje = "El asiento no cuadra. La suma de Debe debe ser igual a la suma de Haber.",
-                totalDebe, totalHaber, diferencia = totalDebe - totalHaber
-            });
+        try
+        {
+            var lineasInput = req.Lineas.Select(l => new LineaAsientoInput(
+                l.CodigoCuenta,
+                l.Debe,
+                l.Haber,
+                l.Glosa)).ToList();
 
-        // Se utiliza el asiento de venta genérico con monto 0 de IVA como contenedor
-        // y se sobreescribe el concepto — en producción se extendería la interfaz
-        var partida = await _contabilidad.GenerarAsientoVentaAsync(
-            Guid.Empty, totalDebe, 0m, "AjusteManual", cancellationToken);
+            var partida = await _contabilidad.GenerarAsientoManualAsync(
+                concepto: req.Concepto,
+                tipoOperacion: string.IsNullOrWhiteSpace(req.TipoOperacion) ? "Ajuste" : req.TipoOperacion,
+                lineas: lineasInput,
+                referenciaOrigenId: null,
+                documentoReferencia: null,
+                cancellationToken: cancellationToken);
 
-        return CreatedAtAction(nameof(LibroDiario), null,
-            new { partida.Id, partida.NumeroPartida, partida.Concepto, totalDebe, totalHaber });
+            return CreatedAtAction(nameof(LibroDiario), null,
+                new
+                {
+                    partida.Id,
+                    partida.NumeroPartida,
+                    partida.Concepto,
+                    totalDebe = partida.TotalDebe,
+                    totalHaber = partida.TotalHaber,
+                    lineas = partida.Lineas
+                });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
     }
 }
 
 // ── Request DTOs ────────────────────────────────────────────────────────────────
-public record LineaAsientoRequest(string CodigoCuenta, string NombreCuenta, decimal Debe, decimal Haber, string Glosa);
+public record LineaAsientoRequest(string CodigoCuenta, string? NombreCuenta, decimal Debe, decimal Haber, string? Glosa);
 public record AsientoManualRequest(string Concepto, string TipoOperacion, List<LineaAsientoRequest> Lineas);

@@ -130,36 +130,23 @@ public class LiquidacionService : ILiquidacionService
             liquidacion.Estado = EstadoLiquidacion.Completada;
             liquidacion.FechaLiquidacion = DateTime.UtcNow;
 
-            // Generar asiento contable de desembolso:
+            // Generar asiento contable de desembolso mediante IContabilidadService (mismo DbContext y transacción):
             // DEBE: 2108 Pasivo Vendedores (se cancela la obligación)
             // HABER: 1101 Caja (sale el dinero)
             var asientoMonto = liquidacion.MontoLiquidar;
-            var partida = new PartidaContable
+            var lineasAsiento = new List<LineaAsientoInput>
             {
-                Id = Guid.NewGuid(),
-                NumeroPartida = $"LIQ-{DateTime.UtcNow:yyyy}-{await _db.PartidasContables.CountAsync(cancellationToken) + 1:D6}",
-                Fecha = DateTime.UtcNow,
-                Concepto = $"Liquidación vendedor {liquidacion.VendedorId:N} — Liq#{liquidacion.Id:N}",
-                TipoOperacion = "Liquidacion",
-                ReferenciaOrigenId = liquidacion.Id,
-                DocumentoReferencia = liquidacion.Id.ToString("N"),
-                TotalDebe = asientoMonto,
-                TotalHaber = asientoMonto,
-                FechaRegistro = DateTime.UtcNow,
-                Lineas = new List<LineaPartidaContable>
-                {
-                    new() { Id = Guid.NewGuid(), CodigoCuenta = PASIVO_VENDEDORES,
-                            NombreCuenta = "Pasivos por Liquidar a Vendedores Marketplace",
-                            Debe = asientoMonto, Haber = 0m,
-                            Glosa = $"Cancelación obligación vendedor — Liq#{liquidacion.Id:N}" },
-                    new() { Id = Guid.NewGuid(), CodigoCuenta = CAJA_BANCOS,
-                            NombreCuenta = "Efectivo y Equivalentes de Efectivo",
-                            Debe = 0m, Haber = asientoMonto,
-                            Glosa = "Desembolso a cuenta de vendedor" },
-                }
+                new(PASIVO_VENDEDORES, asientoMonto, 0m, $"Cancelación obligación vendedor — Liq#{liquidacion.Id:N}"),
+                new(CAJA_BANCOS, 0m, asientoMonto, "Desembolso a cuenta de vendedor")
             };
 
-            _db.PartidasContables.Add(partida);
+            var partida = await _contabilidad.GenerarAsientoManualAsync(
+                concepto: $"Liquidación vendedor {liquidacion.VendedorId:N} — Liq#{liquidacion.Id:N}",
+                tipoOperacion: "Liquidacion",
+                lineas: lineasAsiento,
+                referenciaOrigenId: liquidacion.Id,
+                documentoReferencia: liquidacion.Id.ToString("N"),
+                cancellationToken: cancellationToken);
 
             await _db.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);

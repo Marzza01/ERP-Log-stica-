@@ -256,6 +256,11 @@ public class FinanceDbContext : DbContext
                   .OnDelete(DeleteBehavior.SetNull);
         });
 
+        // Secuencia para número de partida contable (PostgreSQL)
+        modelBuilder.HasSequence<long>("PartidaContableNumeroSeq", "finance")
+            .StartsAt(1)
+            .IncrementsBy(1);
+
         // ── PartidaContable (Libro Diario) ────────────────────────────────────
         modelBuilder.Entity<PartidaContable>(entity =>
         {
@@ -276,6 +281,12 @@ public class FinanceDbContext : DbContext
             entity.HasIndex(p => p.NumeroPartida).IsUnique();
             entity.HasIndex(p => p.Fecha);
             entity.HasIndex(p => p.TipoOperacion);
+
+            // Índice único condicional para idempotencia: una sola partida por (TipoOperacion, ReferenciaOrigenId)
+            // cuando ReferenciaOrigenId no es nulo
+            entity.HasIndex(p => new { p.TipoOperacion, p.ReferenciaOrigenId })
+                  .IsUnique()
+                  .HasFilter("\"ReferenciaOrigenId\" IS NOT NULL");
         });
 
         // ── LineaPartidaContable ──────────────────────────────────────────────
