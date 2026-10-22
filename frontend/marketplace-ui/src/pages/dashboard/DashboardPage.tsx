@@ -8,9 +8,11 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import { TrendingUp, ShoppingCart, Package, DollarSign, RefreshCw } from 'lucide-react';
+import { TrendingUp, ShoppingCart, Package, DollarSign, RefreshCw, ChevronRight } from 'lucide-react';
 import KpiCard from '../../components/ui/KpiCard';
 import AlertBanner from '../../components/ui/AlertBanner';
+import KpiDetailModal, { type SelectedKpiItem } from '../../components/ui/KpiDetailModal';
+import type { StatCardKey } from '../../constants/kpiDetails';
 import { kpisApi } from '../../api/kpis';
 import type { DashboardKpis, ModeloFinanciero } from '../../types';
 
@@ -26,6 +28,7 @@ export default function DashboardPage() {
   const [modelo, setModelo] = useState<ModeloFinanciero | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedCard, setSelectedCard] = useState<SelectedKpiItem | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -76,37 +79,49 @@ export default function DashboardPage() {
 
   const res = data?.resumenEjecutivo;
 
-  const statCards = [
+  const statCards: {
+    key: StatCardKey;
+    label: string;
+    value: string | number;
+    sub: string;
+    delta: string;
+    deltaType: 'up' | 'down' | 'neutral';
+    icon: React.ReactNode;
+  }[] = [
     {
+      key: 'total_ordenes',
       label: 'Total Órdenes',
       value: res?.totalOrdenes ?? 0,
       sub: `Últimos ${period} días`,
       delta: '+8.4%',
-      deltaType: 'up' as const,
+      deltaType: 'up',
       icon: <ShoppingCart size={18} />,
     },
     {
+      key: 'ordenes_entregadas',
       label: 'Órdenes Entregadas',
       value: res?.ordenesEntregadas ?? 0,
       sub: 'Completadas a tiempo',
       delta: `${res?.totalOrdenes ? Math.round(((res.ordenesEntregadas ?? 0) / res.totalOrdenes) * 100) : 0}% tasa`,
-      deltaType: 'up' as const,
+      deltaType: 'up',
       icon: <Package size={18} />,
     },
     {
+      key: 'canceladas',
       label: 'Canceladas',
       value: res?.ordenesCanceladas ?? 0,
       sub: 'Requieren atención',
       delta: `${res?.totalOrdenes ? ((res.ordenesCanceladas ?? 0) / res.totalOrdenes * 100).toFixed(1) : 0}%`,
-      deltaType: ((res?.ordenesCanceladas ?? 0) > 10 ? 'down' : 'neutral') as 'down' | 'neutral',
+      deltaType: ((res?.ordenesCanceladas ?? 0) > 10 ? 'down' : 'neutral'),
       icon: <TrendingUp size={18} />,
     },
     {
+      key: 'comision_generada',
       label: 'Comisión Generada',
       value: `$${(res?.totalComisionGenerada ?? 0).toLocaleString('es-SV', { maximumFractionDigits: 0 })}`,
       sub: 'Marketplace 10%',
       delta: '100% cobrable',
-      deltaType: 'neutral' as const,
+      deltaType: 'neutral',
       icon: <DollarSign size={18} />,
     },
   ];
@@ -152,13 +167,29 @@ export default function DashboardPage() {
       {/* Resumen ejecutivo neutro y uniforme */}
       <div className="stat-grid">
         {statCards.map((s, i) => (
-          <div className={`stat-card animate-in stagger-${i + 1}`} key={s.label}>
+          <div
+            className={`stat-card animate-in stagger-${i + 1}`}
+            key={s.label}
+            role="button"
+            tabIndex={0}
+            aria-haspopup="dialog"
+            onClick={() => setSelectedCard({ type: 'stat', key: s.key })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setSelectedCard({ type: 'stat', key: s.key });
+              }
+            }}
+          >
             <div className="stat-icon-wrap">
               {s.icon}
             </div>
             <div className="stat-info">
               <div className="stat-header">
-                <span className="stat-label">{s.label}</span>
+                <span className="stat-label" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {s.label}
+                  <ChevronRight size={11} style={{ color: 'var(--text-muted)', opacity: 0.7 }} />
+                </span>
                 <span className={`stat-delta ${s.deltaType}`}>{s.delta}</span>
               </div>
               <div className="stat-value">
@@ -183,7 +214,13 @@ export default function DashboardPage() {
         </div>
       ) : (
         <div className="kpi-grid">
-          {(data?.kpis ?? []).map(kpi => <KpiCard key={kpi.numero} kpi={kpi} />)}
+          {(data?.kpis ?? []).map(kpi => (
+            <KpiCard
+              key={kpi.numero}
+              kpi={kpi}
+              onClick={() => setSelectedCard({ type: 'kpi', kpi })}
+            />
+          ))}
         </div>
       )}
 
@@ -251,6 +288,13 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Modal de Detalle de KPI y Resumen Ejecutivo */}
+      <KpiDetailModal
+        selected={selectedCard}
+        data={data}
+        onClose={() => setSelectedCard(null)}
+      />
     </div>
   );
 }
