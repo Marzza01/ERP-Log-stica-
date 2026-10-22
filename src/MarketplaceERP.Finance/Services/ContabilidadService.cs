@@ -229,42 +229,40 @@ public class ContabilidadService : IContabilidadService
         if (orden?.SplitPago != null)
         {
             var split = orden.SplitPago;
-            decimal totalCobrado = orden.MontoTotal > 0 ? orden.MontoTotal : (montoVenta + iva + orden.CostoEnvio);
-            decimal pasivoVendedor = split.MontoVendedor; // 2108 Monto neto del vendedor
-            decimal comisionBruta = split.MontoMarketplace;
 
-            // Requerimiento:
-            // Debe: Caja/CxC por el total cobrado (incluye CostoEnvio si aplica)
-            // Haber 2108: Monto neto del vendedor según splits
-            // Haber 4101: Comisión neta / ingresos logísticos del marketplace
-            // Haber 2105: IVA Débito fiscal (IVA de venta y de comisión al 13%)
-            // // validar con contador: Tratamiento tributario de IVA en comisiones marketplace vs IVA de la venta completa
+            // ── Debe: Total cobrado al cliente (incluye SubTotal + IVA + CostoEnvio) ──
+            decimal totalCobrado = orden.MontoTotal;
 
-            decimal remanenteMarketplace = totalCobrado - pasivoVendedor; // Incluye comisión bruta + costo de envío
-            decimal baseGravableMarketplace = Math.Round(remanenteMarketplace / 1.13m, 2, MidpointRounding.AwayFromZero);
-            decimal ivaMarketplace = remanenteMarketplace - baseGravableMarketplace;
+            // ── Haber 2108: Obligación con vendedor ──
+            decimal pasivoVendedor = split.MontoVendedor;
 
-            // La suma de Haber debe cuadrar con totalCobrado
-            decimal ingresosMarketplace = baseGravableMarketplace;
-            decimal totalIvaDebito = ivaMarketplace;
+            // ── Haber 2105: IVA Débito Fiscal completo de la venta (sin recalcular ni dividir entre 1.13) ──
+            decimal ivaDebito = orden.ImpuestoIva;
 
-            decimal balanceCheck = pasivoVendedor + ingresosMarketplace + totalIvaDebito;
-            decimal diff = totalCobrado - balanceCheck;
-            if (Math.Abs(diff) <= 0.05m)
+            // ── Haber 4101: Residuo exacto = MontoTotal − 2108 − 2105 ──
+            // Incluye la comisión bruta del marketplace y el CostoEnvio.
+            // DECISIÓN-PENDIENTE / validar con contador:
+            //   (a) Si la comisión genera IVA Débito adicional y cómo se factura al vendedor.
+            //   (b) El CostoEnvio queda hoy dentro de 4101 (Ingresos por Ventas / Comisiones Marketplace).
+            decimal ingresosMarketplace = totalCobrado - pasivoVendedor - ivaDebito;
+
+            if (ingresosMarketplace < 0m)
             {
-                ingresosMarketplace += diff;
+                throw new InvalidOperationException(
+                    $"El residuo para 4101 es negativo ({ingresosMarketplace:F2}). " +
+                    $"MontoTotal={totalCobrado:F2}, MontoVendedor(2108)={pasivoVendedor:F2}, IVA(2105)={ivaDebito:F2}. " +
+                    $"Revisar la configuración del split o el cálculo del IVA.");
             }
 
             lineas.Add(new LineaAsientoInput(cuentaActivo, totalCobrado, 0m, $"Cobro orden {orden.NumeroOrden}"));
             lineas.Add(new LineaAsientoInput(PASIVO_VENDEDORES, 0m, pasivoVendedor, $"Obligación liquidación vendedor orden {orden.NumeroOrden}"));
             lineas.Add(new LineaAsientoInput(INGRESOS_VENTAS, 0m, ingresosMarketplace, "Ingreso por comisión e intermediación marketplace"));
-            lineas.Add(new LineaAsientoInput(IVA_DEBITO, 0m, totalIvaDebito, "IVA Débito Fiscal 13%"));
+            lineas.Add(new LineaAsientoInput(IVA_DEBITO, 0m, ivaDebito, "IVA Débito Fiscal 13%"));
         }
         else
         {
-            // Si la orden aún no tiene splits asociados al transicionar a Aprobada:
-            // DECISIÓN-PENDIENTE: La orden no cuenta con splits generados en este punto del ciclo OMS (ej. orden creada directamente sin pasar por Checkout Saga).
-            // No se acredita la cuenta 2108 (Pasivo Vendedores) con $0 en silencio, sino que se emite una advertencia explícita en logs y se asienta la venta global estándar (Ingresos y Débito Fiscal).
+            // DECISIÓN-PENDIENTE: Orden sin SplitPago asociado (ej. creada vía OrdenesController sin Checkout Saga).
+            // No se acredita la cuenta 2108 (Pasivo Vendedores) con $0 en silencio.
             _logger.LogWarning(
                 "DECISIÓN-PENDIENTE: Orden {OrdenId} aprobada sin SplitPago asociado. No se acredita cuenta 2108.",
                 ordenId);

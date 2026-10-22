@@ -280,5 +280,12 @@ public class FlujoIntegralE2ETests
         var balance = await contabilidadService.ObtenerBalanceComprobacionAsync();
         balance.EstaCuadrado.Should().BeTrue("el balance final del sistema debe tener Total Debe == Total Haber");
         balance.TotalDebe.Should().Be(balance.TotalHaber);
+
+        // ── 9. Verificar saldo de 2108 (Pasivo Vendedores) queda en $0 tras venta + liquidación + pago ──
+        var mayor2108 = (await contabilidadService.ObtenerLibroMayorAsync("2108"))
+            .FirstOrDefault();
+        mayor2108.Should().NotBeNull("la cuenta 2108 debe tener movimientos tras venta y liquidación");
+        mayor2108!.Saldo.Should().Be(0m,
+            "tras venta (Haber 2108 = MontoVendedor) + liquidación/pago (Debe 2108 = MontoVendedor), el saldo neto de 2108 debe ser exactamente 0");
     }
 }
