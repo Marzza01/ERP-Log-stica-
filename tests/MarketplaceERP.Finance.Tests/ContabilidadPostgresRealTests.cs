@@ -258,15 +258,13 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
         balance.TotalDebe.Should().Be(balance.TotalHaber);
     }
 
-    // ── Test (d): Idempotencia: Dos disparos de asiento para la misma orden ─
+    // ── Test (d): Idempotencia concurrente: Dos disparos en paralelo para la misma orden ─
     [SkippableFact]
-    public async Task Test_D_DosDisparosAsientoVenta_MismaOrden_RetornaLaMismaPartidaSinDuplicar()
+    public async Task Test_D_DosDisparosAsientoVenta_EnParalelo_RetornanLaMismaPartidaSin500()
     {
         Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada.");
 
-        await using var db = CreateDbContext();
-        var contabilidad = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
-
+        await using var dbInit = CreateDbContext();
         var ordenId = Guid.NewGuid();
         var orden = new Orden
         {
@@ -281,16 +279,26 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
             TipoComprobante = "FacturaConsumidorFinal",
             FechaCreacion = DateTime.UtcNow
         };
-        db.Ordenes.Add(orden);
-        await db.SaveChangesAsync();
+        dbInit.Ordenes.Add(orden);
+        await dbInit.SaveChangesAsync();
 
-        // Disparo 1
-        var p1 = await contabilidad.GenerarAsientoVentaAsync(ordenId, 100m, 13m, "FacturaConsumidorFinal");
+        // Ejecutar dos llamadas en paralelo estricto con DbContexts distintos para forzar concurrencia a nivel PostgreSQL
+        await using var db1 = CreateDbContext();
+        await using var db2 = CreateDbContext();
 
-        // Disparo 2 simultáneo o consecutivo
-        var p2 = await contabilidad.GenerarAsientoVentaAsync(ordenId, 100m, 13m, "FacturaConsumidorFinal");
+        var contabilidad1 = new ContabilidadService(db1, NullLogger<ContabilidadService>.Instance);
+        var contabilidad2 = new ContabilidadService(db2, NullLogger<ContabilidadService>.Instance);
 
-        p1.Id.Should().Be(p2.Id, "la segunda llamada debe retornar la partida contable ya existente sin romper");
+        var task1 = Task.Run(() => contabilidad1.GenerarAsientoVentaAsync(ordenId, 100m, 13m, "FacturaConsumidorFinal"));
+        var task2 = Task.Run(() => contabilidad2.GenerarAsientoVentaAsync(ordenId, 100m, 13m, "FacturaConsumidorFinal"));
+
+        var resultados = await Task.WhenAll(task1, task2);
+        var p1 = resultados[0];
+        var p2 = resultados[1];
+
+        p1.Should().NotBeNull();
+        p2.Should().NotBeNull();
+        p1.Id.Should().Be(p2.Id, "la transacción perdedora de concurrencia (Postgres 23505) debe recuperar la existente sin lanzar 500");
         p1.NumeroPartida.Should().Be(p2.NumeroPartida);
 
         // Verificar en BD que existe exactamente 1 partida para esta orden
@@ -300,6 +308,40 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
             .CountAsync();
 
         count.Should().Be(1, "no se deben crear partidas contables duplicadas para la misma orden de venta");
+    }
+
+    // ── Test (d2): Orden sin splits no acredita 2108 con 0 en silencio (DECISIÓN-PENDIENTE)
+    [SkippableFact]
+    public async Task Test_D2_OrdenSinSplits_NoAcredita2108EnSilencio()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada.");
+
+        await using var db = CreateDbContext();
+        var ordenId = Guid.NewGuid();
+        var orden = new Orden
+        {
+            Id = ordenId,
+            NumeroOrden = $"ORD-NOSPLIT-{Guid.NewGuid():N}"[..20],
+            CompradorId = Guid.NewGuid(),
+            VendedorId = Guid.NewGuid(),
+            SubTotal = 150m,
+            ImpuestoIva = 19.50m,
+            MontoTotal = 169.50m,
+            Estado = EstadoOrden.Aprobada,
+            TipoComprobante = "FacturaConsumidorFinal",
+            FechaCreacion = DateTime.UtcNow
+        };
+        db.Ordenes.Add(orden);
+        await db.SaveChangesAsync();
+
+        var contabilidad = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
+        var partida = await contabilidad.GenerarAsientoVentaAsync(ordenId, 150m, 19.50m, "FacturaConsumidorFinal");
+
+        partida.Should().NotBeNull();
+        partida.EstaCuadrada.Should().BeTrue();
+        // Verificar que ninguna línea tiene la cuenta 2108
+        partida.Lineas.Should().NotContain(l => l.CodigoCuenta == "2108",
+            "una orden sin splits no debe acreditar pasivo a vendedores (2108) con 0 en silencio");
     }
 
     // ── Test (e): 100 NumeroPartida en paralelo son todos únicos ──────────────

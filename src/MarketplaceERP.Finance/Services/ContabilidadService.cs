@@ -171,12 +171,15 @@ public class ContabilidadService : IContabilidadService
         {
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
-        catch (DbUpdateException ex) when (referenciaOrigenId.HasValue && ex.InnerException != null &&
-                                          (ex.InnerException.Message.Contains("IX_partidas_contables_TipoOperacion_ReferenciaOrigenId") ||
-                                           ex.InnerException.Message.Contains("duplicate key")))
+        catch (DbUpdateException ex) when (referenciaOrigenId.HasValue &&
+                                          (ex.InnerException is Npgsql.PostgresException pgEx && pgEx.SqlState == "23505" ||
+                                           ex.InnerException?.Message.Contains("IX_partidas_contables_TipoOperacion_ReferenciaOrigenId") == true ||
+                                           ex.InnerException?.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase) == true ||
+                                           ex.Message.Contains("IX_partidas_contables_TipoOperacion_ReferenciaOrigenId") ||
+                                           ex.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)))
         {
-            // En caso de carrera entre transacciones concurrentes, recuperar la ganadora
-            _logger.LogWarning("Conflicto de concurrencia al crear partida {TipoOperacion}/{ReferenciaOrigenId}. Recuperando existente...",
+            // En caso de carrera entre transacciones concurrentes (Postgres 23505), recuperar la ganadora
+            _logger.LogWarning("Conflicto de concurrencia (Postgres 23505) al crear partida {TipoOperacion}/{ReferenciaOrigenId}. Recuperando existente...",
                 tipoOperacion, referenciaOrigenId);
 
             _dbContext.Entry(partida).State = EntityState.Detached;
@@ -260,8 +263,12 @@ public class ContabilidadService : IContabilidadService
         else
         {
             // Si la orden aún no tiene splits asociados al transicionar a Aprobada:
-            // DECISIÓN-PENDIENTE: La orden no cuenta con splits generados en este punto del ciclo OMS.
-            // Se registra el asiento contable estándar de venta según subtotal e IVA para no detener el flujo.
+            // DECISIÓN-PENDIENTE: La orden no cuenta con splits generados en este punto del ciclo OMS (ej. orden creada directamente sin pasar por Checkout Saga).
+            // No se acredita la cuenta 2108 (Pasivo Vendedores) con $0 en silencio, sino que se emite una advertencia explícita en logs y se asienta la venta global estándar (Ingresos y Débito Fiscal).
+            _logger.LogWarning(
+                "DECISIÓN-PENDIENTE: Orden {OrdenId} aprobada sin SplitPago asociado. No se acredita cuenta 2108.",
+                ordenId);
+
             decimal totalCobrado = montoVenta + iva;
             lineas.Add(new LineaAsientoInput(cuentaActivo, totalCobrado, 0m, $"Cobro venta {tipoComprobante}"));
             lineas.Add(new LineaAsientoInput(INGRESOS_VENTAS, 0m, montoVenta, "Ingreso por venta"));
