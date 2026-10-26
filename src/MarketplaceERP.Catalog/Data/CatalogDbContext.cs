@@ -20,6 +20,8 @@ public class CatalogDbContext : DbContext
     public DbSet<Producto> Productos => Set<Producto>();
     public DbSet<StockFisico> StockFisico => Set<StockFisico>();
     public DbSet<ReservaStock> ReservasStock => Set<ReservaStock>();
+    public DbSet<ReservaStockDetalle> ReservasStockDetalle => Set<ReservaStockDetalle>();
+    public DbSet<MovimientoInventario> MovimientosInventario => Set<MovimientoInventario>();
     public DbSet<UbicacionAlmacen> UbicacionesAlmacen => Set<UbicacionAlmacen>();
     public DbSet<DevolucionRMA> DevolucionesRMA => Set<DevolucionRMA>();
     public DbSet<MovimientoMWIP> MovimientosMWIP => Set<MovimientoMWIP>();
@@ -60,8 +62,9 @@ public class CatalogDbContext : DbContext
             entity.Property(p => p.Descripcion).HasMaxLength(2000);
             entity.Property(p => p.FechaCreacion).HasDefaultValueSql("NOW()");
 
-            // Ignorar propiedad de compatibilidad
+            // Ignorar propiedades de compatibilidad que no forman parte del modelo relacional
             entity.Ignore(p => p.PrecioBase);
+            entity.Ignore(p => p.Stock);
 
             // VendedorId y CategoriaId son referencias cross-schema: NO FK en DB
             entity.Property(p => p.VendedorId).IsRequired();
@@ -100,18 +103,27 @@ public class CatalogDbContext : DbContext
             entity.Property(s => s.Id).ValueGeneratedOnAdd();
             entity.Property(s => s.CantidadTotal).IsRequired();
             entity.Property(s => s.CantidadReservada).HasDefaultValue(0);
+            entity.Property(s => s.CantidadBloqueada).HasDefaultValue(0);
             entity.Property(s => s.PuntoReorden).HasDefaultValue(15);
             entity.Property(s => s.UbicacionCodigo).HasMaxLength(100).HasDefaultValue("PAS-A-RCK-01-NIV-01-POS-01");
             entity.Property(s => s.UltimaActualizacion).HasDefaultValueSql("NOW()");
 
-            // Ignora las propiedades calculadas
+            // Propiedades calculadas
             entity.Ignore(s => s.CantidadDisponible);
             entity.Ignore(s => s.EsBajoMinimo);
 
-            // Relación 1:1 con Producto
+            // Integridad: ninguna cantidad puede ser negativa y reservado+bloqueado no supera el físico.
+            entity.HasCheckConstraint(
+                "CK_stock_fisico_cantidades_no_negativas",
+                "\"CantidadTotal\" >= 0 AND \"CantidadReservada\" >= 0 AND \"CantidadBloqueada\" >= 0");
+            entity.HasCheckConstraint(
+                "CK_stock_fisico_reservado_bloqueado",
+                "\"CantidadReservada\" + \"CantidadBloqueada\" <= \"CantidadTotal\"");
+
+            // Relación N:1 con Producto: un SKU puede existir en varias ubicaciones.
             entity.HasOne(s => s.Producto)
-                  .WithOne(p => p.Stock)
-                  .HasForeignKey<StockFisico>(s => s.ProductoId)
+                  .WithMany(p => p.Stocks)
+                  .HasForeignKey(s => s.ProductoId)
                   .OnDelete(DeleteBehavior.Cascade);
 
             // Relación opcional con UbicacionAlmacen
@@ -119,6 +131,10 @@ public class CatalogDbContext : DbContext
                   .WithMany(u => u.StocksAlmacenados)
                   .HasForeignKey(s => s.UbicacionAlmacenId)
                   .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(s => s.ProductoId);
+            entity.HasIndex(s => s.UbicacionAlmacenId);
+            entity.HasIndex(s => new { s.ProductoId, s.UbicacionAlmacenId }).IsUnique();
         });
 
         // ── ReservaStock ──────────────────────────────────────────────────────
@@ -127,11 +143,21 @@ public class CatalogDbContext : DbContext
             entity.ToTable("reservas_stock");
             entity.HasKey(r => r.Id);
             entity.Property(r => r.Id).ValueGeneratedOnAdd();
-            entity.Property(r => r.Cantidad).IsRequired();
+            entity.Property(r => r.CantidadOriginal).IsRequired();
+            entity.Property(r => r.CantidadLiberada).HasDefaultValue(0);
+            entity.Property(r => r.CantidadConsumida).HasDefaultValue(0);
+            entity.Ignore(r => r.CantidadPendiente);
             entity.Property(r => r.Estado)
                   .HasConversion<string>()
-                  .HasMaxLength(20);
+                  .HasMaxLength(30);
             entity.Property(r => r.FechaReserva).HasDefaultValueSql("NOW()");
+
+            entity.HasCheckConstraint(
+                "CK_reservas_stock_cantidades_no_negativas",
+                "\"CantidadOriginal\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
+            entity.HasCheckConstraint(
+                "CK_reservas_stock_cantidad_resuelta",
+                "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadOriginal\"");
 
             // OrdenId es referencia cross-schema: NO FK en DB
             entity.Property(r => r.OrdenId).IsRequired();
@@ -142,6 +168,85 @@ public class CatalogDbContext : DbContext
                   .WithMany(p => p.Reservas)
                   .HasForeignKey(r => r.ProductoId)
                   .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ── ReservaStockDetalle ───────────────────────────────────────────────
+        modelBuilder.Entity<ReservaStockDetalle>(entity =>
+        {
+            entity.ToTable("reservas_stock_detalle");
+            entity.HasKey(d => d.Id);
+            entity.Property(d => d.Id).ValueGeneratedOnAdd();
+            entity.Property(d => d.CantidadAsignada).IsRequired();
+            entity.Property(d => d.CantidadLiberada).HasDefaultValue(0);
+            entity.Property(d => d.CantidadConsumida).HasDefaultValue(0);
+            entity.Ignore(d => d.CantidadPendiente);
+
+            entity.HasCheckConstraint(
+                "CK_reservas_stock_detalle_cantidades_no_negativas",
+                "\"CantidadAsignada\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
+            entity.HasCheckConstraint(
+                "CK_reservas_stock_detalle_cantidad_resuelta",
+                "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadAsignada\"");
+
+            entity.HasOne(d => d.ReservaStock)
+                  .WithMany(r => r.Detalles)
+                  .HasForeignKey(d => d.ReservaStockId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(d => d.StockFisico)
+                  .WithMany(s => s.DetallesReserva)
+                  .HasForeignKey(d => d.StockFisicoId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(d => d.ReservaStockId);
+            entity.HasIndex(d => d.StockFisicoId);
+            entity.HasIndex(d => new { d.ReservaStockId, d.StockFisicoId }).IsUnique();
+        });
+
+        // ── MovimientoInventario (ledger operativo) ───────────────────────────
+        modelBuilder.Entity<MovimientoInventario>(entity =>
+        {
+            entity.ToTable("movimientos_inventario");
+            entity.HasKey(m => m.Id);
+            entity.Property(m => m.Id).ValueGeneratedOnAdd();
+            entity.Property(m => m.TipoMovimiento)
+                  .HasConversion<string>()
+                  .HasMaxLength(40);
+            entity.Property(m => m.Cantidad).IsRequired();
+            entity.Property(m => m.Referencia).HasMaxLength(100);
+            entity.Property(m => m.Observaciones).HasMaxLength(500);
+            entity.Property(m => m.FechaMovimiento).HasDefaultValueSql("NOW()");
+
+            entity.HasCheckConstraint(
+                "CK_movimientos_inventario_cantidad_positiva",
+                "\"Cantidad\" > 0");
+
+            entity.HasOne(m => m.Producto)
+                  .WithMany(p => p.MovimientosInventario)
+                  .HasForeignKey(m => m.ProductoId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(m => m.UbicacionOrigen)
+                  .WithMany()
+                  .HasForeignKey(m => m.UbicacionOrigenId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(m => m.UbicacionDestino)
+                  .WithMany()
+                  .HasForeignKey(m => m.UbicacionDestinoId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(m => m.ReservaStock)
+                  .WithMany(r => r.Movimientos)
+                  .HasForeignKey(m => m.ReservaStockId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            // OrdenId y RmaId son referencias de trazabilidad; no crean dependencia cross-module.
+            entity.HasIndex(m => m.ProductoId);
+            entity.HasIndex(m => m.OrdenId);
+            entity.HasIndex(m => m.RmaId);
+            entity.HasIndex(m => m.ReservaStockId);
+            entity.HasIndex(m => m.FechaMovimiento);
         });
 
         // ── DevolucionRMA (Logística Inversa) ──────────────────────────────────

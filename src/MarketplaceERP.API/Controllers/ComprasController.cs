@@ -143,6 +143,25 @@ public class ComprasController : ControllerBase
             new { po.Id, po.NumeroPO, po.Estado, po.MontoTotal });
     }
 
+    // ── POST /api/compras/po/{id}/enviar ─────────────────────────────────────
+    /// <summary>Envía una Orden de Compra en borrador al proveedor.</summary>
+    [HttpPost("po/{id:guid}/enviar", Name = "EnviarOrdenCompra")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> EnviarPO(Guid id, CancellationToken cancellationToken)
+    {
+        var po = await _db.OrdenesCompra.FindAsync([id], cancellationToken);
+        if (po == null) return NotFound(new { mensaje = $"PO {id} no encontrada." });
+        if (po.Estado != EstadoOrdenCompra.Borrador)
+            return BadRequest(new { mensaje = $"Solo una PO en Borrador puede enviarse. Estado actual: {po.Estado}." });
+
+        po.Estado = EstadoOrdenCompra.Enviada;
+        po.FechaEnvioProveedor = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { po.Id, po.NumeroPO, Estado = po.Estado.ToString(), po.FechaEnvioProveedor });
+    }
+
     // ── PUT /api/compras/po/{id}/recibir ──────────────────────────────────────
     /// <summary>Registra recepción de mercadería en bodega WMS.</summary>
     [HttpPut("po/{id:guid}/recibir", Name = "RecibirMercaderia")]

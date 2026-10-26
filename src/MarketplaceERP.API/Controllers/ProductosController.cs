@@ -43,7 +43,7 @@ public class ProductosController : ControllerBase
     public async Task<IActionResult> GetPublicados([FromQuery] int pagina = 1, [FromQuery] int tamano = 50)
     {
         var query = _dbContext.Productos
-            .Include(p => p.Stock)
+            .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado)
             .OrderBy(p => p.Sku);
 
@@ -72,7 +72,7 @@ public class ProductosController : ControllerBase
         [FromQuery] int tamano = 50)
     {
         var query = _dbContext.Productos
-            .Include(p => p.Stock)
+            .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
 
         if (!string.IsNullOrWhiteSpace(q))
@@ -106,7 +106,7 @@ public class ProductosController : ControllerBase
 
         if (soloConStock == true)
         {
-            query = query.Where(p => p.Stock != null && p.Stock.CantidadTotal - p.Stock.CantidadReservada > 0);
+            query = query.Where(p => p.Stocks.Any(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada > 0));
         }
 
         var total = await query.CountAsync();
@@ -127,7 +127,7 @@ public class ProductosController : ControllerBase
     public async Task<IActionResult> GetCatalogoB2B([FromQuery] string? categoria)
     {
         var query = _dbContext.Productos
-            .Include(p => p.Stock)
+            .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado && p.PrecioB2B > 0);
 
         if (!string.IsNullOrWhiteSpace(categoria))
@@ -151,7 +151,7 @@ public class ProductosController : ControllerBase
                 p.UnidadMedida,
                 p.ProveedorNombre,
                 p.CodigoEAN,
-                StockDisponible = p.Stock != null ? p.Stock.CantidadTotal - p.Stock.CantidadReservada : 0
+                StockDisponible = p.Stocks.Sum(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada)
             })
             .ToListAsync();
 
@@ -167,9 +167,9 @@ public class ProductosController : ControllerBase
     public async Task<IActionResult> GetAlertasStock()
     {
         var productos = await _dbContext.Productos
-            .Include(p => p.Stock)
-            .Where(p => p.Stock != null && (p.Stock.CantidadTotal - p.Stock.CantidadReservada) <= p.StockMinimo)
-            .OrderBy(p => p.Stock!.CantidadTotal - p.Stock!.CantidadReservada)
+            .Where(p => p.Stocks.Any() &&
+                        p.Stocks.Sum(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada) <= p.StockMinimo)
+            .OrderBy(p => p.Stocks.Sum(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada))
             .Select(p => new
             {
                 p.Id,
@@ -178,10 +178,15 @@ public class ProductosController : ControllerBase
                 p.CategoriaNombre,
                 p.ProveedorNombre,
                 p.StockMinimo,
-                PuntoReorden = p.Stock != null ? p.Stock.PuntoReorden : p.StockMinimo,
-                CantidadDisponible = p.Stock != null ? p.Stock.CantidadTotal - p.Stock.CantidadReservada : 0,
-                NivelCriticidad = (p.Stock != null && p.Stock.CantidadTotal - p.Stock.CantidadReservada <= 0) ? "CRÍTICO - AGOTADO" : "ATENCIÓN - BAJO MÍNIMO",
-                UbicacionWMS = p.Stock != null ? p.Stock.UbicacionCodigo : "SIN UBICACIÓN"
+                PuntoReorden = p.StockMinimo,
+                CantidadDisponible = p.Stocks.Sum(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada),
+                NivelCriticidad = p.Stocks.Sum(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada) <= 0
+                    ? "CRÍTICO - AGOTADO"
+                    : "ATENCIÓN - BAJO MÍNIMO",
+                UbicacionWMS = p.Stocks
+                    .OrderByDescending(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada)
+                    .Select(s => s.UbicacionCodigo)
+                    .FirstOrDefault() ?? "SIN UBICACIÓN"
             })
             .ToListAsync();
 
@@ -248,7 +253,7 @@ public class ProductosController : ControllerBase
     public async Task<IActionResult> GetById(Guid id)
     {
         var producto = await _dbContext.Productos
-            .Include(p => p.Stock)
+            .Include(p => p.Stocks)
             .FirstOrDefaultAsync(p => p.Id == id);
 
         if (producto is null)
@@ -282,6 +287,68 @@ public class ProductosController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = producto.Id }, producto);
     }
 
+
+    /// <summary>
+    /// Actualiza los datos maestros operativos de un producto.
+    /// El Código EAN se conserva sin cambios para permitir que la funcionalidad de códigos de barras
+    /// sea implementada posteriormente por el integrante responsable.
+    /// </summary>
+    [HttpPut("{id:guid}")]
+    [Authorize(Roles = "Vendedor,Admin")]
+    [ProducesResponseType(typeof(Producto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Update(Guid id, [FromBody] ActualizarProductoRequest request)
+    {
+        var producto = await _dbContext.Productos
+            .Include(p => p.Stocks)
+            .FirstOrDefaultAsync(p => p.Id == id);
+
+        if (producto is null)
+            return NotFound(new { mensaje = $"Producto {id} no encontrado." });
+
+        producto.Sku = request.Sku;
+        producto.Nombre = request.Nombre;
+        producto.Descripcion = request.Descripcion;
+        producto.CategoriaNombre = request.CategoriaNombre;
+        producto.Subcategoria = request.Subcategoria;
+        producto.PrecioB2C = request.PrecioB2C;
+        producto.PrecioB2B = request.PrecioB2B;
+        producto.StockMinimo = request.StockMinimo;
+        producto.ProveedorNombre = request.ProveedorNombre;
+        producto.PaisOrigen = request.PaisOrigen;
+        producto.PesoKg = request.PesoKg;
+        producto.DimensionesCm = request.DimensionesCm;
+        producto.UnidadMedida = request.UnidadMedida;
+        producto.EstadoProducto = request.EstadoProducto;
+        producto.EstaPublicado = request.EstaPublicado;
+        producto.FechaPublicacion = request.EstaPublicado
+            ? producto.FechaPublicacion ?? DateTime.UtcNow
+            : null;
+
+        await _dbContext.SaveChangesAsync();
+        return Ok(producto);
+    }
+
+    /// <summary>
+    /// Da de baja lógica un producto sin eliminar su trazabilidad histórica.
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Vendedor,Admin")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        var producto = await _dbContext.Productos.FindAsync(id);
+        if (producto is null)
+            return NotFound(new { mensaje = $"Producto {id} no encontrado." });
+
+        producto.EstaPublicado = false;
+        producto.EstadoProducto = "Inactivo";
+        await _dbContext.SaveChangesAsync();
+
+        return NoContent();
+    }
+
     /// <summary>
     /// Publica un producto (cambia EstaPublicado a true). Requiere rol Vendedor o Admin.
     /// </summary>
@@ -302,3 +369,21 @@ public class ProductosController : ControllerBase
         return NoContent();
     }
 }
+
+
+public record ActualizarProductoRequest(
+    string Sku,
+    string Nombre,
+    string Descripcion,
+    string CategoriaNombre,
+    string Subcategoria,
+    decimal PrecioB2C,
+    decimal PrecioB2B,
+    int StockMinimo,
+    string ProveedorNombre,
+    string PaisOrigen,
+    decimal PesoKg,
+    string DimensionesCm,
+    string UnidadMedida,
+    string EstadoProducto,
+    bool EstaPublicado);

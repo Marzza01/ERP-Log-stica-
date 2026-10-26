@@ -122,7 +122,7 @@ public class CatalogImportService : ICatalogImportService
 
                 // Verificar si el producto ya existe por SKU
                 var producto = await _dbContext.Productos
-                    .Include(p => p.Stock)
+                    .Include(p => p.Stocks)
                     .FirstOrDefaultAsync(p => p.Sku == sku, cancellationToken);
 
                 if (producto is null)
@@ -153,17 +153,18 @@ public class CatalogImportService : ICatalogImportService
                         FechaPublicacion = (estado == "Activo") ? DateTime.UtcNow : null
                     };
 
-                    producto.Stock = new StockFisico
+                    producto.Stocks.Add(new StockFisico
                     {
                         Id = Guid.NewGuid(),
                         ProductoId = producto.Id,
                         CantidadTotal = stockInicial,
                         CantidadReservada = 0,
+                        CantidadBloqueada = 0,
                         PuntoReorden = stockMinimo,
                         UbicacionAlmacenId = ubicacion.Id,
                         UbicacionCodigo = wmsCodigo,
                         UltimaActualizacion = DateTime.UtcNow
-                    };
+                    });
 
                     _dbContext.Productos.Add(producto);
                 }
@@ -186,11 +187,27 @@ public class CatalogImportService : ICatalogImportService
                     producto.Descripcion = descripcion;
                     producto.EstaPublicado = (estado == "Activo");
 
-                    if (producto.Stock is not null)
+                    var stockPrincipal = producto.Stocks.FirstOrDefault();
+                    if (stockPrincipal is not null)
                     {
-                        producto.Stock.PuntoReorden = stockMinimo;
-                        producto.Stock.UbicacionAlmacenId = ubicacion.Id;
-                        producto.Stock.UbicacionCodigo = wmsCodigo;
+                        stockPrincipal.PuntoReorden = stockMinimo;
+                        stockPrincipal.UbicacionAlmacenId = ubicacion.Id;
+                        stockPrincipal.UbicacionCodigo = wmsCodigo;
+                    }
+                    else
+                    {
+                        producto.Stocks.Add(new StockFisico
+                        {
+                            Id = Guid.NewGuid(),
+                            ProductoId = producto.Id,
+                            CantidadTotal = stockInicial,
+                            CantidadReservada = 0,
+                            CantidadBloqueada = 0,
+                            PuntoReorden = stockMinimo,
+                            UbicacionAlmacenId = ubicacion.Id,
+                            UbicacionCodigo = wmsCodigo,
+                            UltimaActualizacion = DateTime.UtcNow
+                        });
                     }
                 }
 

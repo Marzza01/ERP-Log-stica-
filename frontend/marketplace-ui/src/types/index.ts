@@ -166,42 +166,66 @@ export interface ModeloFinanciero {
 }
 
 // ── WMS ───────────────────────────────────────────────────────────────────────
+export interface StockFisicoWms {
+  id: string;
+  productoId: string;
+  cantidadTotal: number;
+  cantidadReservada: number;
+  cantidadDisponible: number;
+  puntoReorden: number;
+  ubicacionAlmacenId?: string;
+  ubicacionCodigo: string;
+  ultimaActualizacion: string;
+}
+
 export interface UbicacionAlmacen {
   id: string;
   codigo: string;
   pasillo: string;
   rack: string;
-  nivel: string;
+  nivel: number;
   posicion: string;
   capacidadMaxima: number;
-  ocupacionActual: number;
-  disponible: boolean;
-  porcentajeOcupacion: number;
+  estaOcupada: boolean;
+  zona: string;
+  fechaCreacion: string;
+  stocksAlmacenados?: StockFisicoWms[];
+}
+
+export interface MapaPasillo {
+  pasillo: string;
+  totalRacks: number;
+  totalPosiciones: number;
+  posicionesOcupadas: number;
+  ubicaciones: UbicacionAlmacen[];
 }
 
 export interface ResumenBodega {
   totalUbicaciones: number;
-  ubicacionesOcupadas: number;
-  ubicacionesDisponibles: number;
-  porcentajeOcupacionTotal: number;
-  pasillos: string[];
-  alertasCapacidad: string[];
+  ocupadas: number;
+  disponibles: number;
+  porcentajeOcupacion: number;
+  pasillos: MapaPasillo[];
 }
 
 // ── FULFILLMENT ───────────────────────────────────────────────────────────────
-export type EstadoPickList = 'Pendiente' | 'EnProceso' | 'Completada' | 'Cancelada';
+export type EstadoPickList = 'Pendiente' | 'EnProceso' | 'Completado' | 'Cancelado';
 
 export interface ItemPickList {
   id: string;
+  pickListId?: string;
+  productoId?: string;
   sku: string;
   nombreProducto: string;
   cantidadSolicitada: number;
-  cantidadRecolectada: number;
-  ubicacionCodigo: string;
+  cantidadRecogida: number;
   pasillo: string;
   rack: string;
-  nivel: string;
-  orden: number;
+  nivel: number;
+  posicion?: string;
+  ubicacionCodigo: string;
+  recogido?: boolean;
+  orden?: number;
 }
 
 export interface PickList {
@@ -209,51 +233,67 @@ export interface PickList {
   numeroPickList: string;
   ordenId: string;
   numeroOrden: string;
-  operadorAsignado: string;
   estado: EstadoPickList;
+  operadorAsignado: string;
   fechaCreacion: string;
-  fechaCompletado?: string;
+  fechaInicio?: string;
+  fechaFin?: string;
   items: ItemPickList[];
 }
 
 // ── PAQUETE (FULFILLMENT) ─────────────────────────────────────────────────────
-export type EstadoPaquete = 'Empacado' | 'Despachado' | 'Entregado';
+export type EstadoPaquete = 'Pendiente' | 'Empacando' | 'ListoParaDespacho';
 
 export interface Paquete {
   id: string;
   numeroGuia: string;
+  ordenId?: string;
   numeroOrden: string;
-  transportista: string;
-  pesoRealKg: number;
-  volumenM3: number | string;
-  municipioDestino: string;
-  departamentoDestino: string;
   estado: EstadoPaquete;
+  pesoRealKg: number;
+  largoCm?: number;
+  anchoCm?: number;
+  altoCm?: number;
+  volumenM3: number;
+  transportista: string;
+  departamentoDestino: string;
+  municipioDestino: string;
+  direccionEntrega?: string;
+  contactoReceptor?: string;
+  telefonoReceptor?: string;
   fechaEmpaque: string;
   fechaDespacho?: string;
 }
 
 // ── RMA (DEVOLUCIONES) ────────────────────────────────────────────────────────
-export type EstadoRMA = 'Solicitada' | 'Aprobada' | 'Rechazada' | 'Completada';
-export type MotivoRMA =
-  | 'ProductoDefectuoso'
-  | 'ErrorEnvio'
-  | 'NoCorresponde'
-  | 'DanoTransporte'
-  | 'Otro';
+export type EstadoRMA =
+  | 'Solicitado'
+  | 'RecibidoEnBodega'
+  | 'EnInspeccion'
+  | 'Dictaminado'
+  | 'Completado'
+  | 'Rechazado';
+
+export type ClasificacionRMA = 'Pendiente' | 'ReStock' | 'MermaScrap' | 'Remate';
 
 export interface DevolucionRMA {
   id: string;
+  numeroRMA: string;
   ordenId: string;
-  motivo: MotivoRMA;
-  descripcion: string;
+  productoId: string;
+  cantidad: number;
+  motivoCliente: string;
   estado: EstadoRMA;
+  clasificacion: ClasificacionRMA;
+  inspectorTecnico?: string;
+  dictamenTecnico?: string;
+  porcentajeRemateDescuento: number;
   fechaSolicitud: string;
-  fechaResolucion?: string;
-  reembolsoAprobado: number;
+  fechaInspeccion?: string;
 }
 
 // ── COMPRAS / 3-WAY MATCH ────────────────────────────────────────────────────
+// Modelo de vista. La capa api/compras.ts adapta los DTO reales de Finance.
 export type EstadoOrdenCompra = 'Borrador' | 'Emitida' | 'Recibida' | 'Cerrada' | 'Cancelada';
 export type Estado3WayMatch = 'Conforme' | 'Discrepante' | 'Pendiente';
 
@@ -337,21 +377,44 @@ export interface Liquidacion {
 
 // ── PRODUCTOS ─────────────────────────────────────────────────────────────────
 export interface StockFisico {
-  cantidadDisponible: number;
-  cantidadReservada: number;
+  id: string;
+  productoId: string;
   cantidadTotal: number;
+  cantidadReservada: number;
+  cantidadDisponible: number;
+  puntoReorden: number;
+  esBajoMinimo: boolean;
+  ubicacionAlmacenId?: string;
+  ubicacionCodigo: string;
+  ultimaActualizacion: string;
 }
 
 export interface Producto {
   id: string;
   sku: string;
   nombre: string;
+  categoriaNombre: string;
+  subcategoria: string;
+  precioB2C: number;
+  precioB2B: number;
+  precioBase: number;
+  moneda: string;
+  stockInicial: number;
+  stockMinimo: number;
+  proveedorNombre: string;
+  paisOrigen: string;
+  pesoKg: number;
+  dimensionesCm: string;
+  unidadMedida: string;
+  estadoProducto: string;
+  codigoEAN: string;
   descripcion: string;
-  precio: number;
-  categoria: string;
-  marca: string;
-  activo: boolean;
-  stockFisico?: StockFisico;
+  vendedorId: string;
+  categoriaId: string;
+  estaPublicado: boolean;
+  fechaCreacion: string;
+  fechaPublicacion?: string;
+  stock?: StockFisico;
 }
 
 // ── PAGINACIÓN GENÉRICA ───────────────────────────────────────────────────────

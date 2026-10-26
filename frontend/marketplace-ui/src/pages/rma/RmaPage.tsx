@@ -20,20 +20,19 @@ export default function RmaPage() {
   const [modalRegistrar, setModalRegistrar] = useState(false);
   const [formRegistrar, setFormRegistrar] = useState<RegistrarRmaRequest>({
     ordenId: '00000000-0000-0000-0000-000000000001',
-    motivo: 'ProductoDefectuoso',
-    descripcion: 'El equipo no enciende tras sacarlo del empaque original.',
-    solicitaReembolso: true,
-    montoReclamado: 240.00,
+    productoId: '00000000-0000-0000-0000-000000000001',
+    cantidad: 1,
+    motivoCliente: 'Producto defectuoso',
   });
   const [savingReg, setSavingReg] = useState(false);
 
   // Modal inspeccionar
   const [selectedRma, setSelectedRma] = useState<DevolucionRMA | null>(null);
   const [formDictamen, setFormDictamen] = useState<DictaminarRmaRequest>({
-    dictamen: 'ReStock',
-    observacionesTecnicas: 'Empaque abierto pero sin daño físico en placa madre. Apto para re-embalaje.',
-    aprobado: true,
-    reembolsoAutorizado: 240.00,
+    clasificacion: 'ReStock',
+    inspector: 'Operador Bodega',
+    dictamenTecnico: 'Producto apto para reingreso a inventario.',
+    descuentoRemate: 0,
   });
   const [savingDictamen, setSavingDictamen] = useState(false);
 
@@ -43,36 +42,18 @@ export default function RmaPage() {
       const res = await rmaApi.listar(filterEstado || undefined);
       setRmas(res || []);
     } catch {
-      // Mock demo data
       const mock: DevolucionRMA[] = [
         {
-          id: 'rma-01',
-          ordenId: 'ORD-20260918-10042',
-          motivo: 'ProductoDefectuoso',
-          descripcion: 'El puerto de carga USB-C no hace contacto adecuadamente.',
-          estado: 'Solicitada',
+          id: '00000000-0000-0000-0000-000000000101',
+          numeroRMA: 'RMA-DEMO-001',
+          ordenId: '00000000-0000-0000-0000-000000000201',
+          productoId: '00000000-0000-0000-0000-000000000301',
+          cantidad: 1,
+          motivoCliente: 'Producto defectuoso',
+          estado: 'Solicitado',
+          clasificacion: 'Pendiente',
+          porcentajeRemateDescuento: 0,
           fechaSolicitud: new Date(Date.now() - 86400000 * 2).toISOString(),
-          reembolsoAprobado: 0,
-        },
-        {
-          id: 'rma-02',
-          ordenId: 'ORD-20260918-10035',
-          motivo: 'DanoTransporte',
-          descripcion: 'Caja abollada y pantalla rota por impacto en transporte de última milla.',
-          estado: 'Aprobada',
-          fechaSolicitud: new Date(Date.now() - 86400000 * 5).toISOString(),
-          fechaResolucion: new Date(Date.now() - 86400000 * 3).toISOString(),
-          reembolsoAprobado: 125.00,
-        },
-        {
-          id: 'rma-03',
-          ordenId: 'ORD-20260918-10022',
-          motivo: 'NoCorresponde',
-          descripcion: 'Cliente solicitó modelo de 256GB y recibió el de 128GB.',
-          estado: 'Completada',
-          fechaSolicitud: new Date(Date.now() - 86400000 * 9).toISOString(),
-          fechaResolucion: new Date(Date.now() - 86400000 * 7).toISOString(),
-          reembolsoAprobado: 35.00,
         },
       ];
       setRmas(mock);
@@ -88,40 +69,24 @@ export default function RmaPage() {
   const handleCrearRMA = async () => {
     setSavingReg(true);
     try {
-      await rmaApi.solicitar(formRegistrar);
-    } catch {
-      // optimistic
+      const creado = await rmaApi.solicitar(formRegistrar);
+      setRmas(prev => [creado, ...prev]);
+      setModalRegistrar(false);
+    } finally {
+      setSavingReg(false);
     }
-    const nuevo: DevolucionRMA = {
-      id: crypto.randomUUID(),
-      ordenId: formRegistrar.ordenId,
-      motivo: formRegistrar.motivo as any,
-      descripcion: formRegistrar.descripcion,
-      estado: 'Solicitada',
-      fechaSolicitud: new Date().toISOString(),
-      reembolsoAprobado: 0,
-    };
-    setRmas(prev => [nuevo, ...prev]);
-    setSavingReg(false);
-    setModalRegistrar(false);
   };
 
   const handleInspeccionar = async () => {
     if (!selectedRma) return;
     setSavingDictamen(true);
     try {
-      await rmaApi.inspeccionar(selectedRma.id, formDictamen);
-    } catch {
-      // ignore
+      const actualizado = await rmaApi.inspeccionar(selectedRma.id, formDictamen);
+      setRmas(prev => prev.map(r => r.id === actualizado.id ? actualizado : r));
+      setSelectedRma(null);
+    } finally {
+      setSavingDictamen(false);
     }
-    setRmas(prev => prev.map(r => r.id === selectedRma.id ? {
-      ...r,
-      estado: formDictamen.aprobado ? 'Aprobada' : 'Rechazada',
-      reembolsoAprobado: formDictamen.reembolsoAutorizado,
-      fechaResolucion: new Date().toISOString(),
-    } : r));
-    setSavingDictamen(false);
-    setSelectedRma(null);
   };
 
   const tasaRMA = rmas.length > 0 ? ((rmas.length / 100) * 100).toFixed(1) : '1.8';
@@ -190,7 +155,7 @@ export default function RmaPage() {
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Pendientes de Inspección</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--yellow)', marginTop: '0.35rem' }}>
-            {rmas.filter(r => r.estado === 'Solicitada').length} casos
+            {rmas.filter(r => ['Solicitado', 'RecibidoEnBodega', 'EnInspeccion'].includes(r.estado)).length} casos
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>En bodega de recepción</div>
         </div>
@@ -204,11 +169,11 @@ export default function RmaPage() {
         </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Reembolsos Autorizados</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Reingresos Aprobados</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '0.35rem', fontFamily: 'var(--font-mono)' }}>
-            ${rmas.reduce((a, b) => a + (b.reembolsoAprobado || 0), 0).toFixed(2)}
+            {rmas.filter(r => r.clasificacion === 'ReStock').length} casos
           </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--green)', marginTop: '0.25rem' }}>Aprobados tras dictamen</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--green)', marginTop: '0.25rem' }}>Clasificados como ReStock</div>
         </div>
       </div>
 
@@ -228,7 +193,7 @@ export default function RmaPage() {
         >
           Todas
         </button>
-        {['Solicitada', 'Aprobada', 'Rechazada', 'Completada'].map(est => (
+        {['Solicitado', 'RecibidoEnBodega', 'EnInspeccion', 'Dictaminado', 'Completado', 'Rechazado'].map(est => (
           <button
             key={est}
             onClick={() => setFilterEstado(est)}
@@ -262,17 +227,17 @@ export default function RmaPage() {
           },
           {
             header: 'Motivo de Devolución',
-            accessor: 'motivo',
+            accessor: 'motivoCliente',
             render: (row) => (
               <span style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', background: 'var(--bg-muted)', color: 'var(--text-primary)', fontSize: '0.75rem', fontWeight: 600 }}>
-                {row.motivo}
+                {row.motivoCliente}
               </span>
             ),
           },
           {
-            header: 'Descripción del Cliente',
-            accessor: 'descripcion',
-            render: (row) => <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>{row.descripcion}</span>,
+            header: 'Producto / Cantidad',
+            accessor: 'productoId',
+            render: (row) => <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>{row.productoId.slice(0, 8)}… × {row.cantidad}</span>,
           },
           {
             header: 'Fecha Solicitud',
@@ -292,10 +257,10 @@ export default function RmaPage() {
                 onClick={() => {
                   setSelectedRma(row);
                   setFormDictamen({
-                    dictamen: 'ReStock',
-                    observacionesTecnicas: 'Inspección física en bodega sin anomalías graves.',
-                    aprobado: true,
-                    reembolsoAutorizado: 50.00,
+                    clasificacion: 'ReStock',
+                    inspector: 'Operador Bodega',
+                    dictamenTecnico: 'Inspección física en bodega sin anomalías graves.',
+                    descuentoRemate: 0,
                   });
                 }}
                 style={{
@@ -313,7 +278,7 @@ export default function RmaPage() {
                 }}
               >
                 <Eye size={13} />
-                {row.estado === 'Solicitada' ? 'Inspeccionar' : 'Ver Dictamen'}
+                {['Solicitado', 'RecibidoEnBodega', 'EnInspeccion'].includes(row.estado) ? 'Inspeccionar' : 'Ver Dictamen'}
               </button>
             ),
           },
@@ -353,7 +318,9 @@ export default function RmaPage() {
               </label>
               <input
                 type="text"
-                placeholder="Ej. ORD-20260918-10042"
+                placeholder="UUID de la orden"
+                value={formRegistrar.ordenId}
+                onChange={e => setFormRegistrar(f => ({ ...f, ordenId: e.target.value }))}
                 required
                 style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
               />
@@ -365,8 +332,8 @@ export default function RmaPage() {
                   Motivo
                 </label>
                 <select
-                  value={formRegistrar.motivo}
-                  onChange={e => setFormRegistrar(f => ({ ...f, motivo: e.target.value }))}
+                  value={formRegistrar.motivoCliente}
+                  onChange={e => setFormRegistrar(f => ({ ...f, motivoCliente: e.target.value }))}
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 >
                   <option value="ProductoDefectuoso">Producto Defectuoso</option>
@@ -378,13 +345,13 @@ export default function RmaPage() {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                  Monto Reclamado ($)
+                  Cantidad
                 </label>
                 <input
                   type="number"
                   step="0.01"
-                  value={formRegistrar.montoReclamado}
-                  onChange={e => setFormRegistrar(f => ({ ...f, montoReclamado: parseFloat(e.target.value) || 0 }))}
+                  value={formRegistrar.cantidad}
+                  onChange={e => setFormRegistrar(f => ({ ...f, cantidad: parseInt(e.target.value) || 1 }))}
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 />
               </div>
@@ -392,11 +359,11 @@ export default function RmaPage() {
 
             <div>
               <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                Descripción del Problema
+                ID de Producto (UUID)
               </label>
               <textarea
-                value={formRegistrar.descripcion}
-                onChange={e => setFormRegistrar(f => ({ ...f, descripcion: e.target.value }))}
+                value={formRegistrar.productoId}
+                onChange={e => setFormRegistrar(f => ({ ...f, productoId: e.target.value }))}
                 rows={3}
                 required
                 style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
@@ -448,8 +415,8 @@ export default function RmaPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ background: 'var(--bg-surface)', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Reclamo del Cliente:</div>
-              <div style={{ color: 'var(--text-primary)', fontWeight: 500, marginTop: '0.25rem' }}>{selectedRma.descripcion}</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Motivo: <strong>{selectedRma.motivo}</strong></div>
+              <div style={{ color: 'var(--text-primary)', fontWeight: 500, marginTop: '0.25rem' }}>{selectedRma.motivoCliente}</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Motivo: <strong>{selectedRma.clasificacion}</strong></div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
@@ -458,25 +425,25 @@ export default function RmaPage() {
                   Dictamen Físico de Bodega
                 </label>
                 <select
-                  value={formDictamen.dictamen}
-                  onChange={e => setFormDictamen(f => ({ ...f, dictamen: e.target.value as any }))}
+                  value={formDictamen.clasificacion}
+                  onChange={e => setFormDictamen(f => ({ ...f, clasificacion: e.target.value as any }))}
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 >
                   <option value="ReStock">Re-Stock (Regresar a inventario disponible)</option>
-                  <option value="Scrap">Merma / Scrap (Desecho por daño total)</option>
+                  <option value="MermaScrap">Merma / Scrap (Desecho por daño total)</option>
                   <option value="Remate">Remate (Outlet / Reacondicionado)</option>
                 </select>
               </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                  Monto Reembolso Autorizado ($)
+                  Monto Descuento Remate (%)
                 </label>
                 <input
                   type="number"
                   step="0.01"
-                  value={formDictamen.reembolsoAutorizado}
-                  onChange={e => setFormDictamen(f => ({ ...f, reembolsoAutorizado: parseFloat(e.target.value) || 0 }))}
+                  value={formDictamen.descuentoRemate ?? 0}
+                  onChange={e => setFormDictamen(f => ({ ...f, descuentoRemate: parseFloat(e.target.value) || 0 }))}
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 />
               </div>
@@ -487,8 +454,8 @@ export default function RmaPage() {
                 Observaciones Técnicas del Inspector
               </label>
               <textarea
-                value={formDictamen.observacionesTecnicas}
-                onChange={e => setFormDictamen(f => ({ ...f, observacionesTecnicas: e.target.value }))}
+                value={formDictamen.dictamenTecnico}
+                onChange={e => setFormDictamen(f => ({ ...f, dictamenTecnico: e.target.value }))}
                 rows={3}
                 style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
               />

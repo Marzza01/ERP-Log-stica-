@@ -52,7 +52,7 @@ public class RmaService : IRmaService
     {
         var rma = await _dbContext.DevolucionesRMA
             .Include(d => d.Producto)
-            .ThenInclude(p => p!.Stock)
+            .ThenInclude(p => p!.Stocks)
             .FirstOrDefaultAsync(d => d.Id == rmaId, cancellationToken);
 
         if (rma is null)
@@ -72,10 +72,13 @@ public class RmaService : IRmaService
         {
             case ClasificacionRMA.ReStock:
                 // Reingresar al stock físico disponible
-                if (rma.Producto?.Stock is not null)
+                var stockDestino = rma.Producto?.Stocks
+                    .OrderByDescending(s => s.CantidadDisponible)
+                    .FirstOrDefault();
+                if (stockDestino is not null)
                 {
-                    rma.Producto.Stock.CantidadTotal += rma.Cantidad;
-                    rma.Producto.Stock.UltimaActualizacion = DateTime.UtcNow;
+                    stockDestino.CantidadTotal += rma.Cantidad;
+                    stockDestino.UltimaActualizacion = DateTime.UtcNow;
                 }
                 rma.Estado = EstadoRMA.Completado;
                 break;

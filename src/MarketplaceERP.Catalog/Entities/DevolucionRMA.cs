@@ -3,11 +3,14 @@
  * Todos los derechos reservados © 2026
  */
 
+using System.Text.Json.Serialization;
+
 namespace MarketplaceERP.Catalog.Entities;
 
 /// <summary>
 /// Clasificación técnica para resolución de devoluciones RMA (PDF 1 - Grupo A).
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum ClasificacionRMA
 {
     Pendiente = 0,
@@ -19,6 +22,7 @@ public enum ClasificacionRMA
 /// <summary>
 /// Estado del flujo de inspección técnica.
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum EstadoRMA
 {
     Solicitado = 0,

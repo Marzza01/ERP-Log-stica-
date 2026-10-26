@@ -4,26 +4,25 @@
  */
 
 import { apiClient } from './client';
-import type { DevolucionRMA } from '../types';
+import type { ClasificacionRMA, DevolucionRMA } from '../types';
 
 export interface RegistrarRmaRequest {
   ordenId: string;
-  motivo: string;
-  descripcion: string;
-  solicitaReembolso: boolean;
-  montoReclamado: number;
+  productoId: string;
+  cantidad: number;
+  motivoCliente: string;
 }
 
 export interface DictaminarRmaRequest {
-  dictamen: 'ReStock' | 'Scrap' | 'Remate';
-  observacionesTecnicas?: string;
-  aprobado: boolean;
-  reembolsoAutorizado: number;
+  clasificacion: ClasificacionRMA;
+  inspector: string;
+  dictamenTecnico: string;
+  descuentoRemate?: number;
 }
 
 export const rmaApi = {
   listar: (estado?: string) =>
-    apiClient.get<DevolucionRMA[]>(`/api/rma${estado ? `?estado=${estado}` : ''}`),
+    apiClient.get<DevolucionRMA[]>(`/api/rma${estado ? `?estado=${encodeURIComponent(estado)}` : ''}`),
 
   solicitar: (req: RegistrarRmaRequest) =>
     apiClient.post<DevolucionRMA>('/api/rma', req),
