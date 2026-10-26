@@ -410,4 +410,201 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
         var idsP2 = pagina2.Partidas.Select(p => p.Id);
         idsP1.Intersect(idsP2).Should().BeEmpty();
     }
+
+    // ── Test (g): Validar cuentas y montos exactos del asiento de venta con split (FASE 5d) ──
+    [SkippableFact]
+    public async Task Test_G1_AsientoVenta_Subtotal100_Iva13_Envio0_Total113_Vendedor90()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada.");
+
+        await using var db = CreateDbContext();
+        var ordenId = Guid.NewGuid();
+        var orden = new Orden
+        {
+            Id = ordenId,
+            NumeroOrden = $"ORD-{Guid.NewGuid():N}"[..20],
+            CompradorId = Guid.NewGuid(),
+            VendedorId = Guid.NewGuid(),
+            SubTotal = 100m,
+            ImpuestoIva = 13m,
+            CostoEnvio = 0m,
+            MontoTotal = 113m,
+            Estado = EstadoOrden.Aprobada,
+            TipoComprobante = "FacturaConsumidorFinal",
+            FechaCreacion = DateTime.UtcNow
+        };
+        db.Ordenes.Add(orden);
+
+        var split = new SplitPago
+        {
+            Id = Guid.NewGuid(),
+            OrdenId = orden.Id,
+            MontoTotal = 113m,
+            MontoVendedor = 90m,
+            MontoMarketplace = 23m,
+            PorcentajeVendedor = 79.65m,
+            PorcentajeMarketplace = 20.35m,
+            TransaccionId = "TRX-FASE5D-01",
+            FechaProcesado = DateTime.UtcNow
+        };
+        db.SplitsPago.Add(split);
+        await db.SaveChangesAsync();
+
+        var service = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
+        var partida = await service.GenerarAsientoVentaAsync(ordenId, 100m, 13m, "FacturaConsumidorFinal");
+
+        partida.Should().NotBeNull();
+        partida.EstaCuadrada.Should().BeTrue();
+        partida.TotalDebe.Should().Be(113m);
+        partida.TotalHaber.Should().Be(113m);
+
+        await using var verifyDb = CreateDbContext();
+        var guardada = await verifyDb.PartidasContables
+            .Include(p => p.Lineas)
+            .FirstOrDefaultAsync(p => p.Id == partida.Id);
+
+        guardada.Should().NotBeNull();
+        guardada!.Lineas.Should().HaveCount(4);
+
+        // Cuenta Activo (1102 CxC Pasarela / 1101 según catálogo)
+        var lineaActivo = guardada.Lineas.First(l => l.Debe > 0);
+        lineaActivo.Debe.Should().Be(113m);
+        lineaActivo.Haber.Should().Be(0m);
+
+        // 2108: MontoVendedor = 90
+        var linea2108 = guardada.Lineas.First(l => l.CodigoCuenta == "2108");
+        linea2108.Haber.Should().Be(90m);
+        linea2108.Debe.Should().Be(0m);
+
+        // 4101: MontoTotal - 2108 - 2105 = 113 - 90 - 13 = 10
+        var linea4101 = guardada.Lineas.First(l => l.CodigoCuenta == "4101");
+        linea4101.Haber.Should().Be(10m);
+        linea4101.Debe.Should().Be(0m);
+
+        // 2105: IVA completo = 13
+        var linea2105 = guardada.Lineas.First(l => l.CodigoCuenta == "2105");
+        linea2105.Haber.Should().Be(13m);
+        linea2105.Debe.Should().Be(0m);
+    }
+
+    [SkippableFact]
+    public async Task Test_G2_AsientoVenta_Subtotal200_Iva26_Envio5_Total231_Vendedor180()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada.");
+
+        await using var db = CreateDbContext();
+        var ordenId = Guid.NewGuid();
+        var orden = new Orden
+        {
+            Id = ordenId,
+            NumeroOrden = $"ORD-{Guid.NewGuid():N}"[..20],
+            CompradorId = Guid.NewGuid(),
+            VendedorId = Guid.NewGuid(),
+            SubTotal = 200m,
+            ImpuestoIva = 26m,
+            CostoEnvio = 5m,
+            MontoTotal = 231m,
+            Estado = EstadoOrden.Aprobada,
+            TipoComprobante = "FacturaConsumidorFinal",
+            FechaCreacion = DateTime.UtcNow
+        };
+        db.Ordenes.Add(orden);
+
+        var split = new SplitPago
+        {
+            Id = Guid.NewGuid(),
+            OrdenId = orden.Id,
+            MontoTotal = 231m,
+            MontoVendedor = 180m,
+            MontoMarketplace = 51m,
+            PorcentajeVendedor = 77.92m,
+            PorcentajeMarketplace = 22.08m,
+            TransaccionId = "TRX-FASE5D-02",
+            FechaProcesado = DateTime.UtcNow
+        };
+        db.SplitsPago.Add(split);
+        await db.SaveChangesAsync();
+
+        var service = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
+        var partida = await service.GenerarAsientoVentaAsync(ordenId, 200m, 26m, "FacturaConsumidorFinal");
+
+        partida.Should().NotBeNull();
+        partida.EstaCuadrada.Should().BeTrue();
+        partida.TotalDebe.Should().Be(231m);
+        partida.TotalHaber.Should().Be(231m);
+
+        await using var verifyDb = CreateDbContext();
+        var guardada = await verifyDb.PartidasContables
+            .Include(p => p.Lineas)
+            .FirstOrDefaultAsync(p => p.Id == partida.Id);
+
+        guardada.Should().NotBeNull();
+        guardada!.Lineas.Should().HaveCount(4);
+
+        // Cuenta Activo (Debe = 231)
+        var lineaActivo = guardada.Lineas.First(l => l.Debe > 0);
+        lineaActivo.Debe.Should().Be(231m);
+        lineaActivo.Haber.Should().Be(0m);
+
+        // 2108: MontoVendedor = 180
+        var linea2108 = guardada.Lineas.First(l => l.CodigoCuenta == "2108");
+        linea2108.Haber.Should().Be(180m);
+        linea2108.Debe.Should().Be(0m);
+
+        // 4101: MontoTotal - 2108 - 2105 = 231 - 180 - 26 = 25
+        var linea4101 = guardada.Lineas.First(l => l.CodigoCuenta == "4101");
+        linea4101.Haber.Should().Be(25m);
+        linea4101.Debe.Should().Be(0m);
+
+        // 2105: IVA completo = 26
+        var linea2105 = guardada.Lineas.First(l => l.CodigoCuenta == "2105");
+        linea2105.Haber.Should().Be(26m);
+        linea2105.Debe.Should().Be(0m);
+    }
+
+    [SkippableFact]
+    public async Task Test_G3_AsientoVenta_VendedorMayorQueTotalMenosIva_LanzaInvalidOperationException()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada.");
+
+        await using var db = CreateDbContext();
+        var ordenId = Guid.NewGuid();
+        var orden = new Orden
+        {
+            Id = ordenId,
+            NumeroOrden = $"ORD-{Guid.NewGuid():N}"[..20],
+            CompradorId = Guid.NewGuid(),
+            VendedorId = Guid.NewGuid(),
+            SubTotal = 100m,
+            ImpuestoIva = 13m,
+            CostoEnvio = 0m,
+            MontoTotal = 113m,
+            Estado = EstadoOrden.Aprobada,
+            TipoComprobante = "FacturaConsumidorFinal",
+            FechaCreacion = DateTime.UtcNow
+        };
+        db.Ordenes.Add(orden);
+
+        // Vendedor = 105 > Total - IVA (113 - 13 = 100) -> Residuo 4101 = -5
+        var split = new SplitPago
+        {
+            Id = Guid.NewGuid(),
+            OrdenId = orden.Id,
+            MontoTotal = 113m,
+            MontoVendedor = 105m,
+            MontoMarketplace = 8m,
+            PorcentajeVendedor = 92.92m,
+            PorcentajeMarketplace = 7.08m,
+            TransaccionId = "TRX-FASE5D-03",
+            FechaProcesado = DateTime.UtcNow
+        };
+        db.SplitsPago.Add(split);
+        await db.SaveChangesAsync();
+
+        var service = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
+        var act = () => service.GenerarAsientoVentaAsync(ordenId, 100m, 13m, "FacturaConsumidorFinal");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*residuo para 4101 es negativo*");
+    }
 }
