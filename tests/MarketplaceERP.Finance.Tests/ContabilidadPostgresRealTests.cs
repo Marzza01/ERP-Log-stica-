@@ -5,11 +5,14 @@
 
 using System.Collections.Concurrent;
 using FluentAssertions;
+using MarketplaceERP.Core.Interfaces;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
+using MarketplaceERP.Shared.DTOs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Npgsql;
 using Xunit;
 
@@ -188,7 +191,7 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
         await using var db = CreateDbContext();
         var vendedorId = Guid.NewGuid();
 
-        // 1. Crear Orden entregada con SplitPago 90/10 ($100 total: $90 vendedor, $10 marketplace)
+        // 1. Crear Orden entregada con SubTotal=100, IVA=13, Total=113
         var orden = new Orden
         {
             Id = Guid.NewGuid(),
@@ -204,21 +207,37 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
             FechaCreacion = DateTime.UtcNow
         };
         db.Ordenes.Add(orden);
-
-        var split = new SplitPago
-        {
-            Id = Guid.NewGuid(),
-            OrdenId = orden.Id,
-            MontoTotal = 113m,
-            MontoVendedor = 90m,
-            MontoMarketplace = 23m,
-            PorcentajeVendedor = 90m,
-            PorcentajeMarketplace = 10m,
-            TransaccionId = "TRX-CONTAB-01",
-            FechaProcesado = DateTime.UtcNow
-        };
-        db.SplitsPago.Add(split);
         await db.SaveChangesAsync();
+
+        // Split de Pago REAL mediante CheckoutOrchestrator (Opción A: comisión 10% sobre SubTotal $100 = $10; vendedor=$90, marketplace=$23)
+        var mockStock = new Mock<IStockService>();
+        mockStock.Setup(s => s.ReservarStockAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<Guid>()))
+            .ReturnsAsync(new ReservaResult(Guid.NewGuid(), true, null));
+        mockStock.Setup(s => s.ConfirmarDespachoAsync(It.IsAny<Guid>()))
+            .Returns(Task.CompletedTask);
+
+        var mockPago = new Mock<IPaymentGateway>();
+        mockPago.Setup(p => p.ProcesarPagoAsync(It.IsAny<PagoRequest>()))
+            .ReturnsAsync(new PagoResult(true, "TRX-CONTAB-01", null));
+
+        var mockComision = new Mock<ICommissionService>();
+        mockComision.Setup(c => c.CalcularComisionAsync(It.IsAny<Guid>(), It.IsAny<decimal>()))
+            .ReturnsAsync(10m); // 10% sobre 100
+
+        var orchestrator = new CheckoutOrchestrator(
+            mockStock.Object, mockComision.Object, mockPago.Object,
+            db, NullLogger<CheckoutOrchestrator>.Instance);
+
+        var cmd = new CheckoutCommand(
+            OrdenId: orden.Id,
+            CompradorId: orden.CompradorId,
+            VendedorId: vendedorId,
+            ProductoId: Guid.NewGuid(),
+            Cantidad: 1,
+            MontoTotal: 113m,
+            Moneda: "USD");
+
+        await orchestrator.ProcesarCheckoutAsync(cmd);
 
         // 2. Registrar Asiento de Venta
         var contabilidad = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
@@ -411,20 +430,23 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
         idsP1.Intersect(idsP2).Should().BeEmpty();
     }
 
-    // ── Test (g): Validar cuentas y montos exactos del asiento de venta con split (FASE 5d) ──
+    // ── Verificación de compatibilidad con Opción A (FASE 5e) ──
     [SkippableFact]
-    public async Task Test_G1_AsientoVenta_Subtotal100_Iva13_Envio0_Total113_Vendedor90()
+    public async Task Test_Verificacion_SplitCoherenteOpcionA_ConFlujoReal()
     {
         Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada.");
 
         await using var db = CreateDbContext();
         var ordenId = Guid.NewGuid();
+        var vendedorId = Guid.NewGuid();
+        var productoId = Guid.NewGuid();
+
         var orden = new Orden
         {
             Id = ordenId,
             NumeroOrden = $"ORD-{Guid.NewGuid():N}"[..20],
             CompradorId = Guid.NewGuid(),
-            VendedorId = Guid.NewGuid(),
+            VendedorId = vendedorId,
             SubTotal = 100m,
             ImpuestoIva = 13m,
             CostoEnvio = 0m,
@@ -434,21 +456,113 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
             FechaCreacion = DateTime.UtcNow
         };
         db.Ordenes.Add(orden);
-
-        var split = new SplitPago
-        {
-            Id = Guid.NewGuid(),
-            OrdenId = orden.Id,
-            MontoTotal = 113m,
-            MontoVendedor = 90m,
-            MontoMarketplace = 23m,
-            PorcentajeVendedor = 79.65m,
-            PorcentajeMarketplace = 20.35m,
-            TransaccionId = "TRX-FASE5D-01",
-            FechaProcesado = DateTime.UtcNow
-        };
-        db.SplitsPago.Add(split);
         await db.SaveChangesAsync();
+
+        // Con OPCIÓN A implementada: la comisión se calcula sobre SubTotal (100m) -> 10m.
+        // MontoVendedor = 100 - 10 = 90m. MontoMarketplace = 10m + 0m envío = 10m.
+        // Split.MontoTotal = 113m. Balance: 90 + 10 + 13 = 113 (OK).
+        var mockStock = new Moq.Mock<IStockService>();
+        mockStock.Setup(s => s.ReservarStockAsync(Moq.It.IsAny<Guid>(), Moq.It.IsAny<int>(), Moq.It.IsAny<Guid>()))
+            .ReturnsAsync(new ReservaResult(Guid.NewGuid(), true, null));
+        mockStock.Setup(s => s.ConfirmarDespachoAsync(Moq.It.IsAny<Guid>()))
+            .Returns(Task.CompletedTask);
+
+        var mockPago = new Moq.Mock<IPaymentGateway>();
+        mockPago.Setup(p => p.ProcesarPagoAsync(Moq.It.IsAny<PagoRequest>()))
+            .ReturnsAsync(new PagoResult(true, "TRX-TEST-OPCIONA", null));
+
+        var mockComision = new Moq.Mock<ICommissionService>();
+        mockComision.Setup(c => c.CalcularComisionAsync(Moq.It.IsAny<Guid>(), 100m))
+            .ReturnsAsync(10m);
+
+        var orchestrator = new CheckoutOrchestrator(
+            mockStock.Object,
+            mockComision.Object,
+            mockPago.Object,
+            db,
+            NullLogger<CheckoutOrchestrator>.Instance);
+
+        var cmd = new CheckoutCommand(
+            OrdenId: ordenId,
+            CompradorId: orden.CompradorId,
+            VendedorId: vendedorId,
+            ProductoId: productoId,
+            Cantidad: 1,
+            MontoTotal: 113m,
+            Moneda: "USD");
+
+        await orchestrator.ProcesarCheckoutAsync(cmd);
+
+        // Generar asiento de venta: ya no lanza residuo negativo, cuadra exacto
+        var contab = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
+        var partida = await contab.GenerarAsientoVentaAsync(ordenId, 100m, 13m, "FacturaConsumidorFinal");
+
+        partida.Should().NotBeNull();
+        partida.EstaCuadrada.Should().BeTrue();
+        partida.TotalDebe.Should().Be(113m);
+        partida.TotalHaber.Should().Be(113m);
+
+        var lineas = partida.Lineas.ToList();
+        lineas.First(l => l.CodigoCuenta == "2108").Haber.Should().Be(90m);
+        lineas.First(l => l.CodigoCuenta == "4101").Haber.Should().Be(10m);
+        lineas.First(l => l.CodigoCuenta == "2105").Haber.Should().Be(13m);
+    }
+
+    // ── Test (g): Validar cuentas y montos exactos del asiento de venta con split (FASE 5d y 5e) ──
+    [SkippableFact]
+    public async Task Test_G1_AsientoVenta_Subtotal100_Iva13_Envio0_Total113_Vendedor90()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada.");
+
+        await using var db = CreateDbContext();
+        var ordenId = Guid.NewGuid();
+        var vendedorId = Guid.NewGuid();
+        var orden = new Orden
+        {
+            Id = ordenId,
+            NumeroOrden = $"ORD-{Guid.NewGuid():N}"[..20],
+            CompradorId = Guid.NewGuid(),
+            VendedorId = vendedorId,
+            SubTotal = 100m,
+            ImpuestoIva = 13m,
+            CostoEnvio = 0m,
+            MontoTotal = 113m,
+            Estado = EstadoOrden.Aprobada,
+            TipoComprobante = "FacturaConsumidorFinal",
+            FechaCreacion = DateTime.UtcNow
+        };
+        db.Ordenes.Add(orden);
+        await db.SaveChangesAsync();
+
+        // Split generado por CheckoutOrchestrator (Opción A: 10% sobre SubTotal 100m -> comision 10.00m; vendedor=90.00m, marketplace=10.00m)
+        var mockStock = new Mock<IStockService>();
+        mockStock.Setup(s => s.ReservarStockAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<Guid>()))
+            .ReturnsAsync(new ReservaResult(Guid.NewGuid(), true, null));
+        mockStock.Setup(s => s.ConfirmarDespachoAsync(It.IsAny<Guid>()))
+            .Returns(Task.CompletedTask);
+
+        var mockPago = new Mock<IPaymentGateway>();
+        mockPago.Setup(p => p.ProcesarPagoAsync(It.IsAny<PagoRequest>()))
+            .ReturnsAsync(new PagoResult(true, "TRX-FASE5E-01", null));
+
+        var mockComision = new Mock<ICommissionService>();
+        mockComision.Setup(c => c.CalcularComisionAsync(It.IsAny<Guid>(), 100m))
+            .ReturnsAsync(10m);
+
+        var orchestrator = new CheckoutOrchestrator(
+            mockStock.Object, mockComision.Object, mockPago.Object,
+            db, NullLogger<CheckoutOrchestrator>.Instance);
+
+        var cmd = new CheckoutCommand(
+            OrdenId: ordenId,
+            CompradorId: orden.CompradorId,
+            VendedorId: vendedorId,
+            ProductoId: Guid.NewGuid(),
+            Cantidad: 1,
+            MontoTotal: 113m,
+            Moneda: "USD");
+
+        await orchestrator.ProcesarCheckoutAsync(cmd);
 
         var service = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
         var partida = await service.GenerarAsientoVentaAsync(ordenId, 100m, 13m, "FacturaConsumidorFinal");
@@ -471,19 +585,19 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
         lineaActivo.Debe.Should().Be(113m);
         lineaActivo.Haber.Should().Be(0m);
 
-        // 2108: MontoVendedor = 90
+        // 2108: MontoVendedor = 90.00
         var linea2108 = guardada.Lineas.First(l => l.CodigoCuenta == "2108");
-        linea2108.Haber.Should().Be(90m);
+        linea2108.Haber.Should().Be(90.00m);
         linea2108.Debe.Should().Be(0m);
 
-        // 4101: MontoTotal - 2108 - 2105 = 113 - 90 - 13 = 10
+        // 4101: MontoTotal - 2108 - 2105 = 113 - 90 - 13 = 10.00
         var linea4101 = guardada.Lineas.First(l => l.CodigoCuenta == "4101");
-        linea4101.Haber.Should().Be(10m);
+        linea4101.Haber.Should().Be(10.00m);
         linea4101.Debe.Should().Be(0m);
 
-        // 2105: IVA completo = 13
+        // 2105: IVA completo = 13.00
         var linea2105 = guardada.Lineas.First(l => l.CodigoCuenta == "2105");
-        linea2105.Haber.Should().Be(13m);
+        linea2105.Haber.Should().Be(13.00m);
         linea2105.Debe.Should().Be(0m);
     }
 
@@ -494,12 +608,13 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
 
         await using var db = CreateDbContext();
         var ordenId = Guid.NewGuid();
+        var vendedorId = Guid.NewGuid();
         var orden = new Orden
         {
             Id = ordenId,
             NumeroOrden = $"ORD-{Guid.NewGuid():N}"[..20],
             CompradorId = Guid.NewGuid(),
-            VendedorId = Guid.NewGuid(),
+            VendedorId = vendedorId,
             SubTotal = 200m,
             ImpuestoIva = 26m,
             CostoEnvio = 5m,
@@ -509,21 +624,37 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
             FechaCreacion = DateTime.UtcNow
         };
         db.Ordenes.Add(orden);
-
-        var split = new SplitPago
-        {
-            Id = Guid.NewGuid(),
-            OrdenId = orden.Id,
-            MontoTotal = 231m,
-            MontoVendedor = 180m,
-            MontoMarketplace = 51m,
-            PorcentajeVendedor = 77.92m,
-            PorcentajeMarketplace = 22.08m,
-            TransaccionId = "TRX-FASE5D-02",
-            FechaProcesado = DateTime.UtcNow
-        };
-        db.SplitsPago.Add(split);
         await db.SaveChangesAsync();
+
+        // Split generado por CheckoutOrchestrator (Opción A: 10% sobre SubTotal 200m -> comisión 20.00m; vendedor=180.00m, marketplace=25.00m)
+        var mockStock = new Mock<IStockService>();
+        mockStock.Setup(s => s.ReservarStockAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<Guid>()))
+            .ReturnsAsync(new ReservaResult(Guid.NewGuid(), true, null));
+        mockStock.Setup(s => s.ConfirmarDespachoAsync(It.IsAny<Guid>()))
+            .Returns(Task.CompletedTask);
+
+        var mockPago = new Mock<IPaymentGateway>();
+        mockPago.Setup(p => p.ProcesarPagoAsync(It.IsAny<PagoRequest>()))
+            .ReturnsAsync(new PagoResult(true, "TRX-FASE5E-02", null));
+
+        var mockComision = new Mock<ICommissionService>();
+        mockComision.Setup(c => c.CalcularComisionAsync(It.IsAny<Guid>(), 200m))
+            .ReturnsAsync(20m); // 10% sobre 200
+
+        var orchestrator = new CheckoutOrchestrator(
+            mockStock.Object, mockComision.Object, mockPago.Object,
+            db, NullLogger<CheckoutOrchestrator>.Instance);
+
+        var cmd = new CheckoutCommand(
+            OrdenId: ordenId,
+            CompradorId: orden.CompradorId,
+            VendedorId: vendedorId,
+            ProductoId: Guid.NewGuid(),
+            Cantidad: 1,
+            MontoTotal: 231m,
+            Moneda: "USD");
+
+        await orchestrator.ProcesarCheckoutAsync(cmd);
 
         var service = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
         var partida = await service.GenerarAsientoVentaAsync(ordenId, 200m, 26m, "FacturaConsumidorFinal");
@@ -541,24 +672,24 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
         guardada.Should().NotBeNull();
         guardada!.Lineas.Should().HaveCount(4);
 
-        // Cuenta Activo (Debe = 231)
+        // Cuenta Activo (Debe = 231.00)
         var lineaActivo = guardada.Lineas.First(l => l.Debe > 0);
-        lineaActivo.Debe.Should().Be(231m);
+        lineaActivo.Debe.Should().Be(231.00m);
         lineaActivo.Haber.Should().Be(0m);
 
-        // 2108: MontoVendedor = 180
+        // 2108: MontoVendedor = 180.00
         var linea2108 = guardada.Lineas.First(l => l.CodigoCuenta == "2108");
-        linea2108.Haber.Should().Be(180m);
+        linea2108.Haber.Should().Be(180.00m);
         linea2108.Debe.Should().Be(0m);
 
-        // 4101: MontoTotal - 2108 - 2105 = 231 - 180 - 26 = 25
+        // 4101: MontoTotal - 2108 - 2105 = 231 - 180 - 26 = 25.00
         var linea4101 = guardada.Lineas.First(l => l.CodigoCuenta == "4101");
-        linea4101.Haber.Should().Be(25m);
+        linea4101.Haber.Should().Be(25.00m);
         linea4101.Debe.Should().Be(0m);
 
-        // 2105: IVA completo = 26
+        // 2105: IVA completo = 26.00
         var linea2105 = guardada.Lineas.First(l => l.CodigoCuenta == "2105");
-        linea2105.Haber.Should().Be(26m);
+        linea2105.Haber.Should().Be(26.00m);
         linea2105.Debe.Should().Be(0m);
     }
 
@@ -606,5 +737,61 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*residuo para 4101 es negativo*");
+    }
+
+    [SkippableFact]
+    public async Task Test_G4_AsientoVenta_SinSplit_ConEnvioMayorACero_UsaMontoTotalYCuadra()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada.");
+
+        await using var db = CreateDbContext();
+        var ordenId = Guid.NewGuid();
+        var orden = new Orden
+        {
+            Id = ordenId,
+            NumeroOrden = $"ORD-{Guid.NewGuid():N}"[..20],
+            CompradorId = Guid.NewGuid(),
+            VendedorId = Guid.NewGuid(),
+            SubTotal = 100m,
+            ImpuestoIva = 13m,
+            CostoEnvio = 7m,
+            MontoTotal = 120m, // 100 + 13 + 7
+            Estado = EstadoOrden.Aprobada,
+            TipoComprobante = "FacturaConsumidorFinal",
+            FechaCreacion = DateTime.UtcNow
+        };
+        db.Ordenes.Add(orden);
+        await db.SaveChangesAsync();
+
+        var service = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
+        var partida = await service.GenerarAsientoVentaAsync(ordenId, 100m, 13m, "FacturaConsumidorFinal");
+
+        partida.Should().NotBeNull();
+        partida.EstaCuadrada.Should().BeTrue();
+        partida.TotalDebe.Should().Be(120m);
+        partida.TotalHaber.Should().Be(120m);
+
+        await using var verifyDb = CreateDbContext();
+        var guardada = await verifyDb.PartidasContables
+            .Include(p => p.Lineas)
+            .FirstOrDefaultAsync(p => p.Id == partida.Id);
+
+        guardada.Should().NotBeNull();
+        guardada!.Lineas.Should().HaveCount(3); // Sin split: Activo, Ingresos (4101), IVA (2105)
+
+        // Activo: Debe 120 (MontoTotal con envio)
+        var lineaActivo = guardada.Lineas.First(l => l.Debe > 0);
+        lineaActivo.Debe.Should().Be(120m);
+
+        // 4101: MontoTotal - IVA = 120 - 13 = 107 (incluye envío)
+        var linea4101 = guardada.Lineas.First(l => l.CodigoCuenta == "4101");
+        linea4101.Haber.Should().Be(107m);
+
+        // 2105: 13
+        var linea2105 = guardada.Lineas.First(l => l.CodigoCuenta == "2105");
+        linea2105.Haber.Should().Be(13m);
+
+        // 2108 NO debe existir en la partida sin split
+        guardada.Lineas.Any(l => l.CodigoCuenta == "2108").Should().BeFalse();
     }
 }

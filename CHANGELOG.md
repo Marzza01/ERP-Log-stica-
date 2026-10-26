@@ -311,3 +311,42 @@ Este documento centraliza y documenta cada una de las fases, cambios de arquitec
 > En bases de datos existentes donde operaba el modelo anterior (1 liquidación a 1 split), si un vendedor acumuló múltiples órdenes entregadas pero solo se vinculó un split por liquidación, los splits restantes permanecen con `LiquidacionId IS NULL`.
 > Al ejecutar la nueva lógica 1 a N, `GenerarLiquidacionAsync` consolidará y liquidará todos los splits pendientes de ese vendedor.
 > **Mitigación obligatoria:** Antes de habilitar la generación en bases de datos con histórico previo, debe ejecutarse el script de solo lectura `docs/sql/auditoria_splits_huerfanos.sql` para identificar y validar los splits huérfanos antes de emitir nuevos pagos.
+
+---
+
+## Fase 5: Contabilidad Centralizada, Secuencia PostgreSQL, Split de Checkout Coherente (Opción A)
+
+### 1. Plan de Cuentas Fijo en Código (Catálogo Estándar de 9 Cuentas)
+- Se consolidó y centralizó el plan contable salvadoreño en [`ContabilidadService.cs`](file:///c:/Users/Marcelo/Documents/Logistica%20(ERP)/MarketplaceERP/src/MarketplaceERP.Finance/Services/ContabilidadService.cs) como un catálogo fijo en código compuesto por 9 cuentas:
+  - `1101` Caja y Bancos (Activo)
+  - `1102` Cuentas por Cobrar Pasarela de Pagos (Activo)
+  - `1103` Cuentas por Cobrar Clientes (Activo)
+  - `1105` Inventario para la Venta (Activo)
+  - `2101` Cuentas por Pagar Proveedores (Pasivo)
+  - `2105` Débito Fiscal IVA 13% (Pasivo)
+  - `2108` Pasivo por Liquidaciones Vendedores Marketplace (Pasivo)
+  - `4101` Ingresos por Ventas / Comisiones Marketplace (Ingreso)
+  - `5101` Costo de Mercadería Vendida (Gasto/Costo)
+- Validaciones estrictas: prohibición de montos simultáneos en Debe y Haber en una misma línea, verificación de cuentas válidas contra el catálogo, comprobación de balance exacto (tolerancia cero en redondeo) y generación centralizada de todas las partidas del sistema (`IContabilidadService`).
+
+### 2. Idempotencia y Secuencia Correlativa PostgreSQL
+- Correlativo único mediante secuencia nativa `finance."PartidaContableNumeroSeq"` (`AST-yyyyMMdd-00000001`).
+- Índice único compuesto `(TipoOperacion, ReferenciaOrigenId)` para idempotencia en asientos de venta, compra y liquidación.
+- Manejo refinado de concurrencia: si ocurre una colisión PostgreSQL `23505` dentro de una transacción activa (ej. `ProcesarPagoAsync`), se propaga la excepción hacia arriba para forzar el rollback y mapear a HTTP 409 Conflict. Si no hay transacción activa, se recupera y retorna la partida ganadora.
+
+### 3. Split de Pagos en Checkout y Coherencia Contable (Opción A)
+- **Cálculo de Split en CheckoutOrchestrator:**
+  - Comisión de intermediación calculada sobre el **SubTotal** de la orden (sin IVA ni Costo de Envío).
+  - `MontoVendedor` = `SubTotal − comisión`.
+  - `MontoMarketplace` = `comisión + CostoEnvio`.
+  - El IVA (`ImpuestoIva`) completo va a la cuenta `2105` (Débito Fiscal) y no pertenece al vendedor.
+  - Validación de integridad en el orquestador: `MontoVendedor + MontoMarketplace + ImpuestoIva == MontoTotal` con tolerancia cero antes de persistir.
+- **Asiento de Venta:**
+  - **Debe:** Cuenta de Activo (`1101`/`1102`/`1103`) por el `MontoTotal` cobrado (incluye envío e IVA).
+  - **Haber `2108`:** `split.MontoVendedor` (obligación a liquidar al vendedor).
+  - **Haber `2105`:** `orden.ImpuestoIva` íntegro (IVA Débito Fiscal de la venta).
+  - **Haber `4101`:** Residuo exacto (`MontoTotal − 2108 − 2105`), equivalente a comisión marketplace + costo de envío. Lanza `InvalidOperationException` si resulta negativo.
+- **DECISIÓN-PENDIENTE / Validar con Contador:**
+  - (a) Tratamiento tributario si la comisión marketplace genera débito fiscal adicional y mecanismo de emisión de comprobante de retención / factura por servicios de intermediación al vendedor.
+  - (b) Clasificación del `CostoEnvio` dentro de la cuenta `4101` vs cuenta separada de ingresos por transporte/flete.
+

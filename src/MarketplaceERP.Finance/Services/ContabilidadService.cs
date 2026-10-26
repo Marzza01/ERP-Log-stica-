@@ -178,7 +178,20 @@ public class ContabilidadService : IContabilidadService
                                            ex.Message.Contains("IX_partidas_contables_TipoOperacion_ReferenciaOrigenId") ||
                                            ex.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)))
         {
-            // En caso de carrera entre transacciones concurrentes (Postgres 23505), recuperar la ganadora
+            // IDEMPOTENCIA Y CONCURRENCIA:
+            // Si GenerarAsientoManualAsync se ejecuta dentro de una transacción abierta (ej. BeginTransactionAsync en ProcesarPagoAsync),
+            // PostgreSQL aborta la transacción ante un error 23505 (Current transaction is aborted, commands ignored until end of transaction block).
+            // En ese escenario, no es posible ejecutar consultas de recuperación (FirstAsync fallará); se debe dejar subir la excepción
+            // para que la transacción haga Rollback y la capa superior responda con 409 Conflict.
+            // La recuperación y relectura de la partida ganadora solo es aplicable cuando NO existe una transacción externa activa.
+            if (_dbContext.Database.CurrentTransaction != null)
+            {
+                _logger.LogWarning(
+                    "Conflicto de clave única (23505) en partida {TipoOperacion}/{ReferenciaOrigenId} dentro de una transacción activa. Propagando para Rollback / 409 Conflict.",
+                    tipoOperacion, referenciaOrigenId);
+                throw;
+            }
+
             _logger.LogWarning("Conflicto de concurrencia (Postgres 23505) al crear partida {TipoOperacion}/{ReferenciaOrigenId}. Recuperando existente...",
                 tipoOperacion, referenciaOrigenId);
 
@@ -267,10 +280,13 @@ public class ContabilidadService : IContabilidadService
                 "DECISIÓN-PENDIENTE: Orden {OrdenId} aprobada sin SplitPago asociado. No se acredita cuenta 2108.",
                 ordenId);
 
-            decimal totalCobrado = montoVenta + iva;
+            decimal totalCobrado = orden?.MontoTotal ?? (montoVenta + iva);
+            decimal ivaOrden = orden?.ImpuestoIva ?? iva;
+            decimal ingresoVenta = totalCobrado - ivaOrden; // Incluye costo de envío dentro de 4101 si existe
+
             lineas.Add(new LineaAsientoInput(cuentaActivo, totalCobrado, 0m, $"Cobro venta {tipoComprobante}"));
-            lineas.Add(new LineaAsientoInput(INGRESOS_VENTAS, 0m, montoVenta, "Ingreso por venta"));
-            lineas.Add(new LineaAsientoInput(IVA_DEBITO, 0m, iva, "IVA Débito Fiscal 13%"));
+            lineas.Add(new LineaAsientoInput(INGRESOS_VENTAS, 0m, ingresoVenta, "Ingreso por venta"));
+            lineas.Add(new LineaAsientoInput(IVA_DEBITO, 0m, ivaOrden, "IVA Débito Fiscal 13%"));
         }
 
         string docRef = orden?.NumeroOrden ?? ordenId.ToString("N");

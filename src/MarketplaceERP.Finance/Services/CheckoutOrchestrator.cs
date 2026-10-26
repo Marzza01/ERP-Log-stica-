@@ -146,18 +146,39 @@ public sealed class CheckoutOrchestrator
         _logger.LogDebug(
             "Saga Paso 2 OK. TransaccionId={TransaccionId}", pagoResult.TransaccionId);
 
-        // ── PASO 3: Calcular Comisión ─────────────────────────────────────────
+        // ── PASO 3: Calcular Comisión (OPCIÓN A) ──────────────────────────────
         _logger.LogDebug("Saga Paso 3: CalcularComision. VendedorId={VendedorId}", command.VendedorId);
 
+        // Se carga la orden existente de la BD para obtener SubTotal, ImpuestoIva y CostoEnvio separados
+        // sin necesidad de inferirlos ni dividir entre 1.13.
+        var ordenDb = await _dbContext.Ordenes.FindAsync(new object[] { command.OrdenId });
+        decimal subTotal = ordenDb?.SubTotal ?? (command.MontoTotal > 0 ? command.MontoTotal : 0m);
+        decimal ivaOrden = ordenDb?.ImpuestoIva ?? 0m;
+        decimal costoEnvio = ordenDb?.CostoEnvio ?? 0m;
+        decimal totalOrden = ordenDb?.MontoTotal ?? command.MontoTotal;
+
+        // DECISIÓN-PENDIENTE / validar con contador:
+        // (a) Comisión calculada sobre el SubTotal neto (sin IVA ni CostoEnvio).
+        // (b) MontoVendedor = SubTotal − comisión (el IVA no pertenece al vendedor, va íntegro a 2105).
+        // (c) MontoMarketplace = comisión + CostoEnvio.
         var montoComision = await _commissionService.CalcularComisionAsync(
             command.VendedorId,
-            command.MontoTotal);
+            subTotal);
 
-        var montoVendedor = Math.Round(command.MontoTotal - montoComision, 2);
-        var montoMarketplace = Math.Round(montoComision, 2);
-        var porcentajeVendedor = command.MontoTotal > 0
-            ? Math.Round((montoVendedor / command.MontoTotal) * 100, 2)
-            : 90m;
+        var montoVendedor = Math.Round(subTotal - montoComision, 2, MidpointRounding.AwayFromZero);
+        var montoMarketplace = Math.Round(montoComision + costoEnvio, 2, MidpointRounding.AwayFromZero);
+
+        // Validación estricta en el orquestador: MontoVendedor + MontoMarketplace + ImpuestoIva == MontoTotal (tolerancia 0)
+        var balanceVerif = montoVendedor + montoMarketplace + ivaOrden;
+        if (balanceVerif != totalOrden)
+        {
+            throw new InvalidOperationException(
+                $"Descuadre en split de pago: MontoVendedor ({montoVendedor:F2}) + MontoMarketplace ({montoMarketplace:F2}) + IVA ({ivaOrden:F2}) = {balanceVerif:F2} != MontoTotal ({totalOrden:F2}).");
+        }
+
+        var porcentajeVendedor = totalOrden > 0
+            ? Math.Round((montoVendedor / totalOrden) * 100, 2, MidpointRounding.AwayFromZero)
+            : 0m;
         var porcentajeMarketplace = 100m - porcentajeVendedor;
 
         _logger.LogDebug(
@@ -171,7 +192,7 @@ public sealed class CheckoutOrchestrator
         {
             Id = Guid.NewGuid(),
             OrdenId = command.OrdenId,
-            MontoTotal = command.MontoTotal,
+            MontoTotal = totalOrden,
             PorcentajeVendedor = porcentajeVendedor,
             MontoVendedor = montoVendedor,
             PorcentajeMarketplace = porcentajeMarketplace,
