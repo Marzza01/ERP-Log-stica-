@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, PackageCheck, RefreshCw, ShoppingBag, Warehouse } from 'lucide-react';
+import { AlertTriangle, Building2, PackageCheck, RefreshCw, ShoppingBag, Warehouse } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DataTable, { type Column } from '../../components/ui/DataTable';
 import AlertBanner from '../../components/ui/AlertBanner';
@@ -65,8 +65,21 @@ export default function ReabastecimientoPage() {
     },
     {
       key: 'proveedorNombre',
-      header: 'Proveedor catálogo',
-      render: row => row.proveedorNombre || 'Sin proveedor',
+      header: 'Proveedor',
+      render: row => row.proveedorVinculado ? (
+        <div>
+          <div className="td-primary">{row.proveedorMaestroNombre || row.proveedorNombre}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+            OTIF {row.otifHistorico?.toFixed(1) ?? '—'}% · {row.plazoCreditoDias && row.plazoCreditoDias > 0 ? `${row.plazoCreditoDias} días` : 'Contado'}
+          </div>
+          {row.contactoProveedor && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{row.contactoProveedor}</div>}
+        </div>
+      ) : (
+        <div>
+          <div>{row.proveedorNombre || 'Sin proveedor'}</div>
+          <span className="badge badge-cancelada" style={{ marginTop: 4 }}>No vinculado</span>
+        </div>
+      ),
     },
     {
       key: 'cantidadEnCompra',
@@ -115,6 +128,9 @@ export default function ReabastecimientoPage() {
           <p className="page-subtitle">Necesidades calculadas desde stock real y órdenes de compra abiertas</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-secondary" onClick={() => navigate('/proveedores')}>
+            <Building2 size={13} /> Proveedores
+          </button>
           <button className="btn btn-secondary" onClick={() => navigate('/compras')}>
             <ShoppingBag size={13} /> Ir a Compras
           </button>
@@ -153,7 +169,7 @@ export default function ReabastecimientoPage() {
       <AlertBanner
         variant="info"
         title="Límite de responsabilidad"
-        message="Este módulo detecta la necesidad logística y considera las PO abiertas. La creación y aprobación formal de órdenes de compra permanece en Compras. La vinculación con el maestro de proveedores se completa en la Fase 5D."
+        message="Este módulo detecta la necesidad logística, considera las PO abiertas y vincula el proveedor del catálogo con el maestro corporativo. La creación y aprobación formal de órdenes de compra permanece en Compras."
       />
 
       <DataTable

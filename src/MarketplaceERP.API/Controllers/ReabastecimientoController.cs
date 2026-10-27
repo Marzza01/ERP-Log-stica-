@@ -5,6 +5,8 @@
 
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Data;
+using MarketplaceERP.Core.Data;
+using MarketplaceERP.Core.Services;
 using MarketplaceERP.Finance.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -24,13 +26,16 @@ public class ReabastecimientoController : ControllerBase
 {
     private readonly IReabastecimientoService _reabastecimiento;
     private readonly FinanceDbContext _financeDb;
+    private readonly CoreDbContext _coreDb;
 
     public ReabastecimientoController(
         IReabastecimientoService reabastecimiento,
-        FinanceDbContext financeDb)
+        FinanceDbContext financeDb,
+        CoreDbContext coreDb)
     {
         _reabastecimiento = reabastecimiento;
         _financeDb = financeDb;
+        _coreDb = coreDb;
     }
 
     [HttpGet("necesidades")]
@@ -38,6 +43,11 @@ public class ReabastecimientoController : ControllerBase
     {
         var necesidades = await _reabastecimiento.ObtenerNecesidadesAsync(cancellationToken);
         var skus = necesidades.Select(n => n.Sku).Distinct().ToList();
+
+        var proveedoresActivos = await _coreDb.Proveedores
+            .AsNoTracking()
+            .Where(p => p.Activo)
+            .ToListAsync(cancellationToken);
 
         var comprasAbiertas = await _financeDb.OrdenesCompra
             .AsNoTracking()
@@ -84,6 +94,8 @@ public class ReabastecimientoController : ControllerBase
                     ? "COBERTURA_PARCIAL"
                     : "CUBIERTA_POR_PO";
 
+            var proveedor = ProveedorLogisticaMatcher.Resolver(proveedoresActivos, n.ProveedorNombre);
+
             return new
             {
                 n.ProductoId,
@@ -91,6 +103,14 @@ public class ReabastecimientoController : ControllerBase
                 n.Nombre,
                 n.CategoriaNombre,
                 n.ProveedorNombre,
+                ProveedorVinculado = proveedor is not null,
+                ProveedorId = proveedor?.Id,
+                ProveedorMaestroNombre = proveedor?.NombreComercial,
+                ProveedorRazonSocial = proveedor?.RazonSocial,
+                OtifHistorico = proveedor?.OtifHistorico,
+                PlazoCreditoDias = proveedor?.PlazoCreditoDias,
+                ContactoProveedor = proveedor?.ContactoPrincipal,
+                EmailProveedor = proveedor?.Email,
                 n.StockMinimo,
                 n.CantidadFisica,
                 n.CantidadReservada,

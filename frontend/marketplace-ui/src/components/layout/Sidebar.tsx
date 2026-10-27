@@ -8,7 +8,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Warehouse, Truck,
   RotateCcw, ShoppingBag, BookOpen, Wallet,
-  Package, ChevronLeft, ChevronRight, LogOut, X, RefreshCw,
+  Package, ChevronLeft, ChevronRight, LogOut, X, RefreshCw, Building2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -57,6 +57,12 @@ const navGroups: NavGroup[] = [
         icon: <RefreshCw size={16} />,
         label: 'Reabastecimiento',
         shortLabel: 'Reabast.',
+      },
+      {
+        to: '/proveedores',
+        icon: <Building2 size={16} />,
+        label: 'Proveedores',
+        shortLabel: 'Proveed.',
       },
       { to: '/fulfillment', icon: <Truck size={16} />,        label: 'Fulfillment',    shortLabel: 'Fulfillment' },
       {

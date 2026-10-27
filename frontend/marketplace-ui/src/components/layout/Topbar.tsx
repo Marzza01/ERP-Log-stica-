@@ -12,6 +12,8 @@ const routeTitles: Record<string, { label: string; sub: string }> = {
   '/dashboard':    { label: 'Dashboard KPIs', sub: 'Indicadores de desempeño logístico' },
   '/ordenes':      { label: 'Órdenes (OMS)',   sub: 'Gestión de ciclo de vida de órdenes' },
   '/wms':          { label: 'WMS — Bodega',    sub: 'Warehouse Management System' },
+  '/reabastecimiento': { label: 'Reabastecimiento', sub: 'Necesidades operativas de inventario' },
+  '/proveedores':   { label: 'Proveedores logísticos', sub: 'Maestro corporativo, OTIF y cobertura de compras' },
   '/fulfillment':  { label: 'Fulfillment',     sub: 'Picking, Packing y Despacho' },
   '/rma':          { label: 'RMA / Devoluciones', sub: 'Gestión de devoluciones y reembolsos' },
   '/compras':      { label: 'Compras / 3-Way Match', sub: 'Procurement y cotejo tridireccional' },

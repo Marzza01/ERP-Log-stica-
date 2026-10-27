@@ -14,6 +14,14 @@ export interface NecesidadReabastecimiento {
   nombre: string;
   categoriaNombre: string;
   proveedorNombre: string;
+  proveedorVinculado: boolean;
+  proveedorId?: string;
+  proveedorMaestroNombre?: string;
+  proveedorRazonSocial?: string;
+  otifHistorico?: number;
+  plazoCreditoDias?: number;
+  contactoProveedor?: string;
+  emailProveedor?: string;
   stockMinimo: number;
   cantidadFisica: number;
   cantidadReservada: number;

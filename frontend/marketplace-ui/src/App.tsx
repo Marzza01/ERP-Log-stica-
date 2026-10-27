@@ -19,6 +19,7 @@ import ContabilidadPage from './pages/contabilidad/ContabilidadPage';
 import LiquidacionesPage from './pages/liquidaciones/LiquidacionesPage';
 import ProductosPage from './pages/productos/ProductosPage';
 import ReabastecimientoPage from './pages/reabastecimiento/ReabastecimientoPage';
+import ProveedoresPage from './pages/proveedores/ProveedoresPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -42,6 +43,7 @@ function AppRoutes() {
         <Route path="ordenes"      element={<OrdenesPage />} />
         <Route path="wms"          element={<WmsPage />} />
         <Route path="reabastecimiento" element={<ReabastecimientoPage />} />
+        <Route path="proveedores"   element={<ProveedoresPage />} />
         <Route path="fulfillment"  element={<FulfillmentPage />} />
         <Route path="rma"          element={<RmaPage />} />
         <Route path="compras"      element={<ComprasPage />} />
