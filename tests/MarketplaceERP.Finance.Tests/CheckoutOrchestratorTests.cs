@@ -6,6 +6,7 @@
 using FluentAssertions;
 using MarketplaceERP.Core.Interfaces;
 using MarketplaceERP.Finance.Data;
+using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
 using MarketplaceERP.Shared.DTOs;
 using MarketplaceERP.Shared.Exceptions;
@@ -54,6 +55,16 @@ public class CheckoutOrchestratorTests
             .Returns(Task.CompletedTask);
 
         using var dbContext = CrearDbContextEnMemoria();
+        var orden = new Orden
+        {
+            Id = ordenId,
+            SubTotal = 100m,
+            ImpuestoIva = 0m,
+            CostoEnvio = 0m,
+            MontoTotal = 100m
+        };
+        dbContext.Ordenes.Add(orden);
+        await dbContext.SaveChangesAsync();
 
         var sut = new CheckoutOrchestrator(
             mockStock.Object, mockComision.Object, mockPago.Object,
@@ -83,6 +94,44 @@ public class CheckoutOrchestratorTests
         split.Should().NotBeNull();
         split!.MontoVendedor.Should().Be(90m);
         split.MontoMarketplace.Should().Be(10m);
+    }
+
+    [Fact]
+    public async Task ProcesarCheckoutAsync_OrdenNoExisteEnDB_DebeLanzarInvalidOperationException()
+    {
+        // Arrange
+        var mockStock = new Mock<IStockService>();
+        var mockComision = new Mock<ICommissionService>();
+        var mockPago = new Mock<IPaymentGateway>();
+
+        var reservaId = Guid.NewGuid();
+        var ordenId = Guid.NewGuid();
+
+        mockStock.Setup(s => s.ReservarStockAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<Guid>()))
+            .ReturnsAsync(new ReservaResult(reservaId, true, null));
+        mockPago.Setup(p => p.ProcesarPagoAsync(It.IsAny<PagoRequest>()))
+            .ReturnsAsync(new PagoResult(true, "TXN-TEST-002", null));
+
+        using var dbContext = CrearDbContextEnMemoria();
+        var sut = new CheckoutOrchestrator(
+            mockStock.Object, mockComision.Object, mockPago.Object,
+            dbContext, NullLogger<CheckoutOrchestrator>.Instance);
+
+        var command = new CheckoutCommand(
+            OrdenId: ordenId,
+            CompradorId: Guid.NewGuid(),
+            VendedorId: Guid.NewGuid(),
+            ProductoId: Guid.NewGuid(),
+            Cantidad: 1,
+            MontoTotal: 100m,
+            Moneda: "USD");
+
+        // Act
+        var act = () => sut.ProcesarCheckoutAsync(command);
+
+        // Assert: no debe fallbackear, debe lanzar InvalidOperationException
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*La orden {ordenId} no existe en la base de datos*");
     }
 
     [Fact]

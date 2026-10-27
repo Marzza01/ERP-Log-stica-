@@ -151,11 +151,13 @@ public sealed class CheckoutOrchestrator
 
         // Se carga la orden existente de la BD para obtener SubTotal, ImpuestoIva y CostoEnvio separados
         // sin necesidad de inferirlos ni dividir entre 1.13.
-        var ordenDb = await _dbContext.Ordenes.FindAsync(new object[] { command.OrdenId });
-        decimal subTotal = ordenDb?.SubTotal ?? (command.MontoTotal > 0 ? command.MontoTotal : 0m);
-        decimal ivaOrden = ordenDb?.ImpuestoIva ?? 0m;
-        decimal costoEnvio = ordenDb?.CostoEnvio ?? 0m;
-        decimal totalOrden = ordenDb?.MontoTotal ?? command.MontoTotal;
+        var ordenDb = await _dbContext.Ordenes.FindAsync(new object[] { command.OrdenId })
+            ?? throw new InvalidOperationException($"La orden {command.OrdenId} no existe en la base de datos para calcular la comisión y split.");
+
+        decimal subTotal = ordenDb.SubTotal;
+        decimal ivaOrden = ordenDb.ImpuestoIva;
+        decimal costoEnvio = ordenDb.CostoEnvio;
+        decimal totalOrden = ordenDb.MontoTotal;
 
         // DECISIÓN-PENDIENTE / validar con contador:
         // (a) Comisión calculada sobre el SubTotal neto (sin IVA ni CostoEnvio).

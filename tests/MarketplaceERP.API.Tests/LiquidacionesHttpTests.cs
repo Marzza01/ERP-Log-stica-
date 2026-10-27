@@ -86,4 +86,38 @@ public class LiquidacionesHttpTests : IClassFixture<CustomWebApplicationFactory>
         var body = await response.Content.ReadAsStringAsync();
         Assert.Contains("ya está en estado", body);
     }
+
+    [Fact]
+    public async Task ProcesarPago_DbUpdateExceptionClaveUnica_Retorna409Conflict()
+    {
+        // Test directo al Controller con stub de ILiquidacionService para verificar el mapeo de DbUpdateException -> 409 Conflict
+        var fakeService = new FakeLiquidacionServiceDbUpdateException();
+        var liqId = Guid.NewGuid();
+
+        var controller = new MarketplaceERP.API.Controllers.LiquidacionesController(
+            fakeService,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<MarketplaceERP.API.Controllers.LiquidacionesController>.Instance);
+
+        var result = await controller.ProcesarPago(liqId, CancellationToken.None);
+
+        var conflictResult = Assert.IsType<Microsoft.AspNetCore.Mvc.ConflictObjectResult>(result);
+        Assert.Equal(Microsoft.AspNetCore.Http.StatusCodes.Status409Conflict, conflictResult.StatusCode);
+    }
+
+    private class FakeLiquidacionServiceDbUpdateException : MarketplaceERP.Finance.Services.ILiquidacionService
+    {
+        public Task<Liquidacion> GenerarLiquidacionAsync(Guid vendedorId, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<Liquidacion> ProcesarPagoAsync(Guid liquidacionId, CancellationToken cancellationToken = default)
+            => throw new Microsoft.EntityFrameworkCore.DbUpdateException(
+                "Duplicate key 23505",
+                new Exception("duplicate key value violates unique constraint"));
+
+        public Task<IEnumerable<Liquidacion>> ObtenerHistorialAsync(Guid? vendedorId = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<IEnumerable<MarketplaceERP.Finance.Services.KpiVendedor>> ObtenerKpisVendedoresAsync(CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+    }
 }

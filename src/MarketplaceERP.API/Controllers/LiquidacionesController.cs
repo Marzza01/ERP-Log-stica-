@@ -96,6 +96,11 @@ public class LiquidacionesController : ControllerBase
             _logger.LogWarning("Conflicto de concurrencia al procesar liquidación {Id}: {Message}", id, ex.Message);
             return Conflict(new { mensaje = "Conflicto de concurrencia: La liquidación ya fue modificada o procesada simultáneamente por otra transacción." });
         }
+        catch (DbUpdateException ex)
+        {
+            _logger.LogWarning("Conflicto de clave única o asiento duplicado en liquidación {Id}: {Message}", id, ex.Message);
+            return Conflict(new { mensaje = "Conflicto de duplicidad / clave única en la base de datos al procesar la liquidación o su partida contable." });
+        }
         catch (KeyNotFoundException ex)
         {
             return NotFound(new { mensaje = ex.Message });
