@@ -21,11 +21,10 @@ public interface IStockService
 
     /// <summary>
     /// Confirma la reserva después de un pago exitoso.
-    /// NOTA TRANSITORIA FASE 4B: el nombre legado ConfirmarDespachoAsync se conserva
-    /// para no romper Checkout; este método NO descuenta stock físico. En Fase 4C
-    /// se renombrará a ConfirmarReservaAsync.
+    /// Esta operación NO descuenta stock físico ni consume la reserva; únicamente
+    /// cambia su estado a Confirmada para dejarla lista para Fulfillment.
     /// </summary>
-    Task ConfirmarDespachoAsync(Guid reservaId);
+    Task ConfirmarReservaAsync(Guid reservaId);
 
     /// <summary>
     /// Libera una reserva de stock (compensación de la Saga).

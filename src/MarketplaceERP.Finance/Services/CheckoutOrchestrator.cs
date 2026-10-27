@@ -44,7 +44,7 @@ public record CheckoutResult(
 /// 2. ProcesarPago    → Falla: LiberarStock (compensación) + lanza PagoFallidoException
 /// 3. CalcularComision
 /// 4. Guardar SplitPago (90% vendedor / 10% marketplace)
-/// 5. ConfirmarDespacho
+/// 5. ConfirmarReserva
 /// 6. Retornar CheckoutResult
 /// </summary>
 internal sealed class CheckoutOrchestrator
@@ -185,10 +185,10 @@ internal sealed class CheckoutOrchestrator
 
         _logger.LogDebug("Saga Paso 4 OK. SplitPagoId={SplitPagoId}", splitPago.Id);
 
-        // ── PASO 5: Confirmar Despacho ────────────────────────────────────────
-        _logger.LogDebug("Saga Paso 5: ConfirmarDespacho. ReservaId={ReservaId}", reservaId);
+        // ── PASO 5: Confirmar Reserva ─────────────────────────────────────────
+        _logger.LogDebug("Saga Paso 5: ConfirmarReserva. ReservaId={ReservaId}", reservaId);
 
-        await _stockService.ConfirmarDespachoAsync(reservaId);
+        await _stockService.ConfirmarReservaAsync(reservaId);
 
         _logger.LogInformation(
             "Checkout Saga COMPLETADO. OrdenId={OrdenId}, TransaccionId={TransaccionId}, " +

@@ -17,14 +17,13 @@ namespace MarketplaceERP.Catalog.Services;
 /// <summary>
 /// Implementación real de reservas de inventario sobre PostgreSQL.
 ///
-/// Reglas de Fase 4B:
+/// Reglas vigentes:
 /// - reservar aumenta CantidadReservada, nunca CantidadTotal;
 /// - stock bloqueado no está disponible para nuevas reservas;
 /// - una reserva puede distribuirse entre múltiples ubicaciones WMS;
 /// - liberar devuelve la cantidad pendiente a disponibilidad;
-/// - ConfirmarDespachoAsync conserva su nombre legado por compatibilidad con
-///   Checkout, pero en esta fase SOLO confirma la reserva. El descuento físico
-///   ocurrirá posteriormente en Fulfillment/Outbound.
+/// - ConfirmarReservaAsync confirma el compromiso después del pago sin consumir
+///   inventario; el descuento físico ocurre posteriormente en Fulfillment/Outbound.
 /// </summary>
 internal sealed class StockService : IStockService
 {
@@ -179,11 +178,11 @@ internal sealed class StockService : IStockService
     }
 
     /// <summary>
-    /// Método legado del contrato de Fase 3. Durante Fase 4B confirma la reserva
-    /// después del pago, pero NO descuenta CantidadTotal ni CantidadReservada.
-    /// Fase 4C lo renombrará a ConfirmarReservaAsync.
+    /// Confirma una reserva después de un pago exitoso.
+    /// NO descuenta CantidadTotal ni CantidadReservada; el consumo físico ocurre
+    /// únicamente cuando Fulfillment realiza el despacho real.
     /// </summary>
-    public async Task ConfirmarDespachoAsync(Guid reservaId)
+    public async Task ConfirmarReservaAsync(Guid reservaId)
     {
         if (reservaId == Guid.Empty)
             throw new ArgumentException("ReservaId es obligatorio.", nameof(reservaId));

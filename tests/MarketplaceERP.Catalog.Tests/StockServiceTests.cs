@@ -106,7 +106,7 @@ public class StockServiceTests
     }
 
     [Fact]
-    public async Task ConfirmarDespachoAsync_EnFase4B_DebeConfirmarReservaSinConsumirFisico()
+    public async Task ConfirmarReservaAsync_DebeConfirmarReservaSinConsumirFisico()
     {
         await using var db = CrearDb();
         var producto = CrearProducto();
@@ -119,7 +119,7 @@ public class StockServiceTests
         var sut = CrearSut(db);
         var creada = await sut.ReservarStockAsync(producto.Id, 3, Guid.NewGuid());
 
-        await sut.ConfirmarDespachoAsync(creada.ReservaId);
+        await sut.ConfirmarReservaAsync(creada.ReservaId);
 
         var reserva = await db.ReservasStock.SingleAsync(r => r.Id == creada.ReservaId);
         reserva.Estado.Should().Be(EstadoReserva.Confirmada);
