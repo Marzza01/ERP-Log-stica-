@@ -121,6 +121,10 @@ public class CheckoutSeguroHttpTests : IClassFixture<CustomWebApplicationFactory
         {
             var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
             catDb.Productos.AddRange(prod1, prod2);
+            catDb.StockFisico.AddRange(
+                new StockFisico { Id = Guid.NewGuid(), ProductoId = prod1.Id, CantidadTotal = 10, CantidadReservada = 0 },
+                new StockFisico { Id = Guid.NewGuid(), ProductoId = prod2.Id, CantidadTotal = 10, CantidadReservada = 0 }
+            );
             await catDb.SaveChangesAsync();
         }
 
@@ -174,6 +178,7 @@ public class CheckoutSeguroHttpTests : IClassFixture<CustomWebApplicationFactory
         {
             var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
             catDb.Productos.Add(prod);
+            catDb.StockFisico.Add(new StockFisico { Id = Guid.NewGuid(), ProductoId = prod.Id, CantidadTotal = 10, CantidadReservada = 0 });
             await catDb.SaveChangesAsync();
         }
 
@@ -247,6 +252,7 @@ public class CheckoutSeguroHttpTests : IClassFixture<CustomWebApplicationFactory
         {
             var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
             catDb.Productos.Add(prod);
+            catDb.StockFisico.Add(new StockFisico { Id = Guid.NewGuid(), ProductoId = prod.Id, CantidadTotal = 10, CantidadReservada = 0 });
             await catDb.SaveChangesAsync();
         }
 
@@ -437,6 +443,7 @@ public class CheckoutSeguroHttpTests : IClassFixture<CustomWebApplicationFactory
         {
             var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
             catDb.Productos.Add(prod);
+            catDb.StockFisico.Add(new StockFisico { Id = Guid.NewGuid(), ProductoId = prod.Id, CantidadTotal = 10, CantidadReservada = 0 });
             await catDb.SaveChangesAsync();
         }
 

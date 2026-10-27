@@ -24,15 +24,21 @@ namespace MarketplaceERP.API.Controllers;
 public class OrdenesController : ControllerBase
 {
     private readonly MarketplaceERP.Finance.Data.FinanceDbContext _db;
+    private readonly MarketplaceERP.Catalog.Data.CatalogDbContext _catalogDb;
+    private readonly MarketplaceERP.Core.Interfaces.IStockService _stockService;
     private readonly IContabilidadService _contabilidad;
     private readonly ILogger<OrdenesController> _logger;
 
     public OrdenesController(
         MarketplaceERP.Finance.Data.FinanceDbContext db,
+        MarketplaceERP.Catalog.Data.CatalogDbContext catalogDb,
+        MarketplaceERP.Core.Interfaces.IStockService stockService,
         IContabilidadService contabilidad,
         ILogger<OrdenesController> logger)
     {
         _db = db;
+        _catalogDb = catalogDb;
+        _stockService = stockService;
         _contabilidad = contabilidad;
         _logger = logger;
     }
@@ -242,6 +248,19 @@ public class OrdenesController : ControllerBase
                 break;
             case EstadoOrden.Entregada:
                 orden.FechaEntregaReal = DateTime.UtcNow;
+                break;
+            case EstadoOrden.Cancelada:
+                orden.FechaCancelacion = DateTime.UtcNow;
+                // Liberar reservas activas (Pendientes o Confirmadas) de stock asociadas a la orden
+                var reservasActivas = await _catalogDb.ReservasStock
+                    .Where(r => r.OrdenId == orden.Id && (r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Pendiente || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Confirmada))
+                    .ToListAsync(cancellationToken);
+
+                foreach (var res in reservasActivas)
+                {
+                    _logger.LogInformation("Liberando reserva {ReservaId} por cancelación de orden {OrdenId}.", res.Id, orden.Id);
+                    await _stockService.LiberarStockAsync(res.Id);
+                }
                 break;
         }
 
