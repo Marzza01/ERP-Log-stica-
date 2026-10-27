@@ -16,6 +16,7 @@ export default function WmsPage() {
   const [ubicaciones, setUbicaciones] = useState<UbicacionAlmacen[]>([]);
   const [stocks, setStocks] = useState<StockTransferenciaWms[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState('');
   const [filterPasillo, setFilterPasillo] = useState('');
   const [soloDisp, setSoloDisp] = useState(false);
 
@@ -31,6 +32,7 @@ export default function WmsPage() {
 
   const load = async () => {
     setLoading(true);
+    setErrorCarga('');
     try {
       const [r, u, s] = await Promise.all([
         wmsApi.getMapaBodega(),
@@ -40,45 +42,11 @@ export default function WmsPage() {
       setResumen(r);
       setUbicaciones(u);
       setStocks(s);
-    } catch {
-      // Fallback demo heredado del proyecto general. Se retirará en la fase de depuración final.
-      const pasillos = ['A', 'B', 'C', 'D'];
-      const demo: UbicacionAlmacen[] = Array.from({ length: 40 }, (_, i) => {
-        const pasillo = pasillos[i % 4];
-        const nivel = (i % 3) + 1;
-        const estaOcupada = i % 3 !== 0;
-        return {
-          id: crypto.randomUUID(),
-          codigo: `PAS-${pasillo}-RCK-${String((i % 5) + 1).padStart(2, '0')}-NIV-${String(nivel).padStart(2, '0')}-POS-${String((i % 5) + 1).padStart(2, '0')}`,
-          pasillo,
-          rack: `Rack ${String((i % 5) + 1).padStart(2, '0')}`,
-          nivel,
-          posicion: `Posición ${String((i % 5) + 1).padStart(2, '0')}`,
-          capacidadMaxima: 100,
-          estaOcupada,
-          zona: 'AlmacenamientoGeneral',
-          fechaCreacion: new Date().toISOString(),
-        };
-      });
-      const ocupadas = demo.filter(u => u.estaOcupada).length;
-      setUbicaciones(demo);
+    } catch (error) {
+      setResumen(null);
+      setUbicaciones([]);
       setStocks([]);
-      setResumen({
-        totalUbicaciones: demo.length,
-        ocupadas,
-        disponibles: demo.length - ocupadas,
-        porcentajeOcupacion: Math.round((ocupadas / demo.length) * 100),
-        pasillos: pasillos.map(pasillo => {
-          const ubicacionesPasillo = demo.filter(u => u.pasillo === pasillo);
-          return {
-            pasillo,
-            totalRacks: new Set(ubicacionesPasillo.map(u => u.rack)).size,
-            totalPosiciones: ubicacionesPasillo.length,
-            posicionesOcupadas: ubicacionesPasillo.filter(u => u.estaOcupada).length,
-            ubicaciones: ubicacionesPasillo,
-          };
-        }),
-      });
+      setErrorCarga(error instanceof Error ? error.message : 'No se pudo cargar el WMS desde la API.');
     } finally {
       setLoading(false);
     }
@@ -197,6 +165,10 @@ export default function WmsPage() {
           </button>
         </div>
       </div>
+
+      {errorCarga && (
+        <AlertBanner variant="danger" title="WMS no disponible" message={errorCarga} action={{ label: 'Reintentar', onClick: load }} />
+      )}
 
       {mensajeTransferencia && (
         <AlertBanner

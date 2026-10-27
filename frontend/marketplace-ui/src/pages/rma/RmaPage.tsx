@@ -8,6 +8,7 @@ import { RotateCcw, AlertTriangle, CheckCircle2, XCircle, Plus, RefreshCw, Eye }
 import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
+import AlertBanner from '../../components/ui/AlertBanner';
 import { rmaApi, type RegistrarRmaRequest, type DictaminarRmaRequest } from '../../api/rma';
 import { wmsApi } from '../../api/wms';
 import type { DevolucionRMA, UbicacionAlmacen } from '../../types';
@@ -15,15 +16,16 @@ import type { DevolucionRMA, UbicacionAlmacen } from '../../types';
 export default function RmaPage() {
   const [rmas, setRmas] = useState<DevolucionRMA[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState('');
   const [filterEstado, setFilterEstado] = useState('');
 
   // Modal registrar
   const [modalRegistrar, setModalRegistrar] = useState(false);
   const [formRegistrar, setFormRegistrar] = useState<RegistrarRmaRequest>({
-    ordenId: '00000000-0000-0000-0000-000000000001',
-    productoId: '00000000-0000-0000-0000-000000000001',
+    ordenId: '',
+    productoId: '',
     cantidad: 1,
-    motivoCliente: 'Producto defectuoso',
+    motivoCliente: '',
   });
   const [savingReg, setSavingReg] = useState(false);
 
@@ -44,25 +46,13 @@ export default function RmaPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setErrorCarga('');
     try {
       const res = await rmaApi.listar(filterEstado || undefined);
       setRmas(res || []);
-    } catch {
-      const mock: DevolucionRMA[] = [
-        {
-          id: '00000000-0000-0000-0000-000000000101',
-          numeroRMA: 'RMA-DEMO-001',
-          ordenId: '00000000-0000-0000-0000-000000000201',
-          productoId: '00000000-0000-0000-0000-000000000301',
-          cantidad: 1,
-          motivoCliente: 'Producto defectuoso',
-          estado: 'Solicitado',
-          clasificacion: 'Pendiente',
-          porcentajeRemateDescuento: 0,
-          fechaSolicitud: new Date(Date.now() - 86400000 * 2).toISOString(),
-        },
-      ];
-      setRmas(mock);
+    } catch (error) {
+      setRmas([]);
+      setErrorCarga(error instanceof Error ? error.message : 'No se pudieron cargar las devoluciones RMA desde la API.');
     } finally {
       setLoading(false);
     }
@@ -81,8 +71,11 @@ export default function RmaPage() {
       .then(items => {
         if (activo) setUbicaciones(items || []);
       })
-      .catch(() => {
-        if (activo) setUbicaciones([]);
+      .catch((error) => {
+        if (activo) {
+          setUbicaciones([]);
+          setErrorDictamen(error instanceof Error ? error.message : 'No se pudieron cargar las ubicaciones WMS.');
+        }
       })
       .finally(() => {
         if (activo) setLoadingUbicaciones(false);
@@ -106,10 +99,13 @@ export default function RmaPage() {
 
   const handleCrearRMA = async () => {
     setSavingReg(true);
+    setErrorCarga('');
     try {
       const creado = await rmaApi.solicitar(formRegistrar);
       setRmas(prev => [creado, ...prev]);
       setModalRegistrar(false);
+    } catch (error) {
+      setErrorCarga(error instanceof Error ? error.message : 'No fue posible registrar la solicitud RMA.');
     } finally {
       setSavingReg(false);
     }
@@ -135,7 +131,6 @@ export default function RmaPage() {
     }
   };
 
-  const tasaRMA = rmas.length > 0 ? ((rmas.length / 100) * 100).toFixed(1) : '1.8';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -188,6 +183,10 @@ export default function RmaPage() {
         </div>
       </div>
 
+      {errorCarga && (
+        <AlertBanner variant="danger" title="RMA no disponible" message={errorCarga} action={{ label: 'Reintentar', onClick: loadData }} />
+      )}
+
       {/* KPI Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
@@ -207,11 +206,11 @@ export default function RmaPage() {
         </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Tasa de Retorno (KPI RMA)</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: parseFloat(tasaRMA) < 3.0 ? 'var(--green)' : 'var(--red)', marginTop: '0.35rem' }}>
-            {tasaRMA}%
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Casos Completados</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--green)', marginTop: '0.35rem' }}>
+            {rmas.filter(r => r.estado === 'Completado').length} casos
           </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Meta estándar: &le; 3.0%</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Finalizados por el flujo RMA</div>
         </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>

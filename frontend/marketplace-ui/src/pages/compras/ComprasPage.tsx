@@ -8,6 +8,7 @@ import { ShoppingCart, FileText, CheckCircle2, AlertTriangle, Plus, RefreshCw, S
 import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
+import AlertBanner from '../../components/ui/AlertBanner';
 import { useToast } from '../../context/ToastContext';
 import { comprasApi, type CrearPORequest, type RegistrarFacturaRequest, type Validar3WayMatchRequest, type RecibirMercaderiaRequest } from '../../api/compras';
 import { wmsApi } from '../../api/wms';
@@ -30,6 +31,7 @@ export default function ComprasPage() {
   const [ordenesCompra, setOrdenesCompra] = useState<OrdenCompra[]>([]);
   const [matches, setMatches] = useState<MatchTridireccional[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState('');
 
   // Crear PO Modal
   const [poModalOpen, setPoModalOpen] = useState(false);
@@ -37,10 +39,10 @@ export default function ComprasPage() {
     proveedorId: '',
     proveedorNombre: '',
     terminosPago: 'Crédito 30 días',
-    observaciones: 'Reabastecimiento bodega central Q3',
+    observaciones: '',
     fechaEntregaEsperada: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
     items: [
-      { sku: 'SKU-LOGI-8801', nombreProducto: 'Smartphone Galaxy A54 128GB', cantidad: 50, precioUnitario: 240.00 },
+      { sku: '', nombreProducto: '', cantidad: 1, precioUnitario: 0 },
     ],
   });
   const [savingPo, setSavingPo] = useState(false);
@@ -51,9 +53,9 @@ export default function ComprasPage() {
   const [facturaModalOpen, setFacturaModalOpen] = useState(false);
   const [facturaForm, setFacturaForm] = useState<RegistrarFacturaRequest>({
     ordenCompraId: '',
-    numeroFactura: 'FAC-2026-0988',
-    subTotal: 12000,
-    montoTotal: 13560,
+    numeroFactura: '',
+    subTotal: 0,
+    montoTotal: 0,
     fechaEmision: new Date().toISOString().split('T')[0],
   });
   const [savingFactura, setSavingFactura] = useState(false);
@@ -62,8 +64,8 @@ export default function ComprasPage() {
   const [matchModalOpen, setMatchModalOpen] = useState(false);
   const [matchForm, setMatchForm] = useState<Validar3WayMatchRequest>({
     ordenCompraId: '',
-    facturaProveedorId: '00000000-0000-0000-0000-000000000002',
-    cantidadRecibidaBodega: 50,
+    facturaProveedorId: '',
+    cantidadRecibidaBodega: 0,
     toleranciaPorcentaje: 2.0,
   });
   const [matchResult, setMatchResult] = useState<MatchTridireccional | null>(null);
@@ -80,6 +82,7 @@ export default function ComprasPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setErrorCarga('');
     try {
       const [poRes, matchRes] = await Promise.all([
         comprasApi.listarPO({ tamano: 50 }),
@@ -87,63 +90,10 @@ export default function ComprasPage() {
       ]);
       setOrdenesCompra(poRes.ordenesCompra || []);
       setMatches(matchRes || []);
-    } catch {
-      // Fallback demo data
-      const mockPOs: OrdenCompra[] = [
-        {
-          id: 'po-101',
-          numeroPO: 'PO-20260918-1001',
-          proveedorId: 'prov-1',
-          nombreProveedor: 'Tech Wholesale El Salvador S.A.',
-          estado: 'Emitida',
-          montoTotal: 12000.00,
-          moneda: 'USD',
-          condicionPago: 'Crédito 30 días',
-          fechaEmision: new Date(Date.now() - 86400000 * 3).toISOString(),
-          fechaEntregaEsperada: new Date(Date.now() + 86400000 * 7).toISOString(),
-          items: [
-            { id: 'item-1', productoId: 'prod-1', descripcion: 'Smartphone Galaxy A54 128GB', cantidad: 50, precioUnitario: 240.00, total: 12000.00 },
-          ],
-        },
-        {
-          id: 'po-102',
-          numeroPO: 'PO-20260918-1002',
-          proveedorId: 'prov-2',
-          nombreProveedor: 'Importadora y Logística Global',
-          estado: 'Recibida',
-          montoTotal: 4500.00,
-          moneda: 'USD',
-          condicionPago: 'Contado',
-          fechaEmision: new Date(Date.now() - 86400000 * 6).toISOString(),
-          items: [
-            { id: 'item-2', productoId: 'prod-2', descripcion: 'Audífonos Bluetooth Noise Cancelling', cantidad: 100, precioUnitario: 45.00, total: 4500.00 },
-          ],
-        },
-      ];
-
-      const mockMatches: MatchTridireccional[] = [
-        {
-          id: 'match-01',
-          ordenCompraId: 'po-102',
-          resultado: 'Conforme',
-          diferenciaCantidad: 0,
-          diferenciaMonto: 0,
-          observaciones: 'PO, Nota de Recepción WMS y Factura coinciden al 100%. Aprobado automáticamente para pago y contabilidad.',
-          fechaAuditoria: new Date(Date.now() - 86400000 * 2).toISOString(),
-        },
-        {
-          id: 'match-02',
-          ordenCompraId: 'po-103',
-          resultado: 'Discrepante',
-          diferenciaCantidad: 5,
-          diferenciaMonto: 320.50,
-          observaciones: 'Discrepancia detectada: Factura cobró 55 unidades pero bodega recibió 50. Supera tolerancia del 2%. Retenido.',
-          fechaAuditoria: new Date(Date.now() - 86400000 * 5).toISOString(),
-        },
-      ];
-
-      setOrdenesCompra(mockPOs);
-      setMatches(mockMatches);
+    } catch (error) {
+      setOrdenesCompra([]);
+      setMatches([]);
+      setErrorCarga(error instanceof Error ? error.message : 'No se pudieron cargar Compras y 3-Way Match desde la API.');
     } finally {
       setLoading(false);
     }
@@ -158,7 +108,7 @@ export default function ComprasPage() {
     setLoadingProveedores(true);
     proveedoresApi.listar()
       .then(res => { if (activo) setProveedores(res.items ?? []); })
-      .catch(() => { if (activo) setProveedores([]); })
+      .catch((error) => { if (activo) { setProveedores([]); setErrorCarga(error instanceof Error ? error.message : 'No se pudo cargar el maestro de proveedores.'); } })
       .finally(() => { if (activo) setLoadingProveedores(false); });
     return () => { activo = false; };
   }, []);
@@ -280,11 +230,13 @@ export default function ComprasPage() {
     try {
       await comprasApi.registrarFactura(facturaForm);
       toast.success('Factura Registrada', `Comprobante ${facturaForm.numeroFactura} cargado al sistema.`);
-    } catch {
-      toast.success('Factura Registrada (Local)', `Comprobante ${facturaForm.numeroFactura} vinculado.`);
+      setFacturaModalOpen(false);
+      await loadData();
+    } catch (error) {
+      toast.error('Error al registrar factura', error instanceof Error ? error.message : 'No fue posible registrar la factura.');
+    } finally {
+      setSavingFactura(false);
     }
-    setSavingFactura(false);
-    setFacturaModalOpen(false);
   };
 
   const handleEjecutarMatch = async () => {
@@ -292,37 +244,14 @@ export default function ComprasPage() {
     try {
       const res = await comprasApi.ejecutarMatch(matchForm);
       setMatchResult(res);
-      setMatches(prev => [res, ...prev]);
+      setMatches(prev => [res, ...prev.filter(m => m.id !== res.id)]);
       if (res.resultado === 'Conforme') {
         toast.success('3-Way Match Conforme', 'Cotejo exitoso: orden autorizada para pago.');
       } else {
         toast.warning('3-Way Match Discrepante', 'Existe diferencia fuera de tolerancia entre PO y recepción.');
       }
-    } catch {
-      // mock calculation
-      const po = ordenesCompra.find(p => p.id === matchForm.ordenCompraId) || ordenesCompra[0];
-      const cantOrdenada = po ? po.items.reduce((a, b) => a + b.cantidad, 0) : 50;
-      const difCant = Math.abs(cantOrdenada - matchForm.cantidadRecibidaBodega);
-      const isConforme = difCant <= (cantOrdenada * (matchForm.toleranciaPorcentaje || 2) / 100);
-
-      const result: MatchTridireccional = {
-        id: crypto.randomUUID(),
-        ordenCompraId: matchForm.ordenCompraId,
-        resultado: isConforme ? 'Conforme' : 'Discrepante',
-        diferenciaCantidad: difCant,
-        diferenciaMonto: difCant * 45,
-        observaciones: isConforme
-          ? `Cotejo exitoso con tolerancia del ${matchForm.toleranciaPorcentaje}%. Orden autorizada para pago automático y asiento contable generado.`
-          : `Discrepancia de ${difCant} unidades entre PO y recepción física de bodega. Supera tolerancia de ${matchForm.toleranciaPorcentaje}%. Retenido.`,
-        fechaAuditoria: new Date().toISOString(),
-      };
-      setMatchResult(result);
-      setMatches(prev => [result, ...prev]);
-      if (isConforme) {
-        toast.success('3-Way Match Conforme (Local)', 'Cotejo validado con éxito.');
-      } else {
-        toast.warning('3-Way Match Discrepante (Local)', 'Discrepancia detectada en recepción.');
-      }
+    } catch (error) {
+      toast.error('Error en 3-Way Match', error instanceof Error ? error.message : 'No fue posible ejecutar el 3-Way Match.');
     } finally {
       setRunningMatch(false);
     }
@@ -380,6 +309,10 @@ export default function ComprasPage() {
           </button>
         </div>
       </div>
+
+      {errorCarga && (
+        <AlertBanner variant="danger" title="Compras no disponible" message={errorCarga} action={{ label: 'Reintentar', onClick: loadData }} />
+      )}
 
       {/* Attention List (Efferd Dashboard #6: Items requiring operational attention) */}
       {matches.some(m => m.resultado === 'Discrepante') && (

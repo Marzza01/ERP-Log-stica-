@@ -18,44 +18,27 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => {
-    const t = localStorage.getItem('erp_token');
-    if (t) return t;
-    const defaultToken = 'permanent-admin-token-logimkt';
-    localStorage.setItem('erp_token', defaultToken);
-    return defaultToken;
-  });
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('erp_token'));
 
   const [usuario, setUsuario] = useState<Usuario | null>(() => {
-    const u = localStorage.getItem('erp_usuario');
-    if (u) return JSON.parse(u);
-    const defaultUser: Usuario = { nombre: 'Gerson Melgar (Admin)', email: 'admin@logimkt.com', rol: 'Admin' };
-    localStorage.setItem('erp_usuario', JSON.stringify(defaultUser));
-    return defaultUser;
+    const stored = localStorage.getItem('erp_usuario');
+    if (!stored) return null;
+    try {
+      return JSON.parse(stored) as Usuario;
+    } catch {
+      localStorage.removeItem('erp_usuario');
+      localStorage.removeItem('erp_token');
+      return null;
+    }
   });
 
   const login = useCallback(async (email: string, password: string) => {
-    // Try real API; on failure (no users seeded), use mock credentials for dev
-    try {
-      const res = await authApi.login({ email, password });
-      localStorage.setItem('erp_token', res.token);
-      const u: Usuario = { nombre: res.usuario, email, rol: res.rol };
-      localStorage.setItem('erp_usuario', JSON.stringify(u));
-      setToken(res.token);
-      setUsuario(u);
-    } catch {
-      // Dev fallback — accept any credential so UI can be tested
-      if (email && password.length >= 4) {
-        const mockToken = 'dev-token-' + Date.now();
-        const u: Usuario = { nombre: email.split('@')[0], email, rol: 'Admin' };
-        localStorage.setItem('erp_token', mockToken);
-        localStorage.setItem('erp_usuario', JSON.stringify(u));
-        setToken(mockToken);
-        setUsuario(u);
-      } else {
-        throw new Error('Credenciales inválidas');
-      }
-    }
+    const res = await authApi.login({ email, password });
+    localStorage.setItem('erp_token', res.token);
+    const u: Usuario = { nombre: res.usuario, email, rol: res.rol };
+    localStorage.setItem('erp_usuario', JSON.stringify(u));
+    setToken(res.token);
+    setUsuario(u);
   }, []);
 
   const logout = useCallback(() => {

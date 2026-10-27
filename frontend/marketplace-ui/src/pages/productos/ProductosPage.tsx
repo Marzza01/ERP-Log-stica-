@@ -7,6 +7,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { ShoppingBag, Search, Plus, Filter, AlertCircle, RefreshCw, Edit2, Trash2 } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
+import AlertBanner from '../../components/ui/AlertBanner';
 import { useToast } from '../../context/ToastContext';
 import { productosApi, type CrearProductoRequest } from '../../api/productos';
 import type { Producto } from '../../types';
@@ -16,6 +17,7 @@ export default function ProductosPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCat, setSelectedCat] = useState('');
+  const [errorCarga, setErrorCarga] = useState('');
 
   // Modal
   const [modalOpen, setModalOpen] = useState(false);
@@ -43,53 +45,13 @@ export default function ProductosPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setErrorCarga('');
     try {
       const res = await productosApi.listar(1, 100);
       setProductos(res.items ?? []);
-    } catch {
-      // Fallback demo data (mismo contrato que el backend)
-      const cats = ['Tecnología', 'Audio & Video', 'Periféricos Gamer', 'Cómputo', 'Accesorios'];
-      const mock: Producto[] = Array.from({ length: 25 }, (_, i) => {
-        const disp = (i * 7) % 65;
-        const reservado = (i * 3) % 15;
-        return {
-          id: `00000000-0000-0000-0000-${String(i + 1).padStart(12, '0')}`,
-          sku: `SKU-LOGI-${1000 + i}`,
-          nombre: `Producto Demo ${i + 1}`,
-          categoriaNombre: cats[i % cats.length],
-          subcategoria: 'General',
-          precioB2C: 25 + (i * 18.5),
-          precioB2B: 20 + (i * 15),
-          precioBase: 25 + (i * 18.5),
-          moneda: 'USD',
-          stockInicial: disp + reservado,
-          stockMinimo: 10,
-          proveedorNombre: ['Samsung', 'Sony', 'ASUS', 'Logitech', 'Anker'][i % 5],
-          paisOrigen: 'El Salvador',
-          pesoKg: 0.5,
-          dimensionesCm: '20x15x5',
-          unidadMedida: 'Unidad',
-          estadoProducto: 'Activo',
-          codigoEAN: '',
-          descripcion: 'Producto de demostración para desarrollo local.',
-          vendedorId: '11111111-1111-1111-1111-111111111111',
-          categoriaId: '22222222-2222-2222-2222-222222222222',
-          estaPublicado: true,
-          fechaCreacion: new Date().toISOString(),
-          stock: {
-            id: `10000000-0000-0000-0000-${String(i + 1).padStart(12, '0')}`,
-            productoId: `00000000-0000-0000-0000-${String(i + 1).padStart(12, '0')}`,
-            cantidadDisponible: disp,
-            cantidadReservada: reservado,
-            cantidadTotal: disp + reservado,
-            puntoReorden: 10,
-            esBajoMinimo: disp <= 10,
-            ubicacionCodigo: 'PAS-A-RCK-01-NIV-01-POS-01',
-            ultimaActualizacion: new Date().toISOString(),
-          },
-        };
-      });
-      setProductos(mock);
+    } catch (error) {
+      setProductos([]);
+      setErrorCarga(error instanceof Error ? error.message : 'No se pudo cargar el catálogo desde la API.');
     } finally {
       setLoading(false);
     }
@@ -113,13 +75,13 @@ export default function ProductosPage() {
   const handleOpenCrear = () => {
     setEditingId(null);
     setForm({
-      sku: `SKU-LOGI-${Math.floor(1000 + Math.random() * 9000)}`,
+      sku: '',
       nombre: '',
       descripcion: '',
       categoriaNombre: 'Tecnología',
       subcategoria: 'General',
-      precioB2C: 49.99,
-      precioB2B: 44.99,
+      precioB2C: 0,
+      precioB2B: 0,
       stockMinimo: 10,
       proveedorNombre: '',
       paisOrigen: 'El Salvador',
@@ -166,31 +128,14 @@ export default function ProductosPage() {
         await productosApi.crear(form);
         toast.success('Producto Creado', `El SKU ${form.sku} se agregó al catálogo comercial.`);
       }
-    } catch {
-      // optimistic fallback
-      if (editingId) {
-        toast.info('Producto Actualizado (Local)', `Cambios reflejados localmente.`);
-      } else {
-        toast.success('Producto Creado (Local)', `El SKU ${form.sku} se agregó a la vista.`);
-      }
+      await loadData();
+      setModalOpen(false);
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'No fue posible guardar el producto.';
+      toast.error('Error al guardar producto', mensaje);
+    } finally {
+      setSaving(false);
     }
-    if (editingId) {
-      setProductos(prev => prev.map(p => p.id === editingId ? {
-        ...p,
-        ...form,
-        precioBase: form.precioB2C,
-      } : p));
-    } else {
-      // Recargar desde backend para conservar IDs y valores asignados por el servidor.
-      try {
-        const res = await productosApi.listar(1, 100);
-        setProductos(res.items ?? []);
-      } catch {
-        // El fallback visual se mantiene por ahora; se retirará en la fase de eliminación de mocks.
-      }
-    }
-    setSaving(false);
-    setModalOpen(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -202,11 +147,12 @@ export default function ProductosPage() {
     try {
       await productosApi.eliminar(confirmDeleteId);
       toast.warning('Producto Dado de Baja', 'El producto ha sido retirado del catálogo.');
-    } catch {
-      toast.warning('Producto Dado de Baja (Local)', 'El producto ha sido retirado de la vista.');
+      await loadData();
+      setConfirmDeleteId(null);
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'No fue posible dar de baja el producto.';
+      toast.error('Error al dar de baja', mensaje);
     }
-    setProductos(prev => prev.filter(p => p.id !== confirmDeleteId));
-    setConfirmDeleteId(null);
   };
 
   return (
@@ -259,6 +205,10 @@ export default function ProductosPage() {
           </button>
         </div>
       </div>
+
+      {errorCarga && (
+        <AlertBanner variant="danger" title="Catálogo no disponible" message={errorCarga} action={{ label: 'Reintentar', onClick: loadData }} />
+      )}
 
       {/* KPI Cards Strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
