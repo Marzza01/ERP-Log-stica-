@@ -80,6 +80,10 @@ export default function DataTable<T>({
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const paged = sorted.slice((page - 1) * pageSize, page * pageSize);
 
+  React.useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
   const handleSort = (key: string) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('asc'); }
@@ -101,7 +105,9 @@ export default function DataTable<T>({
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input
               ref={searchInputRef}
-              placeholder="Buscar... (Presiona '/' para buscar)"
+              placeholder="Buscar..."
+              aria-label="Buscar en la tabla"
+              title="Presiona / para enfocar la búsqueda"
               value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }}
             />

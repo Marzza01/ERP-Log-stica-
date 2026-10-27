@@ -3,7 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { Bell, Menu, AlertTriangle, AlertCircle, CheckCircle2, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -62,28 +62,26 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
     return () => controller.abort();
   }, [location.pathname]);
 
-  useEffect(() => {
-    let active = true;
+  const cargarAlertas = useCallback(async () => {
     setNotificationsLoading(true);
     setNotificationsError(false);
-    alertasApi.listar()
-      .then(data => {
-        if (!active) return;
-        const openItems = data.items.filter(item => item.estado === 'OPEN');
-        setNotificationCount(openItems.length);
-        setNotifications(openItems.slice(0, 5));
-      })
-      .catch(() => {
-        if (!active) return;
-        setNotifications([]);
-        setNotificationCount(0);
-        setNotificationsError(true);
-      })
-      .finally(() => {
-        if (active) setNotificationsLoading(false);
-      });
-    return () => { active = false; };
-  }, [location.pathname]);
+    try {
+      const data = await alertasApi.listar();
+      const openItems = data.items.filter(item => item.estado === 'OPEN');
+      setNotificationCount(openItems.length);
+      setNotifications(openItems.slice(0, 5));
+    } catch {
+      setNotifications([]);
+      setNotificationCount(0);
+      setNotificationsError(true);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void cargarAlertas();
+  }, [location.pathname, cargarAlertas]);
 
   return (
     <header className="topbar">
@@ -148,6 +146,15 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
                     <AlertCircle size={20} style={{ color: 'var(--red)', marginBottom: 6 }} />
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>No se pudieron cargar las alertas</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>Revisa la conexión con la API.</div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => void cargarAlertas()}
+                      disabled={notificationsLoading}
+                      style={{ marginTop: 10 }}
+                    >
+                      Reintentar
+                    </button>
                   </div>
                 ) : notifications.length === 0 ? (
                   <div style={{ padding: '22px 16px', textAlign: 'center' }}>

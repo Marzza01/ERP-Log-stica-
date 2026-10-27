@@ -159,6 +159,7 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                   to={item.to}
                   className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
                   title={collapsed ? item.label : undefined}
+                  onClick={onClose}
                 >
                   <span className="nav-icon">{item.icon}</span>
                   <span className="nav-label nav-label-full">{item.label}</span>
