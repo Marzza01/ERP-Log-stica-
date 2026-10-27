@@ -29,7 +29,7 @@ public static class CatalogServiceExtensions
                 npgsql => npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "catalog")));
 
         // ── Servicios del módulo Catalog ──────────────────────────────────────
-        services.AddScoped<IStockService, StockServiceMock>();
+        services.AddScoped<IStockService, StockService>();
         services.AddScoped<ICatalogImportService, CatalogImportService>();
         services.AddScoped<IWmsService, WmsService>();
         services.AddScoped<IRmaService, RmaService>();

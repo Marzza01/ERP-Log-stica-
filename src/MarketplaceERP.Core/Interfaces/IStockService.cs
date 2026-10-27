@@ -20,8 +20,10 @@ public interface IStockService
     Task<ReservaResult> ReservarStockAsync(Guid productoId, int cantidad, Guid ordenId);
 
     /// <summary>
-    /// Confirma que el stock reservado fue despachado exitosamente.
-    /// Debe llamarse SOLO después de que el pago fue procesado con éxito.
+    /// Confirma la reserva después de un pago exitoso.
+    /// NOTA TRANSITORIA FASE 4B: el nombre legado ConfirmarDespachoAsync se conserva
+    /// para no romper Checkout; este método NO descuenta stock físico. En Fase 4C
+    /// se renombrará a ConfirmarReservaAsync.
     /// </summary>
     Task ConfirmarDespachoAsync(Guid reservaId);
 
