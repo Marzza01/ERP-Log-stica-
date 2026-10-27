@@ -63,7 +63,7 @@ public class StockService : IStockService
                 // Primero verificar si existe registro de stock físico para el producto
                 await using (var checkCmd = conn.CreateCommand())
                 {
-                    checkCmd.CommandText = "SELECT cantidad_total, cantidad_reservada FROM catalog.stock_fisico WHERE producto_id = @prodId;";
+                    checkCmd.CommandText = "SELECT \"CantidadTotal\", \"CantidadReservada\" FROM \"catalog\".\"stock_fisico\" WHERE \"ProductoId\" = @prodId;";
                     var pId = checkCmd.CreateParameter();
                     pId.ParameterName = "@prodId";
                     pId.Value = productoId;
@@ -93,11 +93,11 @@ public class StockService : IStockService
                 await using (var updateCmd = conn.CreateCommand())
                 {
                     updateCmd.CommandText = @"
-                        UPDATE catalog.stock_fisico 
-                        SET cantidad_reservada = cantidad_reservada + @cant,
-                            ultima_actualizacion = NOW()
-                        WHERE producto_id = @prodId 
-                          AND (cantidad_total - cantidad_reservada) >= @cant;";
+                        UPDATE ""catalog"".""stock_fisico"" 
+                        SET ""CantidadReservada"" = ""CantidadReservada"" + @cant,
+                            ""UltimaActualizacion"" = NOW()
+                        WHERE ""ProductoId"" = @prodId 
+                          AND (""CantidadTotal"" - ""CantidadReservada"") >= @cant;";
 
                     var pCant = updateCmd.CreateParameter();
                     pCant.ParameterName = "@cant";
@@ -203,11 +203,11 @@ public class StockService : IStockService
             {
                 await using var updateCmd = conn.CreateCommand();
                 updateCmd.CommandText = @"
-                    UPDATE catalog.stock_fisico
-                    SET cantidad_total = GREATEST(0, cantidad_total - @cant),
-                        cantidad_reservada = GREATEST(0, cantidad_reservada - @cant),
-                        ultima_actualizacion = NOW()
-                    WHERE producto_id = @prodId;";
+                    UPDATE ""catalog"".""stock_fisico""
+                    SET ""CantidadTotal"" = GREATEST(0, ""CantidadTotal"" - @cant),
+                        ""CantidadReservada"" = GREATEST(0, ""CantidadReservada"" - @cant),
+                        ""UltimaActualizacion"" = NOW()
+                    WHERE ""ProductoId"" = @prodId;";
 
                 var pCant = updateCmd.CreateParameter();
                 pCant.ParameterName = "@cant";
@@ -274,10 +274,10 @@ public class StockService : IStockService
             {
                 await using var updateCmd = conn.CreateCommand();
                 updateCmd.CommandText = @"
-                    UPDATE catalog.stock_fisico
-                    SET cantidad_reservada = GREATEST(0, cantidad_reservada - @cant),
-                        ultima_actualizacion = NOW()
-                    WHERE producto_id = @prodId;";
+                    UPDATE ""catalog"".""stock_fisico""
+                    SET ""CantidadReservada"" = GREATEST(0, ""CantidadReservada"" - @cant),
+                        ""UltimaActualizacion"" = NOW()
+                    WHERE ""ProductoId"" = @prodId;";
 
                 var pCant = updateCmd.CreateParameter();
                 pCant.ParameterName = "@cant";

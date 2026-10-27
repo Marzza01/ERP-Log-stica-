@@ -137,6 +137,15 @@ public class CheckoutPostgresRealTests : IAsyncLifetime
                 EstaPublicado = true,
                 VendedorId = vendedorId
             });
+            catDb.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = prodId,
+                CantidadTotal = 100,
+                CantidadReservada = 0,
+                PuntoReorden = 10,
+                UltimaActualizacion = DateTime.UtcNow
+            });
             await catDb.SaveChangesAsync();
         }
 
@@ -221,6 +230,15 @@ public class CheckoutPostgresRealTests : IAsyncLifetime
                 EstaPublicado = true,
                 VendedorId = vendedorId
             });
+            catDb.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = prodId,
+                CantidadTotal = 100,
+                CantidadReservada = 0,
+                PuntoReorden = 10,
+                UltimaActualizacion = DateTime.UtcNow
+            });
             await catDb.SaveChangesAsync();
         }
 
@@ -276,6 +294,15 @@ public class CheckoutPostgresRealTests : IAsyncLifetime
                 PrecioB2B = 90.00m,
                 EstaPublicado = true,
                 VendedorId = vendedorId
+            });
+            catDb.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = prodId,
+                CantidadTotal = 100,
+                CantidadReservada = 0,
+                PuntoReorden = 10,
+                UltimaActualizacion = DateTime.UtcNow
             });
             await catDb.SaveChangesAsync();
         }
