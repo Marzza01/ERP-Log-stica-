@@ -23,6 +23,7 @@ public class CatalogDbContext : DbContext
     public DbSet<ReservaStockDetalle> ReservasStockDetalle => Set<ReservaStockDetalle>();
     public DbSet<MovimientoInventario> MovimientosInventario => Set<MovimientoInventario>();
     public DbSet<AjusteInventario> AjustesInventario => Set<AjusteInventario>();
+    public DbSet<ConteoCiclico> ConteosCiclicos => Set<ConteoCiclico>();
     public DbSet<UbicacionAlmacen> UbicacionesAlmacen => Set<UbicacionAlmacen>();
     public DbSet<DevolucionRMA> DevolucionesRMA => Set<DevolucionRMA>();
     public DbSet<MovimientoMWIP> MovimientosMWIP => Set<MovimientoMWIP>();
@@ -285,6 +286,48 @@ public class CatalogDbContext : DbContext
             entity.HasIndex(a => a.ProductoId);
             entity.HasIndex(a => a.Estado);
             entity.HasIndex(a => a.FechaCreacion);
+        });
+
+        // ── ConteoCiclico ─────────────────────────────────────────────────────
+        modelBuilder.Entity<ConteoCiclico>(entity =>
+        {
+            entity.ToTable("conteos_ciclicos");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Id).ValueGeneratedOnAdd();
+            entity.Property(c => c.Estado).HasConversion<string>().HasMaxLength(30);
+            entity.Property(c => c.Observaciones).HasMaxLength(500);
+            entity.Property(c => c.CreadoPor).HasMaxLength(150);
+            entity.Property(c => c.IniciadoPor).HasMaxLength(150);
+            entity.Property(c => c.ContadoPor).HasMaxLength(150);
+            entity.Property(c => c.RecontadoPor).HasMaxLength(150);
+            entity.Property(c => c.FechaCreacion).HasDefaultValueSql("NOW()");
+
+            entity.HasCheckConstraint(
+                "CK_conteos_ciclicos_cantidades_no_negativas",
+                "(\"CantidadSistema\" IS NULL OR \"CantidadSistema\" >= 0) AND " +
+                "(\"PrimerConteo\" IS NULL OR \"PrimerConteo\" >= 0) AND " +
+                "(\"SegundoConteo\" IS NULL OR \"SegundoConteo\" >= 0)");
+
+            entity.HasOne(c => c.StockFisico)
+                  .WithMany()
+                  .HasForeignKey(c => c.StockFisicoId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(c => c.Producto)
+                  .WithMany()
+                  .HasForeignKey(c => c.ProductoId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(c => c.AjusteInventario)
+                  .WithMany()
+                  .HasForeignKey(c => c.AjusteInventarioId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(c => c.StockFisicoId);
+            entity.HasIndex(c => c.ProductoId);
+            entity.HasIndex(c => c.AjusteInventarioId);
+            entity.HasIndex(c => c.Estado);
+            entity.HasIndex(c => c.FechaCreacion);
         });
 
         // ── DevolucionRMA (Logística Inversa) ──────────────────────────────────

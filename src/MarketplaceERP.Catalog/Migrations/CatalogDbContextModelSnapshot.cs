@@ -100,6 +100,90 @@ namespace MarketplaceERP.Catalog.Migrations
                         });
                 });
 
+            modelBuilder.Entity("MarketplaceERP.Catalog.Entities.ConteoCiclico", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AjusteInventarioId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("CantidadSistema")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ContadoPor")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<string>("CreadoPor")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<string>("Estado")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTime>("FechaCreacion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTime?>("FechaFinalizacion")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("FechaInicio")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("FechaPrimerConteo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("FechaReconteo")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IniciadoPor")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<string>("Observaciones")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int?>("PrimerConteo")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProductoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RecontadoPor")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<int?>("SegundoConteo")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("StockFisicoId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AjusteInventarioId");
+
+                    b.HasIndex("Estado");
+
+                    b.HasIndex("FechaCreacion");
+
+                    b.HasIndex("ProductoId");
+
+                    b.HasIndex("StockFisicoId");
+
+                    b.ToTable("conteos_ciclicos", "catalog", t =>
+                        {
+                            t.HasCheckConstraint("CK_conteos_ciclicos_cantidades_no_negativas", "(\"CantidadSistema\" IS NULL OR \"CantidadSistema\" >= 0) AND (\"PrimerConteo\" IS NULL OR \"PrimerConteo\" >= 0) AND (\"SegundoConteo\" IS NULL OR \"SegundoConteo\" >= 0)");
+                        });
+                });
+
             modelBuilder.Entity("MarketplaceERP.Catalog.Entities.DevolucionRMA", b =>
                 {
                     b.Property<Guid>("Id")
@@ -818,6 +902,32 @@ namespace MarketplaceERP.Catalog.Migrations
                         .HasForeignKey("StockFisicoId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("Producto");
+
+                    b.Navigation("StockFisico");
+                });
+
+            modelBuilder.Entity("MarketplaceERP.Catalog.Entities.ConteoCiclico", b =>
+                {
+                    b.HasOne("MarketplaceERP.Catalog.Entities.AjusteInventario", "AjusteInventario")
+                        .WithMany()
+                        .HasForeignKey("AjusteInventarioId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("MarketplaceERP.Catalog.Entities.Producto", "Producto")
+                        .WithMany()
+                        .HasForeignKey("ProductoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MarketplaceERP.Catalog.Entities.StockFisico", "StockFisico")
+                        .WithMany()
+                        .HasForeignKey("StockFisicoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("AjusteInventario");
 
                     b.Navigation("Producto");
 

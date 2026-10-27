@@ -8,7 +8,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Warehouse, Truck,
   RotateCcw, ShoppingBag, BookOpen, Wallet,
-  Package, ChevronLeft, ChevronRight, LogOut, X, RefreshCw, Building2, ClipboardCheck,
+  Package, ChevronLeft, ChevronRight, LogOut, X, RefreshCw, Building2, ClipboardCheck, ClipboardList,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -69,6 +69,12 @@ const navGroups: NavGroup[] = [
         icon: <ClipboardCheck size={16} />,
         label: 'Ajustes de inventario',
         shortLabel: 'Ajustes',
+      },
+      {
+        to: '/conteos',
+        icon: <ClipboardList size={16} />,
+        label: 'Conteos cíclicos',
+        shortLabel: 'Conteos',
       },
       { to: '/fulfillment', icon: <Truck size={16} />,        label: 'Fulfillment',    shortLabel: 'Fulfillment' },
       {

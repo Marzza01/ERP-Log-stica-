@@ -21,6 +21,7 @@ import ProductosPage from './pages/productos/ProductosPage';
 import ReabastecimientoPage from './pages/reabastecimiento/ReabastecimientoPage';
 import ProveedoresPage from './pages/proveedores/ProveedoresPage';
 import AjustesPage from './pages/ajustes/AjustesPage';
+import ConteosPage from './pages/conteos/ConteosPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -46,6 +47,7 @@ function AppRoutes() {
         <Route path="reabastecimiento" element={<ReabastecimientoPage />} />
         <Route path="proveedores"   element={<ProveedoresPage />} />
         <Route path="ajustes"       element={<AjustesPage />} />
+        <Route path="conteos"       element={<ConteosPage />} />
         <Route path="fulfillment"  element={<FulfillmentPage />} />
         <Route path="rma"          element={<RmaPage />} />
         <Route path="compras"      element={<ComprasPage />} />
