@@ -23,6 +23,7 @@ import ProveedoresPage from './pages/proveedores/ProveedoresPage';
 import AjustesPage from './pages/ajustes/AjustesPage';
 import ConteosPage from './pages/conteos/ConteosPage';
 import AlertasInventarioPage from './pages/alertas/AlertasInventarioPage';
+import BloqueosInventarioPage from './pages/bloqueos/BloqueosInventarioPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -50,6 +51,7 @@ function AppRoutes() {
         <Route path="ajustes"       element={<AjustesPage />} />
         <Route path="conteos"       element={<ConteosPage />} />
         <Route path="alertas-inventario" element={<AlertasInventarioPage />} />
+        <Route path="bloqueos-inventario" element={<BloqueosInventarioPage />} />
         <Route path="fulfillment"  element={<FulfillmentPage />} />
         <Route path="rma"          element={<RmaPage />} />
         <Route path="compras"      element={<ComprasPage />} />

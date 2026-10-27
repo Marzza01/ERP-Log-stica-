@@ -30,6 +30,21 @@ public sealed record TransferenciaInventarioResult(
     int CantidadDestinoDespues,
     string Mensaje);
 
+
+/// <summary>
+/// Resultado de bloquear o desbloquear unidades de un saldo físico.
+/// CantidadTotal nunca cambia; solo cambia CantidadBloqueada y, por consecuencia, la disponibilidad.
+/// </summary>
+public sealed record BloqueoInventarioResult(
+    bool Exitoso,
+    bool YaProcesada,
+    Guid ProductoId,
+    Guid StockFisicoId,
+    int CantidadProcesada,
+    int CantidadBloqueadaDespues,
+    int CantidadDisponibleDespues,
+    string Mensaje);
+
 /// <summary>
 /// Operaciones físicas de inventario independientes de Checkout y Finance.
 /// </summary>
@@ -73,5 +88,27 @@ public interface IInventoryService
         int cantidad,
         Guid operacionId,
         string? notas = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Bloquea unidades disponibles por daño, cuarentena o incidencia operativa.
+    /// CantidadTotal no cambia. La operación es idempotente por OperacionId.
+    /// </summary>
+    Task<BloqueoInventarioResult> BloquearStockAsync(
+        Guid stockFisicoId,
+        int cantidad,
+        Guid operacionId,
+        string motivo,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Devuelve a disponibilidad unidades previamente bloqueadas.
+    /// CantidadTotal no cambia. La operación es idempotente por OperacionId.
+    /// </summary>
+    Task<BloqueoInventarioResult> DesbloquearStockAsync(
+        Guid stockFisicoId,
+        int cantidad,
+        Guid operacionId,
+        string motivo,
         CancellationToken cancellationToken = default);
 }

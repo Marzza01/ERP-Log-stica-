@@ -75,6 +75,19 @@ export interface CrearPORequest {
   items: ItemPORequest[];
 }
 
+export interface RecibirMercaderiaItemRequest {
+  itemOrdenCompraId: string;
+  cantidadRecibida: number;
+  cantidadAcumuladaEsperada: number;
+  ubicacionAlmacenId: string;
+  operacionId: string;
+}
+
+export interface RecibirMercaderiaRequest {
+  items: RecibirMercaderiaItemRequest[];
+  notas?: string;
+}
+
 export interface RegistrarFacturaRequest {
   ordenCompraId: string;
   numeroFactura: string;
@@ -117,8 +130,10 @@ const mapOrden = (po: BackendOrdenCompra): OrdenCompra => ({
   items: (po.items ?? []).map(item => ({
     id: item.id,
     productoId: item.productoId,
+    skuReferencia: item.sku,
     descripcion: item.nombreProducto,
     cantidad: item.cantidadSolicitada,
+    cantidadRecibida: item.cantidadRecibida ?? 0,
     precioUnitario: item.precioUnitarioAcordado,
     total: item.totalLinea,
   })),
@@ -161,8 +176,8 @@ export const comprasApi = {
   enviarPO: (id: string) =>
     apiClient.post(`/api/compras/po/${id}/enviar`),
 
-  recibirMercancia: (id: string, cantidadRecibida: number, ubicacionBodega?: string, notas?: string) =>
-    apiClient.put(`/api/compras/po/${id}/recibir`, { cantidadRecibida, ubicacionBodega, notas }),
+  recibirMercancia: (id: string, req: RecibirMercaderiaRequest) =>
+    apiClient.put(`/api/compras/po/${id}/recibir`, req),
 
   registrarFactura: (req: RegistrarFacturaRequest) =>
     apiClient.post('/api/compras/facturas', req),

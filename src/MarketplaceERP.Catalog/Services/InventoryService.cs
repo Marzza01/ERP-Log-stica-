@@ -594,6 +594,171 @@ internal sealed class InventoryService : IInventoryService
         }
     }
 
+    public Task<BloqueoInventarioResult> BloquearStockAsync(
+        Guid stockFisicoId,
+        int cantidad,
+        Guid operacionId,
+        string motivo,
+        CancellationToken cancellationToken = default) =>
+        CambiarBloqueoAsync(
+            stockFisicoId,
+            cantidad,
+            operacionId,
+            motivo,
+            bloquear: true,
+            cancellationToken);
+
+    public Task<BloqueoInventarioResult> DesbloquearStockAsync(
+        Guid stockFisicoId,
+        int cantidad,
+        Guid operacionId,
+        string motivo,
+        CancellationToken cancellationToken = default) =>
+        CambiarBloqueoAsync(
+            stockFisicoId,
+            cantidad,
+            operacionId,
+            motivo,
+            bloquear: false,
+            cancellationToken);
+
+    private async Task<BloqueoInventarioResult> CambiarBloqueoAsync(
+        Guid stockFisicoId,
+        int cantidad,
+        Guid operacionId,
+        string motivo,
+        bool bloquear,
+        CancellationToken cancellationToken)
+    {
+        if (stockFisicoId == Guid.Empty)
+            return FalloBloqueo("StockFisicoId es obligatorio.");
+        if (cantidad <= 0)
+            return FalloBloqueo("La cantidad debe ser mayor que cero.");
+        if (operacionId == Guid.Empty)
+            return FalloBloqueo("OperacionId es obligatorio.");
+        if (string.IsNullOrWhiteSpace(motivo))
+            return FalloBloqueo("El motivo es obligatorio.");
+
+        await using var transaction = await BeginTransactionIfRelationalAsync(cancellationToken);
+
+        try
+        {
+            var stock = await GetStockForUpdateAsync(stockFisicoId, cancellationToken);
+            if (stock is null)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloBloqueo($"El saldo de stock {stockFisicoId} no existe.");
+            }
+
+            var tipo = bloquear
+                ? TipoMovimientoInventario.BloqueoDano
+                : TipoMovimientoInventario.Desbloqueo;
+            var prefijo = bloquear ? "BLQ" : "DBL";
+            var referencia = $"{prefijo}-{operacionId:N}";
+
+            var movimientoExistente = await _dbContext.MovimientosInventario
+                .AsNoTracking()
+                .FirstOrDefaultAsync(m =>
+                    m.TipoMovimiento == tipo &&
+                    m.Referencia == referencia,
+                    cancellationToken);
+
+            if (movimientoExistente is not null)
+            {
+                if (movimientoExistente.ProductoId != stock.ProductoId ||
+                    movimientoExistente.Cantidad != cantidad ||
+                    movimientoExistente.UbicacionOrigenId != stock.UbicacionAlmacenId)
+                {
+                    await RollbackIfNeededAsync(transaction, cancellationToken);
+                    return FalloBloqueo("OperacionId ya fue utilizado con datos diferentes.");
+                }
+
+                await CommitIfNeededAsync(transaction, cancellationToken);
+                return new BloqueoInventarioResult(
+                    true,
+                    true,
+                    stock.ProductoId,
+                    stock.Id,
+                    cantidad,
+                    stock.CantidadBloqueada,
+                    stock.CantidadDisponible,
+                    bloquear
+                        ? "El bloqueo ya había sido procesado; no se duplicaron unidades bloqueadas."
+                        : "El desbloqueo ya había sido procesado; no se duplicó la liberación.");
+            }
+
+            if (bloquear)
+            {
+                if (stock.CantidadDisponible < cantidad)
+                {
+                    await RollbackIfNeededAsync(transaction, cancellationToken);
+                    return FalloBloqueo(
+                        $"Stock disponible insuficiente para bloquear. " +
+                        $"Disponible: {stock.CantidadDisponible}; solicitado: {cantidad}. " +
+                        "Las unidades reservadas o ya bloqueadas no pueden bloquearse nuevamente.");
+                }
+
+                stock.CantidadBloqueada += cantidad;
+            }
+            else
+            {
+                if (stock.CantidadBloqueada < cantidad)
+                {
+                    await RollbackIfNeededAsync(transaction, cancellationToken);
+                    return FalloBloqueo(
+                        $"Unidades bloqueadas insuficientes para desbloquear. " +
+                        $"Bloqueadas: {stock.CantidadBloqueada}; solicitado: {cantidad}.");
+                }
+
+                stock.CantidadBloqueada -= cantidad;
+            }
+
+            var ahora = DateTime.UtcNow;
+            stock.UltimaActualizacion = ahora;
+
+            _dbContext.MovimientosInventario.Add(new MovimientoInventario
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = stock.ProductoId,
+                TipoMovimiento = tipo,
+                Cantidad = cantidad,
+                UbicacionOrigenId = stock.UbicacionAlmacenId,
+                Referencia = referencia,
+                Observaciones = motivo.Trim(),
+                FechaMovimiento = ahora
+            });
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await CommitIfNeededAsync(transaction, cancellationToken);
+
+            _logger.LogInformation(
+                "{Accion} de stock aplicada. ProductoId={ProductoId}, StockId={StockId}, Cantidad={Cantidad}, BloqueadoDespues={Bloqueado}, Operacion={OperacionId}",
+                bloquear ? "Bloqueo" : "Desbloqueo",
+                stock.ProductoId,
+                stock.Id,
+                cantidad,
+                stock.CantidadBloqueada,
+                operacionId);
+
+            return new BloqueoInventarioResult(
+                true,
+                false,
+                stock.ProductoId,
+                stock.Id,
+                cantidad,
+                stock.CantidadBloqueada,
+                stock.CantidadDisponible,
+                bloquear
+                    ? "Stock bloqueado correctamente."
+                    : "Stock desbloqueado correctamente.");
+        }
+        catch
+        {
+            await RollbackIfNeededAsync(transaction, cancellationToken);
+            throw;
+        }
+    }
+
     private async Task<Producto?> GetProductoForUpdateBySkuAsync(
         string sku,
         CancellationToken cancellationToken)
@@ -695,6 +860,9 @@ internal sealed class InventoryService : IInventoryService
 
     private static TransferenciaInventarioResult FalloTransferencia(string mensaje) =>
         new(false, false, Guid.Empty, Guid.Empty, Guid.Empty, 0, 0, 0, mensaje);
+
+    private static BloqueoInventarioResult FalloBloqueo(string mensaje) =>
+        new(false, false, Guid.Empty, Guid.Empty, 0, 0, 0, mensaje);
 
     private static RecepcionInventarioResult Fallo(string mensaje) =>
         new(false, false, Guid.Empty, Guid.Empty, 0, mensaje);

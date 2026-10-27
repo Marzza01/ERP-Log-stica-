@@ -270,7 +270,7 @@ export interface PickList {
 }
 
 // ── PAQUETE (FULFILLMENT) ─────────────────────────────────────────────────────
-export type EstadoPaquete = 'Pendiente' | 'Empacando' | 'ListoParaDespacho';
+export type EstadoPaquete = 'Pendiente' | 'Empacando' | 'ListoParaDespacho' | 'Despachado';
 
 export interface Paquete {
   id: string;
