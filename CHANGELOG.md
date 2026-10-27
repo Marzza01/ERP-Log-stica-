@@ -59,10 +59,14 @@ Este documento centraliza y documenta cada una de las fases, cambios de arquitec
 
 ### 3. Pasarela de Pagos
 - Fallo simulado del mock condicionado a `Payments:SimulateFailures` únicamente en entornos `Development` y `Test`.
-- En entorno `Production`, si no hay pasarela real configurada, rechaza con HTTP 503 Service Unavailable y mensaje claro.
+- En entorno `Production`, si no hay pasarela real configurada, rechaza con HTTP 503 Service Unavailable y mensaje claro salvo que `Payments:AllowMock=true` esté explícitamente configurado.
+- Reembolso automático (`IPaymentGateway.ReembolsarAsync`) ante compensación de la saga tras cobro exitoso; si la pasarela falla o no dispone de API de reembolso, se persiste un registro en `finance.pagos_conciliacion_huerfanos` para auditoría y conciliación financiera.
 
-### 4. Riesgo de Arquitectura Identificado
-- **ADVERTENCIA / RIESGO:** En esta fase 7a, la reserva y despacho de stock continúan operando sobre `StockServiceMock` hasta la implementación completa del WMS relacional en la Fase 7b.
+### 4. Decisiones de Negocio y Pendientes Documentados
+- **Costo de Envío:** Establecido por defecto en $5.00 (`Checkout:CostoEnvioDefault`), configurable mediante appsettings / variables de entorno. Queda **pendiente de definición de negocio** la tarificación dinámica según peso/zona/transportista de última milla.
+- **Tipo de Cliente:** Determinado exclusivamente por el backend como `B2C` para compradores estándar. El flujo `B2B` (Crédito Fiscal CCF, condiciones de crédito 30/60 días) queda **pendiente de integración** de validaciones fiscales y de crédito.
+- **Reembolso Real de Pasarela:** La interfaz `IPaymentGateway` cuenta con el método `ReembolsarAsync` y la tabla `finance.pagos_conciliacion_huerfanos`. Queda **pendiente de negocio e infraestructura** la integración con las APIs oficiales de pasarelas reales (ej: Pagadito, Wompi, Serfinsa, Stripe) y su webhook de reverso.
+- **Dependencia `Microsoft.Extensions.Hosting.Abstractions` en `MarketplaceERP.Finance`:** Requerida por `IHostEnvironment` en `PagoServiceMock` para verificar de forma segura y tipada si el entorno es `Production` (`_environment.IsProduction()`).
 
 ---
 

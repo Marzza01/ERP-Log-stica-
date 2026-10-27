@@ -63,6 +63,13 @@ internal sealed class StockServiceMock : IStockService
     }
 
     /// <inheritdoc />
+    public Task ComprometerReservasOrdenAsync(Guid ordenId)
+    {
+        _logger.LogInformation("[MOCK] ComprometerReservasOrden: OrdenId={OrdenId}", ordenId);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
     public Task LiberarStockAsync(Guid reservaId)
     {
         _logger.LogWarning(

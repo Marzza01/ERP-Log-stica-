@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using MarketplaceERP.Catalog.Data;
+using MarketplaceERP.Core.Interfaces;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
@@ -37,6 +38,7 @@ public class CheckoutController : ControllerBase
     private readonly CheckoutOrchestrator _orchestrator;
     private readonly FinanceDbContext _financeDb;
     private readonly CatalogDbContext _catalogDb;
+    private readonly IStockService _stockService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<CheckoutController> _logger;
 
@@ -44,12 +46,14 @@ public class CheckoutController : ControllerBase
         CheckoutOrchestrator orchestrator,
         FinanceDbContext financeDb,
         CatalogDbContext catalogDb,
+        IStockService stockService,
         IConfiguration configuration,
         ILogger<CheckoutController> logger)
     {
         _orchestrator = orchestrator;
         _financeDb = financeDb;
         _catalogDb = catalogDb;
+        _stockService = stockService;
         _configuration = configuration;
         _logger = logger;
     }
@@ -279,6 +283,16 @@ public class CheckoutController : ControllerBase
 
                 await tx.CommitAsync(cancellationToken);
 
+                // Paso 8: Tras el commit exitoso de Finance, pasar reservas a Comprometida (sin expiración)
+                try
+                {
+                    await _stockService.ComprometerReservasOrdenAsync(ordenId);
+                }
+                catch (Exception stockEx)
+                {
+                    _logger.LogWarning(stockEx, "No se pudo actualizar estado a Comprometida para la orden {OrdenId}.", ordenId);
+                }
+
                 return sagaResult;
             });
 
@@ -305,25 +319,16 @@ public class CheckoutController : ControllerBase
         catch (StockInsuficienteException ex)
         {
             _logger.LogWarning(ex, "Checkout fallido por stock insuficiente.");
-            _financeDb.ChangeTracker.Clear();
-            var ordenHuérfana = await _financeDb.Ordenes.FindAsync(new object[] { ordenId });
-            if (ordenHuérfana != null) { _financeDb.Ordenes.Remove(ordenHuérfana); await _financeDb.SaveChangesAsync(CancellationToken.None); }
             return Conflict(new { mensaje = ex.Message, tipo = "StockInsuficiente" });
         }
         catch (PagoFallidoException ex)
         {
             _logger.LogWarning(ex, "Checkout fallido por rechazo de pago.");
-            _financeDb.ChangeTracker.Clear();
-            var ordenHuérfana = await _financeDb.Ordenes.FindAsync(new object[] { ordenId });
-            if (ordenHuérfana != null) { _financeDb.Ordenes.Remove(ordenHuérfana); await _financeDb.SaveChangesAsync(CancellationToken.None); }
             return Conflict(new { mensaje = ex.Message, tipo = "PagoFallido" });
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("pasarela de pagos no está configurada") || ex.Message.Contains("503"))
         {
             _logger.LogError(ex, "Checkout fallido por pasarela no disponible.");
-            _financeDb.ChangeTracker.Clear();
-            var ordenHuérfana = await _financeDb.Ordenes.FindAsync(new object[] { ordenId });
-            if (ordenHuérfana != null) { _financeDb.Ordenes.Remove(ordenHuérfana); await _financeDb.SaveChangesAsync(CancellationToken.None); }
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { mensaje = ex.Message });
         }
     }

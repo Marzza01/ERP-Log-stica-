@@ -71,4 +71,18 @@ public class PagoServiceMock : IPaymentGateway
             MensajeError: null
         ));
     }
+
+    /// <inheritdoc />
+    public virtual Task<PagoResult> ReembolsarAsync(string transaccionId, decimal monto, string motivo)
+    {
+        _logger.LogWarning(
+            "[MOCK] ReembolsarAsync (Compensación Saga): TransaccionId={TransaccionId}, Monto={Monto:C}, Motivo={Motivo}",
+            transaccionId, monto, motivo);
+
+        return Task.FromResult(new PagoResult(
+            Exitoso: true,
+            TransaccionId: $"REFUND-{transaccionId}",
+            MensajeError: null
+        ));
+    }
 }

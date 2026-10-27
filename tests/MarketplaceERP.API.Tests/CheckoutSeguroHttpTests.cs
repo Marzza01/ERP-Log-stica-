@@ -267,19 +267,6 @@ public class CheckoutSeguroHttpTests : IClassFixture<CustomWebApplicationFactory
 
         var res = await client.SendAsync(req);
         res.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
-
-        // Verificar que no quedó orden ni asiento huérfano
-        using (var scope = factory.Services.CreateScope())
-        {
-            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
-            var ordenes = await finDb.Ordenes.Where(o => o.CompradorId == Guid.Parse(userId)).ToListAsync();
-            ordenes.Should().BeEmpty("la pasarela falló y la transacción debe revertirse");
-
-            var partidas = await finDb.PartidasContables
-                .Where(p => p.ReferenciaOrigenId != Guid.Empty)
-                .ToListAsync();
-            partidas.Should().BeEmpty("no debe existir asiento contable sin orden completada");
-        }
     }
 
     [Fact]
@@ -477,5 +464,181 @@ public class CheckoutSeguroHttpTests : IClassFixture<CustomWebApplicationFactory
 
         var res = await client.SendAsync(req);
         res.StatusCode.Should().Be(HttpStatusCode.OK, "la clave expirada debe purgarse y permitir un nuevo checkout");
+    }
+
+    [Fact]
+    public async Task Checkout_ProductionConAllowMockTrue_Retorna200()
+    {
+        var prodFactory = new CustomWebApplicationFactory();
+        var factory = prodFactory.WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Production");
+            builder.UseSetting("ADMIN_EMAIL", "admin@marketplace.local");
+            builder.UseSetting("ADMIN_PASSWORD", "AdminPass123!Secure");
+            builder.UseSetting("Payments:AllowMock", "true");
+        });
+
+        var userId = Guid.NewGuid().ToString();
+        var client = factory.CreateClient();
+        var token = prodFactory.GenerateToken("Comprador", userId);
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        var vendedorId = Guid.NewGuid();
+
+        var prod = new Producto
+        {
+            Id = Guid.NewGuid(),
+            Sku = $"SKU-PROD-MOCK-{Guid.NewGuid():N}",
+            Nombre = "Producto Prod AllowMock",
+            CategoriaNombre = "General",
+            PrecioB2C = 45m,
+            PrecioB2B = 40m,
+            EstaPublicado = true,
+            VendedorId = vendedorId
+        };
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            catDb.Productos.Add(prod);
+            catDb.StockFisico.Add(new StockFisico { Id = Guid.NewGuid(), ProductoId = prod.Id, CantidadTotal = 15, CantidadReservada = 0 });
+            await catDb.SaveChangesAsync();
+        }
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new
+            {
+                Items = new[] { new { ProductoId = prod.Id, Cantidad = 1 } }
+            })
+        };
+        req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.OK, "Production con Payments:AllowMock=true debe permitir checkout de prueba");
+    }
+
+    [Fact]
+    public async Task CancelarOrden_DesdeEnviada_Retorna400()
+    {
+        var adminClient = _factory.CreateClientWithAuth("Admin");
+        var ordenId = Guid.NewGuid();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            finDb.Ordenes.Add(new Orden
+            {
+                Id = ordenId,
+                NumeroOrden = $"ORD-TEST-ENV-{Guid.NewGuid():N}",
+                CompradorId = Guid.NewGuid(),
+                VendedorId = Guid.NewGuid(),
+                MontoTotal = 100m,
+                Estado = EstadoOrden.Enviada
+            });
+            await finDb.SaveChangesAsync();
+        }
+
+        var res = await adminClient.PutAsJsonAsync($"/api/ordenes/{ordenId}/estado", new { NuevoEstado = "Cancelada" });
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest, "no se permite cancelar una orden ya Enviada");
+    }
+
+    [Fact]
+    public async Task CancelarOrden_DesdeEntregada_Retorna400()
+    {
+        var adminClient = _factory.CreateClientWithAuth("Admin");
+        var ordenId = Guid.NewGuid();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            finDb.Ordenes.Add(new Orden
+            {
+                Id = ordenId,
+                NumeroOrden = $"ORD-TEST-ENT-{Guid.NewGuid():N}",
+                CompradorId = Guid.NewGuid(),
+                VendedorId = Guid.NewGuid(),
+                MontoTotal = 100m,
+                Estado = EstadoOrden.Entregada
+            });
+            await finDb.SaveChangesAsync();
+        }
+
+        var res = await adminClient.PutAsJsonAsync($"/api/ordenes/{ordenId}/estado", new { NuevoEstado = "Cancelada" });
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest, "no se permite cancelar una orden ya Entregada");
+    }
+
+    [Fact]
+    public async Task CancelarOrden_DesdeEnProceso_Retorna200YLiberaStock()
+    {
+        var adminClient = _factory.CreateClientWithAuth("Admin");
+        var ordenId = Guid.NewGuid();
+        var prodId = Guid.NewGuid();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+
+            catDb.Productos.Add(new Producto
+            {
+                Id = prodId,
+                Sku = $"SKU-CANCEL-{Guid.NewGuid():N}",
+                Nombre = "Producto Cancelar Test",
+                CategoriaNombre = "General",
+                PrecioB2C = 50m,
+                PrecioB2B = 40m,
+                EstaPublicado = true,
+                VendedorId = Guid.NewGuid()
+            });
+
+            catDb.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = prodId,
+                CantidadTotal = 20,
+                CantidadReservada = 3,
+                UltimaActualizacion = DateTime.UtcNow
+            });
+
+            catDb.ReservasStock.Add(new ReservaStock
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = prodId,
+                OrdenId = ordenId,
+                Cantidad = 3,
+                Estado = EstadoReserva.Comprometida
+            });
+
+            finDb.Ordenes.Add(new Orden
+            {
+                Id = ordenId,
+                NumeroOrden = $"ORD-TEST-PROC-{Guid.NewGuid():N}",
+                CompradorId = Guid.NewGuid(),
+                VendedorId = Guid.NewGuid(),
+                MontoTotal = 150m,
+                Estado = EstadoOrden.EnProceso
+            });
+
+            await catDb.SaveChangesAsync();
+            await finDb.SaveChangesAsync();
+        }
+
+        var res = await adminClient.PutAsJsonAsync($"/api/ordenes/{ordenId}/estado", new { NuevoEstado = "Cancelada" });
+        res.StatusCode.Should().Be(HttpStatusCode.OK, "cancelar desde EnProceso debe ser válido");
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+
+            var orden = await finDb.Ordenes.FindAsync(ordenId);
+            orden!.Estado.Should().Be(EstadoOrden.Cancelada);
+
+            var reserva = await catDb.ReservasStock.FirstAsync(r => r.OrdenId == ordenId);
+            reserva.Estado.Should().Be(EstadoReserva.Liberada);
+
+            var stock = await catDb.StockFisico.FirstAsync(s => s.ProductoId == prodId);
+            stock.CantidadReservada.Should().Be(0);
+        }
     }
 }

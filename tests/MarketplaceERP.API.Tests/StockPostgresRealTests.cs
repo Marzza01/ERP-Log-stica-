@@ -394,4 +394,84 @@ public class StockPostgresRealTests : IAsyncLifetime
         var stockDb = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
         (stockDb.CantidadTotal - stockDb.CantidadReservada).Should().Be(0);
     }
+
+    [SkippableFact]
+    public async Task TestG_ReservaComprometida_SobreviveAPurga_YSeLiberaAlCancelarOrden()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        var (productoId, _) = await CrearProductoConStockAsync(cantidadTotal: 10);
+
+        var customFactory = new CustomWebApplicationFactory();
+        var compradorId = Guid.NewGuid();
+        var tokenComprador = customFactory.GenerateToken("Comprador", compradorId.ToString());
+        var client = _factory!.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenComprador);
+
+        // 1. Checkout exitoso de 4 unidades
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new { Items = new[] { new { ProductoId = productoId, Cantidad = 4 } } })
+        };
+        req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        Guid ordenId;
+        Guid reservaId;
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+            var orden = await finDb.Ordenes.FirstAsync(o => o.CompradorId == compradorId);
+            ordenId = orden.Id;
+
+            // La reserva debe estar en estado Comprometida tras completarse el checkout
+            var reserva = await catDb.ReservasStock.FirstAsync(r => r.OrdenId == ordenId);
+            reservaId = reserva.Id;
+            reserva.Estado.Should().Be(EstadoReserva.Comprometida);
+            reserva.FechaExpiracion.Should().BeNull();
+
+            // Forzar que FechaExpiracion quede en el pasado
+            reserva.FechaExpiracion = DateTime.UtcNow.AddMinutes(-30);
+            await catDb.SaveChangesAsync();
+
+            // 2. Ejecutar la purga periódica del job de limpieza
+            var cleanup = scope.ServiceProvider.GetRequiredService<IHostedService>() as ReservaStockCleanupService
+                ?? new ReservaStockCleanupService(scope.ServiceProvider, scope.ServiceProvider.GetRequiredService<IConfiguration>(), Moq.Mock.Of<Microsoft.Extensions.Logging.ILogger<ReservaStockCleanupService>>());
+
+            int purgadas = await cleanup.PurgarReservasExpiradasAsync();
+
+            // La reserva NO debe haber sido purgada porque su estado es Comprometida (el job solo toca Pendiente)
+            await catDb.Entry(reserva).ReloadAsync();
+            reserva.Estado.Should().Be(EstadoReserva.Comprometida);
+
+            var stockDb = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stockDb.CantidadReservada.Should().Be(4, "el stock reservado no debe cambiar tras la purga");
+            stockDb.CantidadDisponible.Should().Be(6);
+        }
+
+        // 3. Cancelar la orden vía PUT /api/ordenes/{id}/estado con rol Admin
+        var tokenAdmin = customFactory.GenerateToken("Admin", Guid.NewGuid().ToString());
+        var adminClient = _factory.CreateClient();
+        adminClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenAdmin);
+
+        var cancelRes = await adminClient.PutAsJsonAsync($"/api/ordenes/{ordenId}/estado", new { NuevoEstado = "Cancelada" });
+        cancelRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // 4. Verificar que la reserva Comprometida fue liberada y el stock quedó restaurado
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var reserva = await catDb.ReservasStock.FirstAsync(r => r.Id == reservaId);
+            reserva.Estado.Should().Be(EstadoReserva.Liberada);
+
+            var stockDb = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stockDb.CantidadReservada.Should().Be(0);
+            stockDb.CantidadDisponible.Should().Be(10);
+        }
+    }
 }

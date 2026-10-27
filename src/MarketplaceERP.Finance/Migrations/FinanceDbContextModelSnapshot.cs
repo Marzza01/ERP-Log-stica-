@@ -588,6 +588,62 @@ namespace MarketplaceERP.Finance.Migrations
                     b.ToTable("ordenes_compra", "finance");
                 });
 
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.PagoConciliacionHuerfano", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("FechaRegistro")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTime?>("FechaResolucion")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Moneda")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasDefaultValue("USD");
+
+                    b.Property<decimal>("Monto")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("MotivoFallo")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid>("OrdenId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Reembolsado")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ReembolsoTransaccionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("TransaccionId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrdenId");
+
+                    b.HasIndex("Reembolsado");
+
+                    b.HasIndex("TransaccionId");
+
+                    b.ToTable("pagos_conciliacion_huerfanos", "finance");
+                });
+
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.PartidaContable", b =>
                 {
                     b.Property<Guid>("Id")

@@ -366,4 +366,181 @@ public class CheckoutPostgresRealTests : IAsyncLifetime
             liquidacion.MontoLiquidar.Should().Be(90.00m); // 100 - 10 comisión = 90
         }
     }
+
+    [SkippableFact]
+    public async Task Checkout_FalloForzadoAsientoTrasCobro_CompensaStockYReembolsaOConcilia()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        // Mock contable que falla intencionalmente al generar asiento
+        var brokenFactory = _factory!.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                var descContab = services.SingleOrDefault(d => d.ServiceType == typeof(IContabilidadService));
+                if (descContab != null) services.Remove(descContab);
+
+                var mockContab = new Moq.Mock<IContabilidadService>();
+                mockContab.Setup(c => c.GenerarAsientoVentaAsync(
+                    Moq.It.IsAny<Guid>(), Moq.It.IsAny<decimal>(), Moq.It.IsAny<decimal>(), Moq.It.IsAny<string>(), Moq.It.IsAny<CancellationToken>()))
+                    .Throws(new InvalidOperationException("Fallo inducido en motor contable tras cobro exitoso"));
+
+                services.AddScoped(_ => mockContab.Object);
+            });
+        });
+
+        var compradorId = Guid.NewGuid();
+        var vendedorId = Guid.NewGuid();
+        var prodId = Guid.NewGuid();
+
+        using (var scope = brokenFactory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            catDb.Productos.Add(new Producto
+            {
+                Id = prodId,
+                Sku = $"SKU-FALLO-ASIENTO-{Guid.NewGuid():N}",
+                Nombre = "Producto Asiento Falla",
+                CategoriaNombre = "General",
+                PrecioB2C = 100.00m,
+                PrecioB2B = 90.00m,
+                EstaPublicado = true,
+                VendedorId = vendedorId
+            });
+            catDb.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = prodId,
+                CantidadTotal = 50,
+                CantidadReservada = 0,
+                PuntoReorden = 10,
+                UltimaActualizacion = DateTime.UtcNow
+            });
+            await catDb.SaveChangesAsync();
+        }
+
+        var customFactory = new CustomWebApplicationFactory();
+        var token = customFactory.GenerateToken("Comprador", compradorId.ToString());
+        var client = brokenFactory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new
+            {
+                Items = new[] { new { ProductoId = prodId, Cantidad = 2 } }
+            })
+        };
+        req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+
+        // Validar consistencia en PostgreSQL:
+        // 1. Stock final = stock inicial (0 reservadas, 50 totales)
+        // 2. 0 órdenes guardadas en Finance (transacción EF revertida por rollback)
+        // 3. 0 asientos guardados
+        // 4. Registro de conciliación de pago huérfano o reembolso generado
+        using (var scope = brokenFactory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var stockDb = await catDb.StockFisico.FirstAsync(s => s.ProductoId == prodId);
+            stockDb.CantidadTotal.Should().Be(50);
+            stockDb.CantidadReservada.Should().Be(0, "la compensación de la saga debe liberar la reserva de stock");
+            stockDb.CantidadDisponible.Should().Be(50);
+
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            var ordenes = await finDb.Ordenes.Where(o => o.CompradorId == compradorId).ToListAsync();
+            ordenes.Should().BeEmpty("la orden no debe persistirse tras rollback");
+
+            var partidas = await finDb.PartidasContables.ToListAsync();
+            partidas.Should().BeEmpty("no debe existir asiento contable");
+
+            var pagosConciliacion = await finDb.PagosConciliacionHuerfanos.ToListAsync();
+            pagosConciliacion.Should().NotBeEmpty("debe existir registro de conciliación del cobro realizado");
+            pagosConciliacion.First().Reembolsado.Should().BeTrue("el mock de pasarela debe reembolsar con éxito");
+        }
+    }
+
+    [SkippableFact]
+    public async Task Checkout_FalloCommitIdempotencia_CompensaStockYReembolsaOConcilia()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        var compradorId = Guid.NewGuid();
+        var vendedorId = Guid.NewGuid();
+        var prodId = Guid.NewGuid();
+        var idempotencyKey = Guid.NewGuid().ToString();
+
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            catDb.Productos.Add(new Producto
+            {
+                Id = prodId,
+                Sku = $"SKU-FALLO-IDEMP-{Guid.NewGuid():N}",
+                Nombre = "Producto Idempotencia Falla",
+                CategoriaNombre = "General",
+                PrecioB2C = 50.00m,
+                PrecioB2B = 40.00m,
+                EstaPublicado = true,
+                VendedorId = vendedorId
+            });
+            catDb.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = prodId,
+                CantidadTotal = 20,
+                CantidadReservada = 0,
+                PuntoReorden = 5,
+                UltimaActualizacion = DateTime.UtcNow
+            });
+            await catDb.SaveChangesAsync();
+
+            // Insertar clave de idempotencia duplicada para forzar error 23505 o fallo dentro de la transacción
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            finDb.IdempotencyKeys.Add(new IdempotencyKeyRecord
+            {
+                Id = Guid.NewGuid(),
+                Key = idempotencyKey,
+                UsuarioId = compradorId,
+                RequestHash = "hash_diferente_forzado",
+                StatusCode = 200,
+                ResponseJson = "{}",
+                FechaCreacion = DateTime.UtcNow,
+                FechaExpiracion = DateTime.UtcNow.AddHours(24)
+            });
+            await finDb.SaveChangesAsync();
+        }
+
+        var customFactory = new CustomWebApplicationFactory();
+        var token = customFactory.GenerateToken("Comprador", compradorId.ToString());
+        var client = _factory!.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new
+            {
+                Items = new[] { new { ProductoId = prodId, Cantidad = 1 } }
+            })
+        };
+        req.Headers.Add("Idempotency-Key", idempotencyKey);
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        // Validar que el stock inicial se preserva y no quedaron órdenes creadas
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var stockDb = await catDb.StockFisico.FirstAsync(s => s.ProductoId == prodId);
+            stockDb.CantidadTotal.Should().Be(20);
+            stockDb.CantidadReservada.Should().Be(0);
+
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            var ordenes = await finDb.Ordenes.Where(o => o.CompradorId == compradorId).ToListAsync();
+            ordenes.Should().BeEmpty();
+        }
+    }
 }

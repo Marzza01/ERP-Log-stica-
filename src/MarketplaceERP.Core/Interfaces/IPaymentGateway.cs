@@ -20,4 +20,13 @@ public interface IPaymentGateway
     /// <param name="request">Datos del pago a procesar.</param>
     /// <returns>Resultado del procesamiento con el ID de transacción si fue exitoso.</returns>
     Task<PagoResult> ProcesarPagoAsync(PagoRequest request);
+
+    /// <summary>
+    /// Revierte o reembolsa un cobro previamente procesado por la pasarela (compensación de Saga).
+    /// </summary>
+    /// <param name="transaccionId">Identificador de la transacción devuelto por la pasarela.</param>
+    /// <param name="monto">Monto a reembolsar.</param>
+    /// <param name="motivo">Motivo de la compensación/reverso.</param>
+    /// <returns>Resultado del reverso.</returns>
+    Task<PagoResult> ReembolsarAsync(string transaccionId, decimal monto, string motivo);
 }

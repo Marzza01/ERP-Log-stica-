@@ -251,9 +251,11 @@ public class OrdenesController : ControllerBase
                 break;
             case EstadoOrden.Cancelada:
                 orden.FechaCancelacion = DateTime.UtcNow;
-                // Liberar reservas activas (Pendientes o Confirmadas) de stock asociadas a la orden
+                // Liberar reservas activas (Pendientes, Comprometidas o Confirmadas) de stock asociadas a la orden
                 var reservasActivas = await _catalogDb.ReservasStock
-                    .Where(r => r.OrdenId == orden.Id && (r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Pendiente || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Confirmada))
+                    .Where(r => r.OrdenId == orden.Id && (r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Pendiente 
+                                                       || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Comprometida
+                                                       || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Confirmada))
                     .ToListAsync(cancellationToken);
 
                 foreach (var res in reservasActivas)

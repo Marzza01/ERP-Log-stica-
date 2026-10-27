@@ -419,29 +419,20 @@ public class ContabilidadService : IContabilidadService
         long correlativo;
         if (_dbContext.Database.IsRelational())
         {
-            try
+            await using var cmd = _dbContext.Database.GetDbConnection().CreateCommand();
+            cmd.CommandText = "SELECT nextval('finance.\"PartidaContableNumeroSeq\"');";
+            if (_dbContext.Database.CurrentTransaction != null)
             {
-                await using var cmd = _dbContext.Database.GetDbConnection().CreateCommand();
-                cmd.CommandText = "SELECT nextval('finance.\"PartidaContableNumeroSeq\"');";
-                if (_dbContext.Database.CurrentTransaction != null)
-                {
-                    cmd.Transaction = _dbContext.Database.CurrentTransaction.GetDbTransaction();
-                }
-
-                if (cmd.Connection!.State != ConnectionState.Open)
-                {
-                    await cmd.Connection.OpenAsync(ct);
-                }
-
-                var scalar = await cmd.ExecuteScalarAsync(ct);
-                correlativo = Convert.ToInt64(scalar);
+                cmd.Transaction = _dbContext.Database.CurrentTransaction.GetDbTransaction();
             }
-            catch (Exception ex)
+
+            if (cmd.Connection!.State != ConnectionState.Open)
             {
-                _logger.LogWarning(ex, "Fallo al consultar secuencia PostgreSQL. Empleando fallback...");
-                int total = await _dbContext.PartidasContables.CountAsync(ct);
-                correlativo = total + 1;
+                await cmd.Connection.OpenAsync(ct);
             }
+
+            var scalar = await cmd.ExecuteScalarAsync(ct);
+            correlativo = Convert.ToInt64(scalar);
         }
         else
         {

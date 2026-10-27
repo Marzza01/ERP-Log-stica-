@@ -35,6 +35,9 @@ public class FinanceDbContext : DbContext
     // Idempotencia transaccional
     public DbSet<IdempotencyKeyRecord> IdempotencyKeys => Set<IdempotencyKeyRecord>();
 
+    // Conciliación de pagos huérfanos tras fallo posterior al cobro
+    public DbSet<PagoConciliacionHuerfano> PagosConciliacionHuerfanos => Set<PagoConciliacionHuerfano>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -328,6 +331,25 @@ public class FinanceDbContext : DbContext
 
             // Índice único (UsuarioId, Key)
             entity.HasIndex(k => new { k.UsuarioId, k.Key }).IsUnique();
+        });
+
+        // ── PagoConciliacionHuerfano ──────────────────────────────────────────
+        modelBuilder.Entity<PagoConciliacionHuerfano>(entity =>
+        {
+            entity.ToTable("pagos_conciliacion_huerfanos");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Id).ValueGeneratedOnAdd();
+            entity.Property(p => p.OrdenId).IsRequired();
+            entity.Property(p => p.TransaccionId).HasMaxLength(100).IsRequired();
+            entity.Property(p => p.Monto).HasPrecision(18, 2).IsRequired();
+            entity.Property(p => p.Moneda).HasMaxLength(3).HasDefaultValue("USD");
+            entity.Property(p => p.MotivoFallo).HasMaxLength(500).IsRequired();
+            entity.Property(p => p.ReembolsoTransaccionId).HasMaxLength(100);
+            entity.Property(p => p.FechaRegistro).HasDefaultValueSql("NOW()");
+
+            entity.HasIndex(p => p.OrdenId);
+            entity.HasIndex(p => p.TransaccionId);
+            entity.HasIndex(p => p.Reembolsado);
         });
     }
 }

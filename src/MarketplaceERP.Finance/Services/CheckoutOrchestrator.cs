@@ -8,6 +8,7 @@ using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Shared.DTOs;
 using MarketplaceERP.Shared.Exceptions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace MarketplaceERP.Finance.Services;
@@ -55,6 +56,7 @@ public sealed class CheckoutOrchestrator
     private readonly FinanceDbContext _dbContext;
     private readonly IContabilidadService? _contabilidad;
     private readonly ILogger<CheckoutOrchestrator> _logger;
+    private readonly IServiceProvider? _serviceProvider;
 
     public CheckoutOrchestrator(
         IStockService stockService,
@@ -62,7 +64,8 @@ public sealed class CheckoutOrchestrator
         IPaymentGateway paymentGateway,
         FinanceDbContext dbContext,
         ILogger<CheckoutOrchestrator> logger,
-        IContabilidadService? contabilidad = null)
+        IContabilidadService? contabilidad = null,
+        IServiceProvider? serviceProvider = null)
     {
         _stockService = stockService;
         _commissionService = commissionService;
@@ -70,6 +73,7 @@ public sealed class CheckoutOrchestrator
         _dbContext = dbContext;
         _logger = logger;
         _contabilidad = contabilidad;
+        _serviceProvider = serviceProvider;
     }
 
     /// <summary>
@@ -155,95 +159,190 @@ public sealed class CheckoutOrchestrator
         _logger.LogDebug(
             "Saga Paso 2 OK. TransaccionId={TransaccionId}", pagoResult.TransaccionId);
 
-        // ── PASO 3: Calcular Comisión (OPCIÓN A) ──────────────────────────────
-        _logger.LogDebug("Saga Paso 3: CalcularComision. VendedorId={VendedorId}", command.VendedorId);
-
-        // Se carga la orden existente de la BD para obtener SubTotal, ImpuestoIva y CostoEnvio separados
-        // sin necesidad de inferirlos ni dividir entre 1.13.
-        var ordenDb = await _dbContext.Ordenes.FindAsync(new object[] { command.OrdenId })
-            ?? throw new InvalidOperationException($"La orden {command.OrdenId} no existe en la base de datos para calcular la comisión y split.");
-
-        decimal subTotal = ordenDb.SubTotal;
-        decimal ivaOrden = ordenDb.ImpuestoIva;
-        decimal costoEnvio = ordenDb.CostoEnvio;
-        decimal totalOrden = ordenDb.MontoTotal;
-
-        // DECISIÓN-PENDIENTE / validar con contador:
-        // (a) Comisión calculada sobre el SubTotal neto (sin IVA ni CostoEnvio).
-        // (b) MontoVendedor = SubTotal − comisión (el IVA no pertenece al vendedor, va íntegro a 2105).
-        // (c) MontoMarketplace = comisión + CostoEnvio.
-        var montoComision = await _commissionService.CalcularComisionAsync(
-            command.VendedorId,
-            subTotal);
-
-        var montoVendedor = Math.Round(subTotal - montoComision, 2, MidpointRounding.AwayFromZero);
-        var montoMarketplace = Math.Round(montoComision + costoEnvio, 2, MidpointRounding.AwayFromZero);
-
-        // Validación estricta en el orquestador: MontoVendedor + MontoMarketplace + ImpuestoIva == MontoTotal (tolerancia 0)
-        var balanceVerif = montoVendedor + montoMarketplace + ivaOrden;
-        if (balanceVerif != totalOrden)
+        try
         {
-            throw new InvalidOperationException(
-                $"Descuadre en split de pago: MontoVendedor ({montoVendedor:F2}) + MontoMarketplace ({montoMarketplace:F2}) + IVA ({ivaOrden:F2}) = {balanceVerif:F2} != MontoTotal ({totalOrden:F2}).");
+            // ── PASO 3: Calcular Comisión (OPCIÓN A) ──────────────────────────────
+            _logger.LogDebug("Saga Paso 3: CalcularComision. VendedorId={VendedorId}", command.VendedorId);
+
+            // Se carga la orden existente de la BD para obtener SubTotal, ImpuestoIva y CostoEnvio separados
+            // sin necesidad de inferirlos ni dividir entre 1.13.
+            var ordenDb = await _dbContext.Ordenes.FindAsync(new object[] { command.OrdenId })
+                ?? throw new InvalidOperationException($"La orden {command.OrdenId} no existe en la base de datos para calcular la comisión y split.");
+
+            decimal subTotal = ordenDb.SubTotal;
+            decimal ivaOrden = ordenDb.ImpuestoIva;
+            decimal costoEnvio = ordenDb.CostoEnvio;
+            decimal totalOrden = ordenDb.MontoTotal;
+
+            // DECISIÓN-PENDIENTE / validar con contador:
+            // (a) Comisión calculada sobre el SubTotal neto (sin IVA ni CostoEnvio).
+            // (b) MontoVendedor = SubTotal − comisión (el IVA no pertenece al vendedor, va íntegro a 2105).
+            // (c) MontoMarketplace = comisión + CostoEnvio.
+            var montoComision = await _commissionService.CalcularComisionAsync(
+                command.VendedorId,
+                subTotal);
+
+            var montoVendedor = Math.Round(subTotal - montoComision, 2, MidpointRounding.AwayFromZero);
+            var montoMarketplace = Math.Round(montoComision + costoEnvio, 2, MidpointRounding.AwayFromZero);
+
+            // Validación estricta en el orquestador: MontoVendedor + MontoMarketplace + ImpuestoIva == MontoTotal (tolerancia 0)
+            var balanceVerif = montoVendedor + montoMarketplace + ivaOrden;
+            if (balanceVerif != totalOrden)
+            {
+                throw new InvalidOperationException(
+                    $"Descuadre en split de pago: MontoVendedor ({montoVendedor:F2}) + MontoMarketplace ({montoMarketplace:F2}) + IVA ({ivaOrden:F2}) = {balanceVerif:F2} != MontoTotal ({totalOrden:F2}).");
+            }
+
+            var porcentajeVendedor = totalOrden > 0
+                ? Math.Round((montoVendedor / totalOrden) * 100, 2, MidpointRounding.AwayFromZero)
+                : 0m;
+            var porcentajeMarketplace = 100m - porcentajeVendedor;
+
+            _logger.LogDebug(
+                "Saga Paso 3 OK. MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
+                montoVendedor, montoMarketplace);
+
+            // ── PASO 4: Guardar SplitPago en DB ──────────────────────────────────
+            _logger.LogDebug("Saga Paso 4: Guardando SplitPago en DB.");
+
+            var splitPago = new SplitPago
+            {
+                Id = Guid.NewGuid(),
+                OrdenId = command.OrdenId,
+                MontoTotal = totalOrden,
+                PorcentajeVendedor = porcentajeVendedor,
+                MontoVendedor = montoVendedor,
+                PorcentajeMarketplace = porcentajeMarketplace,
+                MontoMarketplace = montoMarketplace,
+                TransaccionId = pagoResult.TransaccionId!,
+                FechaProcesado = DateTime.UtcNow
+            };
+
+            _dbContext.SplitsPago.Add(splitPago);
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogDebug("Saga Paso 4 OK. SplitPagoId={SplitPagoId}", splitPago.Id);
+
+            // ── PASO 5: Generar Asiento Contable de Venta (idempotente) ───────────
+            if (_contabilidad != null)
+            {
+                _logger.LogDebug("Saga Paso 5: Generando asiento de venta para OrdenId={OrdenId}", command.OrdenId);
+                await _contabilidad.GenerarAsientoVentaAsync(
+                    command.OrdenId,
+                    ordenDb.SubTotal,
+                    ordenDb.ImpuestoIva,
+                    ordenDb.TipoComprobante);
+            }
+
+            _logger.LogInformation(
+                "Checkout Saga COMPLETADO. OrdenId={OrdenId}, TransaccionId={TransaccionId}, " +
+                "MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
+                command.OrdenId, pagoResult.TransaccionId, montoVendedor, montoMarketplace);
+
+            // ── PASO 6: Retornar resultado exitoso ────────────────────────────────
+            return new CheckoutResult(
+                OrdenId: command.OrdenId,
+                TransaccionId: pagoResult.TransaccionId!,
+                MontoVendedor: montoVendedor,
+                MontoMarketplace: montoMarketplace
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Saga ERROR TRAS COBRO EXITOSO para OrdenId={OrdenId}, TransaccionId={TransaccionId}. Iniciando compensación...",
+                command.OrdenId, pagoResult.TransaccionId);
+
+            // 1. Compensar reserva de stock liberando las unidades
+            try
+            {
+                await _stockService.LiberarStockAsync(reservaId);
+                _logger.LogInformation("Compensación de stock exitosa para ReservaId={ReservaId}.", reservaId);
+            }
+            catch (Exception stockEx)
+            {
+                _logger.LogCritical(stockEx, "CRITICAL: Fallo al liberar reserva {ReservaId} durante compensación de saga.", reservaId);
+            }
+
+            // 2. Revertir el cobro en la pasarela o registrar pago huérfano en tabla de conciliación
+            await RevertirCobroOConciliarAsync(command.OrdenId, pagoResult.TransaccionId!, command.MontoTotal, command.Moneda, ex.Message);
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Intenta el reembolso automático con la pasarela. Si no hay API o falla,
+    /// persiste un registro en la tabla de conciliación finance.pagos_conciliacion_huerfanos y emite LogError.
+    /// </summary>
+    public async Task RevertirCobroOConciliarAsync(
+        Guid ordenId,
+        string transaccionId,
+        decimal monto,
+        string moneda,
+        string motivo)
+    {
+        bool reembolsado = false;
+        string? reembolsoTxId = null;
+
+        try
+        {
+            var resultadoReembolso = await _paymentGateway.ReembolsarAsync(transaccionId, monto, motivo);
+            if (resultadoReembolso != null && resultadoReembolso.Exitoso)
+            {
+                reembolsado = true;
+                reembolsoTxId = resultadoReembolso.TransaccionId;
+                _logger.LogInformation("Reembolso automático exitoso para TransaccionId={TransaccionId}, ReembolsoId={ReembolsoId}.",
+                    transaccionId, reembolsoTxId);
+            }
+            else
+            {
+                _logger.LogError("La pasarela no pudo reembolsar TransaccionId={TransaccionId}: {Error}",
+                    transaccionId, resultadoReembolso?.MensajeError);
+            }
+        }
+        catch (Exception refundEx)
+        {
+            _logger.LogError(refundEx, "Excepción al intentar reembolsar TransaccionId={TransaccionId}.", transaccionId);
         }
 
-        var porcentajeVendedor = totalOrden > 0
-            ? Math.Round((montoVendedor / totalOrden) * 100, 2, MidpointRounding.AwayFromZero)
-            : 0m;
-        var porcentajeMarketplace = 100m - porcentajeVendedor;
-
-        _logger.LogDebug(
-            "Saga Paso 3 OK. MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
-            montoVendedor, montoMarketplace);
-
-        // ── PASO 4: Guardar SplitPago en DB ──────────────────────────────────
-        _logger.LogDebug("Saga Paso 4: Guardando SplitPago en DB.");
-
-        var splitPago = new SplitPago
+        try
         {
-            Id = Guid.NewGuid(),
-            OrdenId = command.OrdenId,
-            MontoTotal = totalOrden,
-            PorcentajeVendedor = porcentajeVendedor,
-            MontoVendedor = montoVendedor,
-            PorcentajeMarketplace = porcentajeMarketplace,
-            MontoMarketplace = montoMarketplace,
-            TransaccionId = pagoResult.TransaccionId!,
-            FechaProcesado = DateTime.UtcNow
-        };
+            var conciliacion = new PagoConciliacionHuerfano
+            {
+                Id = Guid.NewGuid(),
+                OrdenId = ordenId,
+                TransaccionId = transaccionId,
+                Monto = monto,
+                Moneda = moneda,
+                MotivoFallo = motivo.Length > 500 ? motivo[..500] : motivo,
+                Reembolsado = reembolsado,
+                ReembolsoTransaccionId = reembolsoTxId,
+                FechaRegistro = DateTime.UtcNow,
+                FechaResolucion = reembolsado ? DateTime.UtcNow : null
+            };
 
-        _dbContext.SplitsPago.Add(splitPago);
-        await _dbContext.SaveChangesAsync();
+            if (_serviceProvider != null)
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var isolatedDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+                isolatedDb.PagosConciliacionHuerfanos.Add(conciliacion);
+                await isolatedDb.SaveChangesAsync();
+            }
+            else
+            {
+                _dbContext.PagosConciliacionHuerfanos.Add(conciliacion);
+                await _dbContext.SaveChangesAsync();
+            }
 
-        _logger.LogDebug("Saga Paso 4 OK. SplitPagoId={SplitPagoId}", splitPago.Id);
-
-        // ── PASO 5: Confirmar Despacho ────────────────────────────────────────
-        _logger.LogDebug("Saga Paso 5: ConfirmarDespacho. ReservaId={ReservaId}", reservaId);
-
-        await _stockService.ConfirmarDespachoAsync(reservaId);
-
-        // ── PASO 6: Generar Asiento Contable de Venta (idempotente) ───────────
-        if (_contabilidad != null)
-        {
-            _logger.LogDebug("Saga Paso 6: Generando asiento de venta para OrdenId={OrdenId}", command.OrdenId);
-            await _contabilidad.GenerarAsientoVentaAsync(
-                command.OrdenId,
-                ordenDb.SubTotal,
-                ordenDb.ImpuestoIva,
-                ordenDb.TipoComprobante);
+            _logger.LogInformation("Registro de conciliación huérfano guardado (Id={Id}, Reembolsado={Reembolsado}).",
+                conciliacion.Id, reembolsado);
         }
-
-        _logger.LogInformation(
-            "Checkout Saga COMPLETADO. OrdenId={OrdenId}, TransaccionId={TransaccionId}, " +
-            "MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
-            command.OrdenId, pagoResult.TransaccionId, montoVendedor, montoMarketplace);
-
-        // ── PASO 7: Retornar resultado exitoso ────────────────────────────────
-        return new CheckoutResult(
-            OrdenId: command.OrdenId,
-            TransaccionId: pagoResult.TransaccionId!,
-            MontoVendedor: montoVendedor,
-            MontoMarketplace: montoMarketplace
-        );
+        catch (Exception dbEx)
+        {
+            _logger.LogCritical(dbEx,
+                "CRITICAL: No se pudo guardar el registro de conciliación para pago huérfano OrdenId={OrdenId}, TxId={TransaccionId}, Monto={Monto}",
+                ordenId, transaccionId, monto);
+        }
     }
 }

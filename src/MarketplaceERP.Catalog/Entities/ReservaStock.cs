@@ -13,7 +13,8 @@ public enum EstadoReserva
     Pendiente = 0,
     Confirmada = 1,
     Liberada = 2,
-    Despachada = 3
+    Despachada = 3,
+    Comprometida = 4
 }
 
 /// <summary>

@@ -250,6 +250,30 @@ public class StockService : IStockService
     }
 
     /// <inheritdoc />
+    public async Task ComprometerReservasOrdenAsync(Guid ordenId)
+    {
+        var reservas = await _dbContext.ReservasStock
+            .Where(r => r.OrdenId == ordenId && r.Estado == EstadoReserva.Pendiente)
+            .ToListAsync();
+
+        if (reservas.Count == 0)
+        {
+            _logger.LogDebug("ComprometerReservasOrden: No hay reservas pendientes para la orden {OrdenId}.", ordenId);
+            return;
+        }
+
+        foreach (var r in reservas)
+        {
+            r.Estado = EstadoReserva.Comprometida;
+            r.FechaExpiracion = null; // Eliminamos la expiración para proteger la orden pagada
+        }
+
+        await _dbContext.SaveChangesAsync();
+        _logger.LogInformation("Comprometidas {Count} reservas para la orden pagada {OrdenId}. Expiración removida.",
+            reservas.Count, ordenId);
+    }
+
+    /// <inheritdoc />
     public async Task LiberarStockAsync(Guid reservaId)
     {
         var reserva = await _dbContext.ReservasStock.FirstOrDefaultAsync(r => r.Id == reservaId);
