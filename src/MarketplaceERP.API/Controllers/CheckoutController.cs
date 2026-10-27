@@ -3,6 +3,10 @@
  * Todos los derechos reservados © 2026
  */
 
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
@@ -14,50 +18,63 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MarketplaceERP.API.Controllers;
 
-/// <summary>
-/// Request para iniciar el proceso de checkout.
-/// </summary>
-public record CheckoutRequest(
-    Guid VendedorId,
+public record ItemCheckoutRequest(
     Guid ProductoId,
-    int Cantidad,
-    decimal PrecioUnitario,
-    string Moneda = "USD"
+    int Cantidad
 );
 
-/// <summary>
-/// Controlador del flujo transaccional de checkout y consulta de órdenes (Equipo 3 — Finance).
-/// </summary>
+public record CheckoutNuevoRequest(
+    List<ItemCheckoutRequest> Items,
+    string? DireccionEntrega,
+    string? ZonaEnvio,
+    string? MetodoPago
+);
+
 [ApiController]
 [Route("api/checkout")]
 public class CheckoutController : ControllerBase
 {
     private readonly CheckoutOrchestrator _orchestrator;
-    private readonly FinanceDbContext _dbContext;
+    private readonly FinanceDbContext _financeDb;
+    private readonly CatalogDbContext _catalogDb;
     private readonly ILogger<CheckoutController> _logger;
 
     public CheckoutController(
         CheckoutOrchestrator orchestrator,
-        FinanceDbContext dbContext,
+        FinanceDbContext financeDb,
+        CatalogDbContext catalogDb,
         ILogger<CheckoutController> logger)
     {
         _orchestrator = orchestrator;
-        _dbContext = dbContext;
+        _financeDb = financeDb;
+        _catalogDb = catalogDb;
         _logger = logger;
     }
 
     /// <summary>
-    /// Inicia el proceso de checkout (Saga).
-    /// Solo los compradores pueden realizar compras.
+    /// Procesa el checkout de una orden bajo el nuevo contrato seguro e idempotente.
+    /// Header obligatorio: Idempotency-Key
     /// </summary>
     [HttpPost]
     [Authorize(Roles = "Comprador")]
     [ProducesResponseType(typeof(CheckoutResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> ProcesarCheckout([FromBody] CheckoutRequest request)
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> ProcesarCheckout(
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        [FromBody] CheckoutNuevoRequest request,
+        CancellationToken cancellationToken)
     {
-        // Extraer CompradorId del claim JWT NameIdentifier (Guid)
+        // 1. Validar Idempotency-Key obligatoria
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            return BadRequest(new { mensaje = "El encabezado 'Idempotency-Key' es obligatorio para procesar el checkout." });
+        }
+
+        idempotencyKey = idempotencyKey.Trim();
+
+        // 2. Extraer CompradorId
         var compradorIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
             ?? User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
 
@@ -66,71 +83,222 @@ public class CheckoutController : ControllerBase
             return Unauthorized(new { mensaje = "Identificador de comprador inválido en el token." });
         }
 
-        var ordenId = Guid.NewGuid();
-        var montoTotal = request.Cantidad * request.PrecioUnitario;
+        // 3. Normalizar request y calcular hash SHA-256
+        // Ordenamos los ítems por ProductoId para que el hash sea determinista
+        var itemsNormalizados = request.Items?
+            .OrderBy(i => i.ProductoId)
+            .Select(i => new { i.ProductoId, i.Cantidad })
+            .ToList();
 
-        // Crear la orden en Finance primero
-        var orden = new Orden
+        var payloadToHash = JsonSerializer.Serialize(new
         {
-            Id = ordenId,
-            NumeroOrden = $"CHK-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(10000, 99999)}",
-            CompradorId = compradorId,
-            VendedorId = request.VendedorId,
-            MontoTotal = montoTotal,
-            Moneda = request.Moneda,
-            Estado = EstadoOrden.Pendiente,
-            FechaCreacion = DateTime.UtcNow,
-            Items = new List<ItemOrden>
-            {
-                new()
-                {
-                    Id = Guid.NewGuid(),
-                    OrdenId = ordenId,
-                    ProductoId = request.ProductoId,
-                    Cantidad = request.Cantidad,
-                    PrecioUnitario = request.PrecioUnitario
-                }
-            }
-        };
+            Items = itemsNormalizados,
+            DireccionEntrega = request.DireccionEntrega?.Trim() ?? "",
+            ZonaEnvio = request.ZonaEnvio?.Trim() ?? "",
+            MetodoPago = request.MetodoPago?.Trim() ?? ""
+        });
 
-        _dbContext.Ordenes.Add(orden);
-        await _dbContext.SaveChangesAsync();
+        string requestHash;
+        using (var sha = SHA256.Create())
+        {
+            var hashBytes = sha.ComputeHash(Encoding.UTF8.GetBytes(payloadToHash));
+            requestHash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+        }
+
+        // 4. Verificar si la clave de idempotencia ya existe
+        var registroExistente = await _financeDb.IdempotencyKeys
+            .AsNoTracking()
+            .FirstOrDefaultAsync(k => k.UsuarioId == compradorId && k.Key == idempotencyKey, cancellationToken);
+
+        if (registroExistente != null)
+        {
+            // Misma clave + diferente payload -> 409 Conflict
+            if (registroExistente.RequestHash != requestHash)
+            {
+                return Conflict(new { mensaje = "La clave de idempotencia ya fue utilizada con una solicitud diferente." });
+            }
+
+            // Misma clave + mismo payload -> devolver la respuesta previa almacenada sin volver a cobrar
+            return StatusCode(registroExistente.StatusCode, JsonSerializer.Deserialize<object>(registroExistente.ResponseJson));
+        }
+
+        // 5. Validar items del request
+        if (request.Items == null || request.Items.Count == 0)
+        {
+            return BadRequest(new { mensaje = "El carrito no contiene productos." });
+        }
+
+        foreach (var it in request.Items)
+        {
+            if (it.Cantidad <= 0)
+                return BadRequest(new { mensaje = "La cantidad por producto debe ser mayor a 0." });
+            if (it.Cantidad > 1000)
+                return BadRequest(new { mensaje = "La cantidad máxima permitida por producto es de 1000 unidades." });
+        }
+
+        // 6. Cargar productos desde CatalogDbContext
+        var productoIds = request.Items.Select(i => i.ProductoId).Distinct().ToList();
+        var productosDb = await _catalogDb.Productos
+            .Where(p => productoIds.Contains(p.Id))
+            .ToListAsync(cancellationToken);
+
+        if (productosDb.Count != productoIds.Count)
+        {
+            return BadRequest(new { mensaje = "Uno o más productos del carrito no existen en el catálogo." });
+        }
+
+        // Validar que todos los productos estén publicados
+        var noPublicados = productosDb.Where(p => !p.EstaPublicado).ToList();
+        if (noPublicados.Any())
+        {
+            return BadRequest(new { mensaje = $"El producto '{noPublicados.First().Nombre}' no está publicado para la venta." });
+        }
+
+        // Regla de Negocio Marketplace: Una orden = un solo vendedor (si hay múltiples vendedores, rechazar con 400)
+        var vendedores = productosDb.Select(p => p.VendedorId).Distinct().ToList();
+        if (vendedores.Count > 1)
+        {
+            return BadRequest(new { mensaje = "Una orden solo puede contener productos de un mismo vendedor. Realice órdenes separadas por vendedor." });
+        }
+
+        var vendedorId = vendedores.First();
+
+        // 7. Determinar TipoCliente (en el servidor, nunca desde el cliente)
+        // Por defecto en marketplace B2C para Compradores regulares
+        var tipoCliente = TipoCliente.B2C;
+
+        // 8. Calcular SubTotal desde catálogo con decimal y redondeo a 2 decimales
+        decimal subTotal = 0m;
+        var itemsOrden = new List<ItemOrden>();
+        var ordenId = Guid.NewGuid();
+
+        foreach (var reqItem in request.Items)
+        {
+            var prod = productosDb.First(p => p.Id == reqItem.ProductoId);
+            decimal precioUnitario = (tipoCliente == TipoCliente.B2B) ? prod.PrecioB2B : prod.PrecioB2C;
+            precioUnitario = Math.Round(precioUnitario, 2, MidpointRounding.AwayFromZero);
+
+            subTotal += Math.Round(precioUnitario * reqItem.Cantidad, 2, MidpointRounding.AwayFromZero);
+
+            itemsOrden.Add(new ItemOrden
+            {
+                Id = Guid.NewGuid(),
+                OrdenId = ordenId,
+                ProductoId = prod.Id,
+                SkuReferencia = prod.Sku,
+                NombreProducto = prod.Nombre,
+                Cantidad = reqItem.Cantidad,
+                PrecioUnitario = precioUnitario
+            });
+        }
+
+        subTotal = Math.Round(subTotal, 2, MidpointRounding.AwayFromZero);
+        decimal iva13 = Math.Round(subTotal * 0.13m, 2, MidpointRounding.AwayFromZero);
+        decimal costoEnvio = 5.00m; // Tarifa base logística
+        decimal montoTotal = Math.Round(subTotal + iva13 + costoEnvio, 2, MidpointRounding.AwayFromZero);
+
+        // 9. Ejecución atómica dentro de UNA sola transacción EF Core
+        var strategy = _financeDb.Database.CreateExecutionStrategy();
 
         try
         {
-            var command = new CheckoutCommand(
-                OrdenId: ordenId,
-                CompradorId: compradorId,
-                VendedorId: request.VendedorId,
-                ProductoId: request.ProductoId,
-                Cantidad: request.Cantidad,
-                MontoTotal: montoTotal,
-                Moneda: request.Moneda);
+            var resultado = await strategy.ExecuteAsync(async () =>
+            {
+                await using var tx = await _financeDb.Database.BeginTransactionAsync(cancellationToken);
 
-            var resultado = await _orchestrator.ProcesarCheckoutAsync(command);
+                // Crear Orden en estado inicial Aprobada (pagada con éxito)
+                var orden = new Orden
+                {
+                    Id = ordenId,
+                    NumeroOrden = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(10000, 99999)}",
+                    CompradorId = compradorId,
+                    VendedorId = vendedorId,
+                    SubTotal = subTotal,
+                    ImpuestoIva = iva13,
+                    CostoEnvio = costoEnvio,
+                    MontoTotal = montoTotal,
+                    Moneda = "USD",
+                    Estado = EstadoOrden.Aprobada,
+                    TipoCliente = tipoCliente,
+                    FechaCreacion = DateTime.UtcNow,
+                    FechaAprobacion = DateTime.UtcNow,
+                    DireccionEntrega = request.DireccionEntrega ?? "San Salvador",
+                    ZonaEnvio = request.ZonaEnvio ?? "San Salvador y AMSS",
+                    Items = itemsOrden
+                };
 
-            // Actualizar estado de la orden
-            orden.Estado = EstadoOrden.Entregada;
-            orden.FechaEntregaReal = DateTime.UtcNow;
-            await _dbContext.SaveChangesAsync();
+                _financeDb.Ordenes.Add(orden);
+                await _financeDb.SaveChangesAsync(cancellationToken);
+
+                // Ejecutar saga de cobro, split y asiento contable
+                var primerItem = itemsOrden.First();
+                var command = new CheckoutCommand(
+                    OrdenId: ordenId,
+                    CompradorId: compradorId,
+                    VendedorId: vendedorId,
+                    ProductoId: primerItem.ProductoId,
+                    Cantidad: primerItem.Cantidad,
+                    MontoTotal: montoTotal,
+                    Moneda: "USD"
+                );
+
+                var sagaResult = await _orchestrator.ProcesarCheckoutAsync(command);
+
+                // Guardar registro de idempotencia dentro de la misma transacción
+                var record = new IdempotencyKeyRecord
+                {
+                    Id = Guid.NewGuid(),
+                    Key = idempotencyKey,
+                    UsuarioId = compradorId,
+                    RequestHash = requestHash,
+                    StatusCode = StatusCodes.Status200OK,
+                    ResponseJson = JsonSerializer.Serialize(sagaResult),
+                    FechaCreacion = DateTime.UtcNow,
+                    FechaExpiracion = DateTime.UtcNow.AddHours(24)
+                };
+
+                _financeDb.IdempotencyKeys.Add(record);
+                await _financeDb.SaveChangesAsync(cancellationToken);
+
+                await tx.CommitAsync(cancellationToken);
+
+                return sagaResult;
+            });
 
             return Ok(resultado);
         }
+        catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException pgEx && pgEx.SqlState == "23505")
+        {
+            _logger.LogWarning("Colisión concurrente detectada en Idempotency-Key '{Key}'.", idempotencyKey);
+            // Reintentar lectura de la clave recién guardada por la solicitud concurrente
+            var claveConcurrente = await _financeDb.IdempotencyKeys
+                .AsNoTracking()
+                .FirstOrDefaultAsync(k => k.UsuarioId == compradorId && k.Key == idempotencyKey, cancellationToken);
+
+            if (claveConcurrente != null)
+            {
+                if (claveConcurrente.RequestHash != requestHash)
+                    return Conflict(new { mensaje = "La clave de idempotencia ya fue utilizada con una solicitud diferente." });
+
+                return StatusCode(claveConcurrente.StatusCode, JsonSerializer.Deserialize<object>(claveConcurrente.ResponseJson));
+            }
+
+            return Conflict(new { mensaje = "Conflicto de concurrencia al procesar el checkout." });
+        }
         catch (StockInsuficienteException ex)
         {
-            orden.Estado = EstadoOrden.Cancelada;
-            await _dbContext.SaveChangesAsync();
-
-            _logger.LogWarning(ex, "Checkout fallido por stock insuficiente. OrdenId={OrdenId}", ordenId);
+            _logger.LogWarning(ex, "Checkout fallido por stock insuficiente.");
             return Conflict(new { mensaje = ex.Message, tipo = "StockInsuficiente" });
         }
         catch (PagoFallidoException ex)
         {
-            orden.Estado = EstadoOrden.Cancelada;
-            await _dbContext.SaveChangesAsync();
-
-            _logger.LogWarning(ex, "Checkout fallido por pago rechazado. OrdenId={OrdenId}", ordenId);
+            _logger.LogWarning(ex, "Checkout fallido por rechazo de pago.");
             return Conflict(new { mensaje = ex.Message, tipo = "PagoFallido" });
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("pasarela de pagos no está configurada") || ex.Message.Contains("503"))
+        {
+            _logger.LogError(ex, "Checkout fallido por pasarela no disponible.");
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { mensaje = ex.Message });
         }
     }
 
@@ -142,7 +310,7 @@ public class CheckoutController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<Orden>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetOrdenes()
     {
-        var ordenes = await _dbContext.Ordenes
+        var ordenes = await _financeDb.Ordenes
             .Include(o => o.Items)
             .Include(o => o.SplitPago)
             .OrderByDescending(o => o.FechaCreacion)

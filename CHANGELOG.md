@@ -8,7 +8,8 @@ Este documento centraliza y documenta cada una de las fases, cambios de arquitec
 
 ## Índice
 1. [Resumen Ejecutivo de Fases](#resumen-ejecutivo-de-fases)
-2. [Fase 1: Núcleo de Catálogo, WMS y Flujo Base](#fase-1-núcleo-de-catálogo-wms-y-flujo-base)
+2. [Fase 7a: Checkout Seguro, Idempotencia y Asiento Contable Atómico](#fase-7a-checkout-seguro-idempotencia-y-asiento-contable-atómico)
+3. [Fase 1: Núcleo de Catálogo, WMS y Flujo Base](#fase-1-núcleo-de-catálogo-wms-y-flujo-base)
 3. [Fase 2: Backbone Financiero, OMS de 6 Estados, Compras, 3-Way Match y Contabilidad General](#fase-2-backbone-financiero-oms-de-6-estados-compras-3-way-match-y-contabilidad-general)
 4. [Fase 3: Dashboard Ejecutivo de KPIs, Liquidaciones a Vendedores y Tests Financieros](#fase-3-dashboard-ejecutivo-de-kpis-liquidaciones-a-vendedores-y-tests-financieros)
 5. [Fase 4: Dashboard Interactivo y Consola Operativa en Frontend](#fase-4-dashboard-interactivo-y-consola-operativa-en-frontend)
@@ -32,6 +33,36 @@ Este documento centraliza y documenta cada una de las fases, cambios de arquitec
 | **Fase 6** | Orquestación Docker Compose (PostgreSQL, Backend API, Frontend Nginx) y Suite de Prueba Integral E2E de ciclo de vida comercial completo | ✅ Completada | 22 pruebas Finance pasadas (41 totales en la solución) |
 | **Fase 7** | Torre de control de almacén en Frontend: simulación interactiva de órdenes, gestión de Pick Lists en vivo y catálogo WMS con coordenadas (Pasillo/Rack/Nivel) | ✅ Completada | Compilación y bundle limpios |
 | **Fase 8** | Mesa de inspección de RMA (ReStock, MermaScrap, Remate) y consola de auditoría 3-Way Match con aprobación de pago para Cuentas por Pagar | ✅ Completada | Compilación y bundle limpios |
+
+---
+
+## Fase 7a: Checkout Seguro, Idempotencia y Asiento Contable Atómico
+
+### 1. Nuevo Contrato Seguro de Checkout (`POST /api/checkout`)
+- **Payload Sanitizado:** El cliente envía exclusivamente `items: [{ productoId, cantidad }]`, `direccionEntrega`, `zonaEnvio` y `metodoPago`. El servidor descarta e ignora cualquier parámetro de precios (`precioUnitario`), SKUs o vendedor enviado por el cliente.
+- **Precios Protegidos desde Catálogo:** `SubTotal`, `ImpuestoIva` (13%), `CostoEnvio` ($5.00) y `MontoTotal` se calculan en el servidor directamente desde `catalog.productos`, aplicando redondeo a 2 decimales (`MidpointRounding.AwayFromZero`). Los precios B2C o B2B se definen según el tipo de cliente determinado por el servidor.
+- **Validaciones:**
+  - Cantidad > 0 y máximo 1,000 unidades por ítem.
+  - Productos existentes y publicados (`EstaPublicado = true`).
+  - Regla Marketplace: Una orden = un solo vendedor (si hay productos de distintos vendedores, rechaza con HTTP 400).
+
+### 2. Idempotencia y Transaccionalidad
+- **Header `Idempotency-Key` Obligatorio:** Se valida al inicio (HTTP 400 si falta).
+- **Tabla `finance.idempotency_keys`:** Registra `(Key, UsuarioId, RequestHash, StatusCode, ResponseJson, FechaCreacion, FechaExpiracion)` con índice único `(UsuarioId, Key)`.
+  - Misma clave + mismo request: Retorna la misma respuesta previa sin duplicar cobros ni órdenes.
+  - Misma clave + distinto request: Retorna HTTP 409 Conflict.
+  - Expiración documentada: 24 horas.
+- **Transacción Atómica Única:** Creación de la orden, procesamiento de la saga (reserva de stock, cobro, split) y generación del asiento contable de venta se ejecutan dentro de una misma transacción en PostgreSQL.
+- **Rollback por Pago Fallido:** Si la pasarela rechaza el cobro, la transacción revierte completamente la orden y el asiento contable (no quedan registros huérfanos).
+- **Estado de la Orden:** La orden tras el cobro exitoso queda en estado `Aprobada` (pagada) y **NUNCA** `Entregada`. La orden pasa a `Entregada` únicamente mediante fulfillment y el endpoint de transición de estados por un Administrador o Vendedor.
+- **Integración con Liquidaciones:** El servicio de liquidaciones toma la orden únicamente después de ser marcada como `Entregada`.
+
+### 3. Pasarela de Pagos
+- Fallo simulado del mock condicionado a `Payments:SimulateFailures` únicamente en entornos `Development` y `Test`.
+- En entorno `Production`, si no hay pasarela real configurada, rechaza con HTTP 503 Service Unavailable y mensaje claro.
+
+### 4. Riesgo de Arquitectura Identificado
+- **ADVERTENCIA / RIESGO:** En esta fase 7a, la reserva y despacho de stock continúan operando sobre `StockServiceMock` hasta la implementación completa del WMS relacional en la Fase 7b.
 
 ---
 

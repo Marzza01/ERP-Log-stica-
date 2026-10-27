@@ -32,6 +32,9 @@ public class FinanceDbContext : DbContext
     public DbSet<PartidaContable> PartidasContables => Set<PartidaContable>();
     public DbSet<LineaPartidaContable> LineasPartidaContable => Set<LineaPartidaContable>();
 
+    // Idempotencia transaccional
+    public DbSet<IdempotencyKeyRecord> IdempotencyKeys => Set<IdempotencyKeyRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -307,6 +310,24 @@ public class FinanceDbContext : DbContext
                   .WithMany(p => p.Lineas)
                   .HasForeignKey(l => l.PartidaContableId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── IdempotencyKeyRecord ──────────────────────────────────────────────
+        modelBuilder.Entity<IdempotencyKeyRecord>(entity =>
+        {
+            entity.ToTable("idempotency_keys");
+            entity.HasKey(k => k.Id);
+            entity.Property(k => k.Id).ValueGeneratedOnAdd();
+            entity.Property(k => k.Key).HasMaxLength(128).IsRequired();
+            entity.Property(k => k.UsuarioId).IsRequired();
+            entity.Property(k => k.RequestHash).HasMaxLength(64).IsRequired();
+            entity.Property(k => k.StatusCode).IsRequired();
+            entity.Property(k => k.ResponseJson).IsRequired();
+            entity.Property(k => k.FechaCreacion).HasDefaultValueSql("NOW()");
+            entity.Property(k => k.FechaExpiracion).IsRequired();
+
+            // Índice único (UsuarioId, Key)
+            entity.HasIndex(k => new { k.UsuarioId, k.Key }).IsUnique();
         });
     }
 }

@@ -79,30 +79,36 @@ export default function CheckoutPage() {
 
   const total = carrito.reduce((acc, item) => acc + (item.producto.precio * item.cantidad), 0);
 
+  const [idempotencyKey, setIdempotencyKey] = useState<string>(() => crypto.randomUUID());
+
   const handleCheckout = async () => {
     if (carrito.length === 0) return;
     setProcesando(true);
     setOrdenCompletada(null);
 
+    // Contrato seguro: solo productoId y cantidad. Precios y vendedor calculados en servidor.
     const payload = {
-      direccionEnvio: 'Calle Principal #123, San Salvador, El Salvador',
+      direccionEntrega: 'Calle Principal #123, San Salvador, El Salvador',
       zonaEnvio: 'San Salvador',
       metodoPago: 'TarjetaCredito',
       items: carrito.map(c => ({
         productoId: c.producto.id,
-        sku: c.producto.sku,
         cantidad: c.cantidad,
-        precioUnitario: c.producto.precio,
       })),
     };
 
     try {
-      const res = await apiClient.post<{ numeroOrden?: string; id?: string }>('/api/checkout', payload);
-      const num = res.numeroOrden || res.id || `ORD-${Date.now()}`;
+      const res = await apiClient.post<{ ordenId?: string; transaccionId?: string }>('/api/checkout', payload, {
+        'Idempotency-Key': idempotencyKey,
+      });
+      const num = res.transaccionId || res.ordenId || `ORD-${Date.now()}`;
       setOrdenCompletada(num);
       setCarrito([]);
-      toast.success('¡Compra confirmada!', `Tu orden ${num} ha sido generada exitosamente.`);
+      // Generar nueva clave para la siguiente compra
+      setIdempotencyKey(crypto.randomUUID());
+      toast.success('¡Compra confirmada!', `Tu orden ha sido generada exitosamente (${num}).`);
     } catch (err: any) {
+      // En caso de fallo, se conserva idempotencyKey para permitir reintentos seguros sin duplicar cobros
       toast.error('Error al procesar compra', err?.message || 'No se pudo completar el checkout.');
     } finally {
       setProcesando(false);

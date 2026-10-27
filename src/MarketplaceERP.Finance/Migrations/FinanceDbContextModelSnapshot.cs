@@ -82,6 +82,48 @@ namespace MarketplaceERP.Finance.Migrations
                     b.ToTable("facturas_proveedor", "finance");
                 });
 
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.IdempotencyKeyRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("FechaCreacion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTime>("FechaExpiracion")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ResponseJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("StatusCode")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("UsuarioId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UsuarioId", "Key")
+                        .IsUnique();
+
+                    b.ToTable("idempotency_keys", "finance");
+                });
+
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.ItemOrden", b =>
                 {
                     b.Property<Guid>("Id")

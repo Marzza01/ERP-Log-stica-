@@ -53,6 +53,7 @@ public sealed class CheckoutOrchestrator
     private readonly ICommissionService _commissionService;
     private readonly IPaymentGateway _paymentGateway;
     private readonly FinanceDbContext _dbContext;
+    private readonly IContabilidadService? _contabilidad;
     private readonly ILogger<CheckoutOrchestrator> _logger;
 
     public CheckoutOrchestrator(
@@ -60,13 +61,15 @@ public sealed class CheckoutOrchestrator
         ICommissionService commissionService,
         IPaymentGateway paymentGateway,
         FinanceDbContext dbContext,
-        ILogger<CheckoutOrchestrator> logger)
+        ILogger<CheckoutOrchestrator> logger,
+        IContabilidadService? contabilidad = null)
     {
         _stockService = stockService;
         _commissionService = commissionService;
         _paymentGateway = paymentGateway;
         _dbContext = dbContext;
         _logger = logger;
+        _contabilidad = contabilidad;
     }
 
     /// <summary>
@@ -213,12 +216,23 @@ public sealed class CheckoutOrchestrator
 
         await _stockService.ConfirmarDespachoAsync(reservaId);
 
+        // ── PASO 6: Generar Asiento Contable de Venta (idempotente) ───────────
+        if (_contabilidad != null)
+        {
+            _logger.LogDebug("Saga Paso 6: Generando asiento de venta para OrdenId={OrdenId}", command.OrdenId);
+            await _contabilidad.GenerarAsientoVentaAsync(
+                command.OrdenId,
+                ordenDb.SubTotal,
+                ordenDb.ImpuestoIva,
+                ordenDb.TipoComprobante);
+        }
+
         _logger.LogInformation(
             "Checkout Saga COMPLETADO. OrdenId={OrdenId}, TransaccionId={TransaccionId}, " +
             "MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
             command.OrdenId, pagoResult.TransaccionId, montoVendedor, montoMarketplace);
 
-        // ── PASO 6: Retornar resultado exitoso ────────────────────────────────
+        // ── PASO 7: Retornar resultado exitoso ────────────────────────────────
         return new CheckoutResult(
             OrdenId: command.OrdenId,
             TransaccionId: pagoResult.TransaccionId!,
