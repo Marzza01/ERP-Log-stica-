@@ -100,6 +100,40 @@ namespace MarketplaceERP.Catalog.Migrations
                         });
                 });
 
+            modelBuilder.Entity("MarketplaceERP.Catalog.Entities.AlertaInventarioRevision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProductoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ReconocidaEn")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("ReconocidaPor")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<string>("Tipo")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReconocidaEn");
+
+                    b.HasIndex("ProductoId", "Tipo")
+                        .IsUnique();
+
+                    b.ToTable("alertas_inventario_revision", "catalog");
+                });
+
             modelBuilder.Entity("MarketplaceERP.Catalog.Entities.ConteoCiclico", b =>
                 {
                     b.Property<Guid>("Id")
@@ -906,6 +940,17 @@ namespace MarketplaceERP.Catalog.Migrations
                     b.Navigation("Producto");
 
                     b.Navigation("StockFisico");
+                });
+
+            modelBuilder.Entity("MarketplaceERP.Catalog.Entities.AlertaInventarioRevision", b =>
+                {
+                    b.HasOne("MarketplaceERP.Catalog.Entities.Producto", "Producto")
+                        .WithMany()
+                        .HasForeignKey("ProductoId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Producto");
                 });
 
             modelBuilder.Entity("MarketplaceERP.Catalog.Entities.ConteoCiclico", b =>

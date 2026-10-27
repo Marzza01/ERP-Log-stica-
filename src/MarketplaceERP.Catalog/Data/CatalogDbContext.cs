@@ -24,6 +24,7 @@ public class CatalogDbContext : DbContext
     public DbSet<MovimientoInventario> MovimientosInventario => Set<MovimientoInventario>();
     public DbSet<AjusteInventario> AjustesInventario => Set<AjusteInventario>();
     public DbSet<ConteoCiclico> ConteosCiclicos => Set<ConteoCiclico>();
+    public DbSet<AlertaInventarioRevision> AlertasInventarioRevision => Set<AlertaInventarioRevision>();
     public DbSet<UbicacionAlmacen> UbicacionesAlmacen => Set<UbicacionAlmacen>();
     public DbSet<DevolucionRMA> DevolucionesRMA => Set<DevolucionRMA>();
     public DbSet<MovimientoMWIP> MovimientosMWIP => Set<MovimientoMWIP>();
@@ -328,6 +329,25 @@ public class CatalogDbContext : DbContext
             entity.HasIndex(c => c.AjusteInventarioId);
             entity.HasIndex(c => c.Estado);
             entity.HasIndex(c => c.FechaCreacion);
+        });
+
+        // ── AlertaInventarioRevision ───────────────────────────────────────────
+        modelBuilder.Entity<AlertaInventarioRevision>(entity =>
+        {
+            entity.ToTable("alertas_inventario_revision");
+            entity.HasKey(a => a.Id);
+            entity.Property(a => a.Id).ValueGeneratedOnAdd();
+            entity.Property(a => a.Tipo).HasConversion<string>().HasMaxLength(30);
+            entity.Property(a => a.ReconocidaEn).HasDefaultValueSql("NOW()");
+            entity.Property(a => a.ReconocidaPor).HasMaxLength(150).IsRequired();
+
+            entity.HasOne(a => a.Producto)
+                  .WithMany()
+                  .HasForeignKey(a => a.ProductoId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(a => new { a.ProductoId, a.Tipo }).IsUnique();
+            entity.HasIndex(a => a.ReconocidaEn);
         });
 
         // ── DevolucionRMA (Logística Inversa) ──────────────────────────────────
