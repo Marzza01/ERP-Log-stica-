@@ -23,6 +23,83 @@ namespace MarketplaceERP.Catalog.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MarketplaceERP.Catalog.Entities.AjusteInventario", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AplicadoPor")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<string>("AprobadoPor")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<int>("Cantidad")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CreadoPor")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<string>("Detalle")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Estado")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTime?>("FechaAplicacion")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("FechaCreacion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTime?>("FechaDecision")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Motivo")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("ProductoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Referencia")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("StockFisicoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Tipo")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Estado");
+
+                    b.HasIndex("FechaCreacion");
+
+                    b.HasIndex("ProductoId");
+
+                    b.HasIndex("StockFisicoId");
+
+                    b.ToTable("ajustes_inventario", "catalog", t =>
+                        {
+                            t.HasCheckConstraint("CK_ajustes_inventario_cantidad_positiva", "\"Cantidad\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("MarketplaceERP.Catalog.Entities.DevolucionRMA", b =>
                 {
                     b.Property<Guid>("Id")
@@ -726,6 +803,25 @@ namespace MarketplaceERP.Catalog.Migrations
                     b.HasIndex("Pasillo", "Rack", "Nivel", "Posicion");
 
                     b.ToTable("ubicaciones_almacen", "catalog");
+                });
+
+            modelBuilder.Entity("MarketplaceERP.Catalog.Entities.AjusteInventario", b =>
+                {
+                    b.HasOne("MarketplaceERP.Catalog.Entities.Producto", "Producto")
+                        .WithMany()
+                        .HasForeignKey("ProductoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MarketplaceERP.Catalog.Entities.StockFisico", "StockFisico")
+                        .WithMany()
+                        .HasForeignKey("StockFisicoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Producto");
+
+                    b.Navigation("StockFisico");
                 });
 
             modelBuilder.Entity("MarketplaceERP.Catalog.Entities.DevolucionRMA", b =>

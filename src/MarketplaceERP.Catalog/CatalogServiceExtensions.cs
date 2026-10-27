@@ -31,6 +31,7 @@ public static class CatalogServiceExtensions
         // ── Servicios del módulo Catalog ──────────────────────────────────────
         services.AddScoped<IStockService, StockService>();
         services.AddScoped<IInventoryService, InventoryService>();
+        services.AddScoped<IAjusteInventarioService, AjusteInventarioService>();
         services.AddScoped<ICatalogImportService, CatalogImportService>();
         services.AddScoped<IWmsService, WmsService>();
         services.AddScoped<IRmaService, RmaService>();
