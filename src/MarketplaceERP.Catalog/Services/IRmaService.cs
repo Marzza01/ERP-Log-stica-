@@ -8,7 +8,14 @@ using MarketplaceERP.Catalog.Entities;
 namespace MarketplaceERP.Catalog.Services;
 
 public record RegistrarRmaRequest(Guid OrdenId, Guid ProductoId, int Cantidad, string MotivoCliente);
-public record DictaminarRmaRequest(ClasificacionRMA Clasificacion, string Inspector, string DictamenTecnico, decimal DescuentoRemate = 0m);
+
+public record DictaminarRmaRequest(
+    ClasificacionRMA Clasificacion,
+    string Inspector,
+    string DictamenTecnico,
+    decimal DescuentoRemate = 0m,
+    Guid? UbicacionDestinoId = null,
+    Guid? OperacionId = null);
 
 public interface IRmaService
 {

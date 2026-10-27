@@ -9,7 +9,8 @@ import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
 import { rmaApi, type RegistrarRmaRequest, type DictaminarRmaRequest } from '../../api/rma';
-import type { DevolucionRMA } from '../../types';
+import { wmsApi } from '../../api/wms';
+import type { DevolucionRMA, UbicacionAlmacen } from '../../types';
 
 export default function RmaPage() {
   const [rmas, setRmas] = useState<DevolucionRMA[]>([]);
@@ -33,8 +34,13 @@ export default function RmaPage() {
     inspector: 'Operador Bodega',
     dictamenTecnico: 'Producto apto para reingreso a inventario.',
     descuentoRemate: 0,
+    ubicacionDestinoId: '',
+    operacionId: crypto.randomUUID(),
   });
   const [savingDictamen, setSavingDictamen] = useState(false);
+  const [ubicaciones, setUbicaciones] = useState<UbicacionAlmacen[]>([]);
+  const [loadingUbicaciones, setLoadingUbicaciones] = useState(false);
+  const [errorDictamen, setErrorDictamen] = useState('');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -66,6 +72,38 @@ export default function RmaPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!selectedRma) return;
+
+    let activo = true;
+    setLoadingUbicaciones(true);
+    wmsApi.listarUbicaciones()
+      .then(items => {
+        if (activo) setUbicaciones(items || []);
+      })
+      .catch(() => {
+        if (activo) setUbicaciones([]);
+      })
+      .finally(() => {
+        if (activo) setLoadingUbicaciones(false);
+      });
+
+    return () => { activo = false; };
+  }, [selectedRma]);
+
+  const abrirInspeccion = (rma: DevolucionRMA) => {
+    setSelectedRma(rma);
+    setErrorDictamen('');
+    setFormDictamen({
+      clasificacion: rma.clasificacion === 'Pendiente' ? 'ReStock' : rma.clasificacion,
+      inspector: rma.inspectorTecnico || 'Operador Bodega',
+      dictamenTecnico: rma.dictamenTecnico || 'Inspección física en bodega sin anomalías graves.',
+      descuentoRemate: rma.porcentajeRemateDescuento || 0,
+      ubicacionDestinoId: '',
+      operacionId: crypto.randomUUID(),
+    });
+  };
+
   const handleCrearRMA = async () => {
     setSavingReg(true);
     try {
@@ -79,11 +117,19 @@ export default function RmaPage() {
 
   const handleInspeccionar = async () => {
     if (!selectedRma) return;
+    if (formDictamen.clasificacion === 'ReStock' && !formDictamen.ubicacionDestinoId) {
+      setErrorDictamen('Debes seleccionar una ubicación WMS para reingresar el producto al inventario.');
+      return;
+    }
+
     setSavingDictamen(true);
+    setErrorDictamen('');
     try {
       const actualizado = await rmaApi.inspeccionar(selectedRma.id, formDictamen);
       setRmas(prev => prev.map(r => r.id === actualizado.id ? actualizado : r));
       setSelectedRma(null);
+    } catch (error) {
+      setErrorDictamen(error instanceof Error ? error.message : 'No fue posible procesar el dictamen RMA.');
     } finally {
       setSavingDictamen(false);
     }
@@ -254,15 +300,7 @@ export default function RmaPage() {
             accessor: 'id',
             render: (row) => (
               <button
-                onClick={() => {
-                  setSelectedRma(row);
-                  setFormDictamen({
-                    clasificacion: 'ReStock',
-                    inspector: 'Operador Bodega',
-                    dictamenTecnico: 'Inspección física en bodega sin anomalías graves.',
-                    descuentoRemate: 0,
-                  });
-                }}
+                onClick={() => abrirInspeccion(row)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -449,6 +487,31 @@ export default function RmaPage() {
               </div>
             </div>
 
+            {formDictamen.clasificacion === 'ReStock' && (
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                  Ubicación WMS de reingreso
+                </label>
+                <select
+                  value={formDictamen.ubicacionDestinoId ?? ''}
+                  onChange={e => setFormDictamen(f => ({ ...f, ubicacionDestinoId: e.target.value }))}
+                  disabled={loadingUbicaciones || selectedRma.estado === 'Completado'}
+                  required
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                >
+                  <option value="">{loadingUbicaciones ? 'Cargando ubicaciones...' : 'Seleccionar ubicación'}</option>
+                  {ubicaciones.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.codigo} — {u.zona || 'Bodega'} — capacidad {u.capacidadMaxima}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
+                  El ReStock quedará trazado en esta posición y aumentará únicamente su saldo físico.
+                </div>
+              </div>
+            )}
+
             <div>
               <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
                 Observaciones Técnicas del Inspector
@@ -460,6 +523,12 @@ export default function RmaPage() {
                 style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
               />
             </div>
+
+            {errorDictamen && (
+              <div style={{ padding: '0.65rem 0.8rem', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.3)', color: 'var(--red)', fontSize: '0.8rem' }}>
+                {errorDictamen}
+              </div>
+            )}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
               <button
@@ -476,22 +545,24 @@ export default function RmaPage() {
               >
                 Cerrar
               </button>
-              <button
-                type="button"
-                onClick={handleInspeccionar}
-                disabled={savingDictamen}
-                style={{
-                  padding: '0.5rem 1.25rem',
-                  borderRadius: '6px',
-                  border: 'none',
-                  background: 'var(--green)',
-                  color: '#000',
-                  fontWeight: 700,
-                  cursor: savingDictamen ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {savingDictamen ? 'Guardando...' : 'Emitir Dictamen & Autorizar'}
-              </button>
+              {selectedRma.estado !== 'Completado' && (
+                <button
+                  type="button"
+                  onClick={handleInspeccionar}
+                  disabled={savingDictamen}
+                  style={{
+                    padding: '0.5rem 1.25rem',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: 'var(--green)',
+                    color: '#000',
+                    fontWeight: 700,
+                    cursor: savingDictamen ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {savingDictamen ? 'Guardando...' : 'Emitir Dictamen & Autorizar'}
+                </button>
+              )}
             </div>
           </div>
         </Modal>

@@ -160,6 +160,18 @@ public class CatalogLogisticsTests
     {
         // Arrange
         using var dbContext = CreateInMemoryDbContext();
+        var ubicacion = new UbicacionAlmacen
+        {
+            Id = Guid.NewGuid(),
+            Codigo = "PAS-RMA-RCK-01-NIV-01-POS-01",
+            Pasillo = "RMA",
+            Rack = "01",
+            Nivel = 1,
+            Posicion = "01",
+            CapacidadMaxima = 100,
+            EstaOcupada = true,
+            Zona = "RMA"
+        };
         var producto = new Producto
         {
             Id = Guid.NewGuid(),
@@ -169,13 +181,18 @@ public class CatalogLogisticsTests
             {
                 Id = Guid.NewGuid(),
                 CantidadTotal = 50,
-                CantidadReservada = 0
+                CantidadReservada = 0,
+                CantidadBloqueada = 0,
+                UbicacionAlmacenId = ubicacion.Id,
+                UbicacionCodigo = ubicacion.Codigo
             }
         };
+        dbContext.UbicacionesAlmacen.Add(ubicacion);
         dbContext.Productos.Add(producto);
         await dbContext.SaveChangesAsync();
 
-        var rmaService = new RmaService(dbContext, NullLogger<RmaService>.Instance);
+        var inventoryService = new InventoryService(dbContext, NullLogger<InventoryService>.Instance);
+        var rmaService = new RmaService(dbContext, inventoryService, NullLogger<RmaService>.Instance);
 
         var rma = await rmaService.RegistrarSolicitudRmaAsync(new RegistrarRmaRequest(
             OrdenId: Guid.NewGuid(),
@@ -188,7 +205,9 @@ public class CatalogLogisticsTests
         var dictamen = new DictaminarRmaRequest(
             Clasificacion: ClasificacionRMA.ReStock,
             Inspector: "Técnico Juan Pérez",
-            DictamenTecnico: "Sellado intacto, producto operativo al 100%."
+            DictamenTecnico: "Sellado intacto, producto operativo al 100%.",
+            UbicacionDestinoId: ubicacion.Id,
+            OperacionId: Guid.NewGuid()
         );
         var rmaDictaminado = await rmaService.InspeccionarDevolucionAsync(rma.Id, dictamen);
 
@@ -221,7 +240,8 @@ public class CatalogLogisticsTests
         dbContext.Productos.Add(producto);
         await dbContext.SaveChangesAsync();
 
-        var rmaService = new RmaService(dbContext, NullLogger<RmaService>.Instance);
+        var inventoryService = new InventoryService(dbContext, NullLogger<InventoryService>.Instance);
+        var rmaService = new RmaService(dbContext, inventoryService, NullLogger<RmaService>.Instance);
 
         var rma = await rmaService.RegistrarSolicitudRmaAsync(new RegistrarRmaRequest(
             OrdenId: Guid.NewGuid(),

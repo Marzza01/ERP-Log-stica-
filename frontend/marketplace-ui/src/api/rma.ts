@@ -18,6 +18,8 @@ export interface DictaminarRmaRequest {
   inspector: string;
   dictamenTecnico: string;
   descuentoRemate?: number;
+  ubicacionDestinoId?: string;
+  operacionId?: string;
 }
 
 export const rmaApi = {

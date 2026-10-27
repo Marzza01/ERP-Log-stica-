@@ -35,8 +35,15 @@ public class RmaController : ControllerBase
     [ProducesResponseType(typeof(DevolucionRMA), StatusCodes.Status201Created)]
     public async Task<IActionResult> SolicitarDevolucion([FromBody] RegistrarRmaRequest request)
     {
-        var rma = await _rmaService.RegistrarSolicitudRmaAsync(request);
-        return CreatedAtAction(nameof(Listar), new { id = rma.Id }, rma);
+        try
+        {
+            var rma = await _rmaService.RegistrarSolicitudRmaAsync(request);
+            return CreatedAtAction(nameof(Listar), new { id = rma.Id }, rma);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
     }
 
     /// <summary>
@@ -48,13 +55,20 @@ public class RmaController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Inspeccionar(Guid id, [FromBody] DictaminarRmaRequest request)
     {
-        var rma = await _rmaService.InspeccionarDevolucionAsync(id, request);
-        if (rma is null)
+        try
         {
-            return NotFound(new { mensaje = $"Solicitud RMA {id} no encontrada." });
-        }
+            var rma = await _rmaService.InspeccionarDevolucionAsync(id, request);
+            if (rma is null)
+            {
+                return NotFound(new { mensaje = $"Solicitud RMA {id} no encontrada." });
+            }
 
-        return Ok(rma);
+            return Ok(rma);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
     }
 
     /// <summary>
