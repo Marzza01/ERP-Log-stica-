@@ -24,45 +24,53 @@ public class FulfillmentServiceTests
         return new CatalogDbContext(options);
     }
 
+    private static StockService CreateStockService(CatalogDbContext db) =>
+        new(db, NullLogger<StockService>.Instance);
+
+    private static FulfillmentService CreateFulfillmentService(CatalogDbContext db, StockService stockService) =>
+        new(db, stockService, NullLogger<FulfillmentService>.Instance);
+
     [Fact]
-    public async Task GenerarPickList_OrdenaItemsPorRutaOptimaSShape()
+    public async Task GenerarPickList_UsaUbicacionesReservadas_YOrdenaRutaSShape()
     {
-        // Arrange
-        using var db = CreateInMemoryDbContext();
-        var service = new FulfillmentService(db, NullLogger<FulfillmentService>.Instance);
+        await using var db = CreateInMemoryDbContext();
+        var stockService = CreateStockService(db);
+        var service = CreateFulfillmentService(db, stockService);
 
-        var prod1 = Guid.NewGuid();
-        var prod2 = Guid.NewGuid();
+        var prod1 = CrearProducto("SKU-PROD-B");
+        var prod2 = CrearProducto("SKU-PROD-A");
 
-        // Ubicaciones: prod2 en Pasillo A, prod1 en Pasillo B
-        var ubiB = new UbicacionAlmacen { Id = Guid.NewGuid(), Codigo = "PAS-B-RCK-01-NIV-01-POS-01", Pasillo = "B", Rack = "01", Nivel = 1, Posicion = "01" };
-        var ubiA = new UbicacionAlmacen { Id = Guid.NewGuid(), Codigo = "PAS-A-RCK-01-NIV-01-POS-01", Pasillo = "A", Rack = "01", Nivel = 1, Posicion = "01" };
+        var ubiB = CrearUbicacion("PAS-B-RCK-01-NIV-01-POS-01", "B");
+        var ubiA = CrearUbicacion("PAS-A-RCK-01-NIV-01-POS-01", "A");
 
+        db.Productos.AddRange(prod1, prod2);
         db.UbicacionesAlmacen.AddRange(ubiB, ubiA);
         db.StockFisico.AddRange(
-            new StockFisico { Id = Guid.NewGuid(), ProductoId = prod1, CantidadTotal = 50, UbicacionAlmacen = ubiB, UbicacionCodigo = ubiB.Codigo },
-            new StockFisico { Id = Guid.NewGuid(), ProductoId = prod2, CantidadTotal = 50, UbicacionAlmacen = ubiA, UbicacionCodigo = ubiA.Codigo }
+            CrearStock(prod1.Id, ubiB, 50),
+            CrearStock(prod2.Id, ubiA, 50)
         );
         await db.SaveChangesAsync();
 
+        var ordenId = Guid.NewGuid();
+        var reserva1 = await stockService.ReservarStockAsync(prod1.Id, 2, ordenId);
+        var reserva2 = await stockService.ReservarStockAsync(prod2.Id, 3, ordenId);
+        await stockService.ConfirmarReservaAsync(reserva1.ReservaId);
+        await stockService.ConfirmarReservaAsync(reserva2.ReservaId);
+
         var request = new GenerarPickListRequest(
-            OrdenId: Guid.NewGuid(),
+            OrdenId: ordenId,
             NumeroOrden: "ORD-TEST-001",
             OperadorAsignado: "Carlos Perez",
             Items: new List<ItemPickingSolicitud>
             {
-                new(prod1, "SKU-PROD-B", "Producto B", 2),
-                new(prod2, "SKU-PROD-A", "Producto A", 3)
+                new(prod1.Id, prod1.Sku, "Producto B", 2),
+                new(prod2.Id, prod2.Sku, "Producto A", 3)
             }
         );
 
-        // Act
         var pickList = await service.GenerarPickListAsync(request);
 
-        // Assert
-        pickList.Should().NotBeNull();
         pickList.Items.Should().HaveCount(2);
-        // Primero Pasillo A luego Pasillo B
         pickList.Items.First().Pasillo.Should().Be("A");
         pickList.Items.Last().Pasillo.Should().Be("B");
         pickList.Estado.Should().Be(EstadoPicking.Pendiente);
@@ -71,9 +79,9 @@ public class FulfillmentServiceTests
     [Fact]
     public async Task ConfirmarPicking_ActualizaEstadoACompletado_CuandoTodosSonRecogidos()
     {
-        // Arrange
-        using var db = CreateInMemoryDbContext();
-        var service = new FulfillmentService(db, NullLogger<FulfillmentService>.Instance);
+        await using var db = CreateInMemoryDbContext();
+        var stockService = CreateStockService(db);
+        var service = CreateFulfillmentService(db, stockService);
 
         var item = new ItemPickList
         {
@@ -100,7 +108,6 @@ public class FulfillmentServiceTests
         db.PickLists.Add(pickList);
         await db.SaveChangesAsync();
 
-        // Act
         var confirmaciones = new List<ConfirmarItemPickingRequest>
         {
             new(item.Id, CantidadRecogida: 2)
@@ -108,7 +115,6 @@ public class FulfillmentServiceTests
 
         var resultado = await service.ConfirmarPickingAsync(pickList.Id, confirmaciones);
 
-        // Assert
         resultado.Should().NotBeNull();
         resultado!.Estado.Should().Be(EstadoPicking.Completado);
         resultado.FechaFin.Should().NotBeNull();
@@ -118,12 +124,24 @@ public class FulfillmentServiceTests
     [Fact]
     public async Task EmpacarYRotular_GeneraGuiaEnvio_YCalculaVolumenM3()
     {
-        // Arrange
-        using var db = CreateInMemoryDbContext();
-        var service = new FulfillmentService(db, NullLogger<FulfillmentService>.Instance);
+        await using var db = CreateInMemoryDbContext();
+        var stockService = CreateStockService(db);
+        var service = CreateFulfillmentService(db, stockService);
+
+        var ordenId = Guid.NewGuid();
+        db.PickLists.Add(new PickList
+        {
+            Id = Guid.NewGuid(),
+            OrdenId = ordenId,
+            NumeroOrden = "ORD-TEST-003",
+            NumeroPickList = "PKL-TEST-003",
+            Estado = EstadoPicking.Completado,
+            FechaFin = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
 
         var request = new EmpacarDespachoRequest(
-            OrdenId: Guid.NewGuid(),
+            OrdenId: ordenId,
             NumeroOrden: "ORD-TEST-003",
             PesoRealKg: 2.5m,
             LargoCm: 30,
@@ -137,14 +155,131 @@ public class FulfillmentServiceTests
             TelefonoReceptor: "7000-1234"
         );
 
-        // Act
         var paquete = await service.EmpacarYRotularAsync(request);
 
-        // Assert
-        paquete.Should().NotBeNull();
         paquete.NumeroGuia.Should().StartWith("SV-LOGI-");
         paquete.Estado.Should().Be(EstadoPacking.ListoParaDespacho);
-        // Volumen en m3 = (30 * 20 * 10) / 1,000,000 = 6000 / 1000000 = 0.006 m3
         paquete.VolumenM3.Should().Be(0.006m);
     }
+
+    [Fact]
+    public async Task DespacharPaquete_ConsumeReservaYStock_YSiguienteIntentoEsIdempotente()
+    {
+        await using var db = CreateInMemoryDbContext();
+        var stockService = CreateStockService(db);
+        var service = CreateFulfillmentService(db, stockService);
+
+        var producto = CrearProducto("SKU-DESP-001");
+        var ubicacion = CrearUbicacion("PAS-A-RCK-01-NIV-01-POS-01", "A");
+        var stock = CrearStock(producto.Id, ubicacion, 10);
+
+        db.Productos.Add(producto);
+        db.UbicacionesAlmacen.Add(ubicacion);
+        db.StockFisico.Add(stock);
+        await db.SaveChangesAsync();
+
+        var ordenId = Guid.NewGuid();
+        var reserva = await stockService.ReservarStockAsync(producto.Id, 3, ordenId);
+        await stockService.ConfirmarReservaAsync(reserva.ReservaId);
+
+        var pick = await service.GenerarPickListAsync(new GenerarPickListRequest(
+            ordenId,
+            "ORD-DESP-001",
+            "Operador",
+            new List<ItemPickingSolicitud>
+            {
+                new(producto.Id, producto.Sku, producto.Nombre, 3)
+            }));
+
+        await service.ConfirmarPickingAsync(
+            pick.Id,
+            pick.Items.Select(i => new ConfirmarItemPickingRequest(i.Id, i.CantidadSolicitada)).ToList());
+
+        var paquete = await service.EmpacarYRotularAsync(new EmpacarDespachoRequest(
+            ordenId,
+            "ORD-DESP-001",
+            2m, 20m, 20m, 20m,
+            "LOGIMKT Express",
+            "San Salvador",
+            "San Salvador Centro",
+            "Dirección prueba",
+            "Cliente prueba",
+            "7000-0000"));
+
+        var primerDespacho = await service.DespacharPaqueteAsync(paquete.Id);
+        var segundoDespacho = await service.DespacharPaqueteAsync(paquete.Id);
+
+        primerDespacho!.Estado.Should().Be(EstadoPacking.Despachado);
+        primerDespacho.FechaDespacho.Should().NotBeNull();
+        segundoDespacho!.Estado.Should().Be(EstadoPacking.Despachado);
+
+        stock.CantidadTotal.Should().Be(7);
+        stock.CantidadReservada.Should().Be(0);
+        stock.CantidadDisponible.Should().Be(7);
+
+        var reservaDb = await db.ReservasStock.SingleAsync(r => r.Id == reserva.ReservaId);
+        reservaDb.CantidadConsumida.Should().Be(3);
+        reservaDb.CantidadPendiente.Should().Be(0);
+        reservaDb.Estado.Should().Be(EstadoReserva.Consumida);
+
+        var outbound = await db.MovimientosInventario
+            .Where(m => m.OrdenId == ordenId && m.TipoMovimiento == TipoMovimientoInventario.DespachoOutbound)
+            .ToListAsync();
+
+        outbound.Sum(m => m.Cantidad).Should().Be(3);
+        outbound.Should().HaveCount(1, "el segundo despacho no debe descontar otra vez");
+    }
+
+    private static Producto CrearProducto(string sku) => new()
+    {
+        Id = Guid.NewGuid(),
+        Sku = sku,
+        Nombre = $"Producto {sku}",
+        CategoriaNombre = "PRUEBAS",
+        Subcategoria = "PRUEBAS",
+        PrecioB2C = 100m,
+        PrecioB2B = 80m,
+        Moneda = "USD",
+        StockInicial = 0,
+        StockMinimo = 2,
+        ProveedorNombre = "Proveedor prueba",
+        PaisOrigen = "El Salvador",
+        PesoKg = 1m,
+        DimensionesCm = "1x1x1",
+        UnidadMedida = "Unidad",
+        EstadoProducto = "Activo",
+        CodigoEAN = string.Empty,
+        Descripcion = "Producto de prueba",
+        VendedorId = Guid.NewGuid(),
+        CategoriaId = Guid.NewGuid(),
+        EstaPublicado = true,
+        FechaCreacion = DateTime.UtcNow
+    };
+
+    private static UbicacionAlmacen CrearUbicacion(string codigo, string pasillo) => new()
+    {
+        Id = Guid.NewGuid(),
+        Codigo = codigo,
+        Pasillo = pasillo,
+        Rack = "01",
+        Nivel = 1,
+        Posicion = "01",
+        CapacidadMaxima = 100,
+        EstaOcupada = true,
+        Zona = "AlmacenamientoGeneral",
+        FechaCreacion = DateTime.UtcNow
+    };
+
+    private static StockFisico CrearStock(Guid productoId, UbicacionAlmacen ubicacion, int total) => new()
+    {
+        Id = Guid.NewGuid(),
+        ProductoId = productoId,
+        CantidadTotal = total,
+        CantidadReservada = 0,
+        CantidadBloqueada = 0,
+        PuntoReorden = 2,
+        UbicacionAlmacenId = ubicacion.Id,
+        UbicacionCodigo = ubicacion.Codigo,
+        UltimaActualizacion = DateTime.UtcNow
+    };
 }

@@ -12,7 +12,8 @@ public enum EstadoPacking
 {
     Pendiente = 0,
     Empacando = 1,
-    ListoParaDespacho = 2
+    ListoParaDespacho = 2,
+    Despachado = 3
 }
 
 public class PaqueteDespacho

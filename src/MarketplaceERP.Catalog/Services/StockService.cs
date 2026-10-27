@@ -224,6 +224,152 @@ internal sealed class StockService : IStockService
         }
     }
 
+
+    /// <summary>
+    /// Consume físicamente todas las reservas confirmadas de una orden durante
+    /// el despacho real de Fulfillment.
+    ///
+    /// Reglas:
+    /// - solo consume reservas Confirmada/ParcialmenteConsumida;
+    /// - reduce CantidadTotal y CantidadReservada en la ubicación asignada;
+    /// - incrementa CantidadConsumida en reserva y detalle;
+    /// - registra MovimientoInventario.DespachoOutbound;
+    /// - es idempotente si la orden ya fue consumida completamente.
+    /// </summary>
+    public async Task ConsumirReservasOrdenAsync(Guid ordenId)
+    {
+        if (ordenId == Guid.Empty)
+            throw new ArgumentException("OrdenId es obligatorio.", nameof(ordenId));
+
+        await using var transaction = await BeginTransactionIfRelationalAsync();
+
+        try
+        {
+            var reservas = await GetReservasOrdenForUpdateAsync(ordenId);
+
+            if (reservas.Count == 0)
+                throw new InvalidOperationException($"La orden {ordenId} no tiene reservas de inventario.");
+
+            // Idempotencia: si ya no queda cantidad pendiente y existe consumo,
+            // el despacho ya afectó inventario anteriormente.
+            if (reservas.All(r => r.CantidadPendiente <= 0))
+            {
+                if (reservas.Any(r => r.CantidadConsumida > 0))
+                {
+                    await CommitIfNeededAsync(transaction);
+                    _logger.LogInformation(
+                        "Consumo Outbound idempotente ignorado. OrdenId={OrdenId}",
+                        ordenId);
+                    return;
+                }
+
+                throw new InvalidOperationException(
+                    $"La orden {ordenId} no tiene stock reservado pendiente para despachar.");
+            }
+
+            var ahora = DateTime.UtcNow;
+
+            foreach (var reserva in reservas.OrderBy(r => r.ProductoId).ThenBy(r => r.Id))
+            {
+                if (reserva.CantidadPendiente <= 0)
+                    continue;
+
+                if (reserva.Estado != EstadoReserva.Confirmada &&
+                    reserva.Estado != EstadoReserva.ParcialmenteConsumida)
+                {
+                    throw new InvalidOperationException(
+                        $"La reserva {reserva.Id} de la orden {ordenId} está en estado {reserva.Estado} " +
+                        "y no puede consumirse en despacho.");
+                }
+
+                var detalles = await _dbContext.ReservasStockDetalle
+                    .AsTracking()
+                    .Where(d => d.ReservaStockId == reserva.Id)
+                    .OrderBy(d => d.StockFisicoId)
+                    .ToListAsync();
+
+                if (detalles.Count == 0)
+                    throw new InvalidOperationException(
+                        $"La reserva {reserva.Id} no tiene detalle por ubicación.");
+
+                var stockIds = detalles
+                    .Where(d => d.CantidadPendiente > 0)
+                    .Select(d => d.StockFisicoId)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToList();
+
+                var stocks = await GetStocksByIdsForUpdateAsync(stockIds);
+                var stockPorId = stocks.ToDictionary(s => s.Id);
+
+                var totalConsumido = 0;
+
+                foreach (var detalle in detalles)
+                {
+                    var pendienteDetalle = detalle.CantidadPendiente;
+                    if (pendienteDetalle <= 0)
+                        continue;
+
+                    if (!stockPorId.TryGetValue(detalle.StockFisicoId, out var stock))
+                    {
+                        throw new InvalidOperationException(
+                            $"La reserva {reserva.Id} referencia un saldo de stock inexistente ({detalle.StockFisicoId}).");
+                    }
+
+                    if (stock.CantidadReservada < pendienteDetalle)
+                    {
+                        throw new InvalidOperationException(
+                            $"Inconsistencia de inventario: el saldo {stock.Id} tiene {stock.CantidadReservada} reservadas " +
+                            $"pero requiere consumir {pendienteDetalle}.");
+                    }
+
+                    if (stock.CantidadTotal < pendienteDetalle)
+                    {
+                        throw new InvalidOperationException(
+                            $"Inconsistencia de inventario: el saldo {stock.Id} tiene {stock.CantidadTotal} físicas " +
+                            $"pero requiere despachar {pendienteDetalle}.");
+                    }
+
+                    stock.CantidadReservada -= pendienteDetalle;
+                    stock.CantidadTotal -= pendienteDetalle;
+                    stock.UltimaActualizacion = ahora;
+
+                    detalle.CantidadConsumida += pendienteDetalle;
+                    totalConsumido += pendienteDetalle;
+
+                    _dbContext.MovimientosInventario.Add(new MovimientoInventario
+                    {
+                        Id = Guid.NewGuid(),
+                        ProductoId = reserva.ProductoId,
+                        TipoMovimiento = TipoMovimientoInventario.DespachoOutbound,
+                        Cantidad = pendienteDetalle,
+                        UbicacionOrigenId = stock.UbicacionAlmacenId,
+                        ReservaStockId = reserva.Id,
+                        OrdenId = reserva.OrdenId,
+                        Referencia = $"ORD-{reserva.OrdenId:N}",
+                        Observaciones = "Despacho físico de Fulfillment.",
+                        FechaMovimiento = ahora
+                    });
+                }
+
+                reserva.CantidadConsumida += totalConsumido;
+                ActualizarEstadoReserva(reserva, ahora);
+            }
+
+            await _dbContext.SaveChangesAsync();
+            await CommitIfNeededAsync(transaction);
+
+            _logger.LogInformation(
+                "Reservas consumidas por despacho físico. OrdenId={OrdenId}",
+                ordenId);
+        }
+        catch
+        {
+            await RollbackIfNeededAsync(transaction);
+            throw;
+        }
+    }
+
     /// <inheritdoc />
     public async Task LiberarStockAsync(Guid reservaId)
     {
@@ -362,9 +508,61 @@ internal sealed class StockService : IStockService
             .SingleOrDefaultAsync(r => r.Id == reservaId);
     }
 
+
+    private async Task<List<ReservaStock>> GetReservasOrdenForUpdateAsync(Guid ordenId)
+    {
+        if (IsPostgreSql())
+        {
+            return await _dbContext.ReservasStock
+                .FromSqlInterpolated($"""
+                    SELECT *
+                    FROM catalog.reservas_stock
+                    WHERE "OrdenId" = {ordenId}
+                    ORDER BY "ProductoId", "Id"
+                    FOR UPDATE
+                    """)
+                .AsTracking()
+                .ToListAsync();
+        }
+
+        return await _dbContext.ReservasStock
+            .AsTracking()
+            .Where(r => r.OrdenId == ordenId)
+            .OrderBy(r => r.ProductoId)
+            .ThenBy(r => r.Id)
+            .ToListAsync();
+    }
+
+    private async Task<List<StockFisico>> GetStocksByIdsForUpdateAsync(IReadOnlyCollection<Guid> stockIds)
+    {
+        if (stockIds.Count == 0)
+            return new List<StockFisico>();
+
+        if (IsPostgreSql())
+        {
+            var ids = stockIds.ToArray();
+            return await _dbContext.StockFisico
+                .FromSqlInterpolated($"""
+                    SELECT *
+                    FROM catalog.stock_fisico
+                    WHERE "Id" = ANY({ids})
+                    ORDER BY "Id"
+                    FOR UPDATE
+                    """)
+                .AsTracking()
+                .ToListAsync();
+        }
+
+        return await _dbContext.StockFisico
+            .AsTracking()
+            .Where(s => stockIds.Contains(s.Id))
+            .OrderBy(s => s.Id)
+            .ToListAsync();
+    }
+
     private async Task<IDbContextTransaction?> BeginTransactionIfRelationalAsync()
     {
-        if (!_dbContext.Database.IsRelational())
+        if (!_dbContext.Database.IsRelational() || _dbContext.Database.CurrentTransaction is not null)
             return null;
 
         return await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);

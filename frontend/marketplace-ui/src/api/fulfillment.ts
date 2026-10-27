@@ -75,7 +75,7 @@ export const fulfillmentApi = {
     apiClient.post<EmpacarResponse>(`/api/fulfillment/ordenes/${ordenId}/empacar`, req),
 
   despachar: (paqueteId: string) =>
-    apiClient.post<{ mensaje: string; numeroGuia: string; transportista: string; fechaDespacho?: string; estadoOrden?: string }>(
+    apiClient.post<{ mensaje: string; numeroGuia: string; transportista: string; fechaDespacho?: string; estadoPacking?: string; estadoOrden?: string }>(
       `/api/fulfillment/paquetes/${paqueteId}/despachar`
     ),
 };

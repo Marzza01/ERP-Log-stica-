@@ -171,12 +171,23 @@ export default function FulfillmentPage() {
   const handleDespachar = async (paqueteId: string) => {
     const pkg = paquetes.find(p => p.id === paqueteId);
     try {
-      await fulfillmentApi.despachar(paqueteId);
-      toast.success('Paquete Despachado', `Guía ${pkg?.numeroGuia || paqueteId} entregada al transportista.`);
-    } catch {
-      toast.success('Paquete Despachado (Local)', `Guía ${pkg?.numeroGuia || paqueteId} en tránsito.`);
+      const resp = await fulfillmentApi.despachar(paqueteId);
+      const fechaDespacho = resp?.fechaDespacho || new Date().toISOString();
+
+      setPaquetes(prev => prev.map(p =>
+        p.id === paqueteId
+          ? { ...p, estado: 'Despachado', fechaDespacho }
+          : p
+      ));
+
+      toast.success(
+        'Paquete Despachado',
+        `Guía ${pkg?.numeroGuia || paqueteId} entregada al transportista y stock consumido.`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No fue posible completar el despacho.';
+      toast.error('Despacho rechazado', message);
     }
-    setPaquetes(prev => prev.map(p => p.id === paqueteId ? { ...p, fechaDespacho: new Date().toISOString() } : p));
   };
 
   const pesoVolumetrico = ((packForm.largoCm * packForm.anchoCm * packForm.altoCm) / 5000).toFixed(2);
@@ -511,7 +522,7 @@ export default function FulfillmentPage() {
               render: () => <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.8rem' }}>● En Tránsito / Despachado</span>,
             },
           ]}
-          data={paquetes.filter(p => !!p.fechaDespacho)}
+          data={paquetes.filter(p => p.estado === 'Despachado' || !!p.fechaDespacho)}
           keyExtractor={(item) => item.id}
           loading={loading}
           emptyText="No hay despachos registrados todavía."

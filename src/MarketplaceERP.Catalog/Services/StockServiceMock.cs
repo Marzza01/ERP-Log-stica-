@@ -60,6 +60,25 @@ internal sealed class StockServiceMock : IStockService
     }
 
     /// <inheritdoc />
+    public Task ConsumirReservasOrdenAsync(Guid ordenId)
+    {
+        _logger.LogInformation("[MOCK] ConsumirReservasOrden: OrdenId={OrdenId}", ordenId);
+
+        lock (_lock)
+        {
+            var ids = _reservasActivas
+                .Where(kv => kv.Value.OrdenId == ordenId)
+                .Select(kv => kv.Key)
+                .ToList();
+
+            foreach (var id in ids)
+                _reservasActivas.Remove(id);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
     public Task LiberarStockAsync(Guid reservaId)
     {
         _logger.LogWarning(

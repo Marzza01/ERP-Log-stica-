@@ -27,6 +27,14 @@ public interface IStockService
     Task ConfirmarReservaAsync(Guid reservaId);
 
     /// <summary>
+    /// Consume físicamente todas las reservas confirmadas de una orden durante
+    /// el despacho real de Fulfillment. Reduce CantidadTotal y CantidadReservada
+    /// en las ubicaciones asignadas y registra movimientos Outbound.
+    /// La operación debe ser idempotente: un segundo intento no vuelve a descontar.
+    /// </summary>
+    Task ConsumirReservasOrdenAsync(Guid ordenId);
+
+    /// <summary>
     /// Libera una reserva de stock (compensación de la Saga).
     /// Debe llamarse cuando el pago falla DESPUÉS de haber reservado stock.
     /// </summary>

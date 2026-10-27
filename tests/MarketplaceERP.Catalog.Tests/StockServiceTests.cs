@@ -186,6 +186,72 @@ public class StockServiceTests
             m.TipoMovimiento == TipoMovimientoInventario.LiberacionReserva)).Should().Be(1);
     }
 
+
+    [Fact]
+    public async Task ConsumirReservasOrdenAsync_DebeDescontarFisicoReservadoYRegistrarOutbound()
+    {
+        await using var db = CrearDb();
+        var producto = CrearProducto();
+        var ubicacionA = CrearUbicacion("PAS-A-RCK-01-NIV-01-POS-01");
+        var ubicacionB = CrearUbicacion("PAS-B-RCK-01-NIV-01-POS-01");
+        var stockA = CrearStock(producto.Id, ubicacionA, total: 2);
+        var stockB = CrearStock(producto.Id, ubicacionB, total: 5);
+
+        db.AddRange(producto, ubicacionA, ubicacionB, stockA, stockB);
+        await db.SaveChangesAsync();
+
+        var sut = CrearSut(db);
+        var ordenId = Guid.NewGuid();
+        var reserva = await sut.ReservarStockAsync(producto.Id, 5, ordenId);
+        await sut.ConfirmarReservaAsync(reserva.ReservaId);
+
+        await sut.ConsumirReservasOrdenAsync(ordenId);
+        await sut.ConsumirReservasOrdenAsync(ordenId);
+
+        var stocks = await db.StockFisico.ToListAsync();
+        stocks.Sum(s => s.CantidadTotal).Should().Be(2);
+        stocks.Sum(s => s.CantidadReservada).Should().Be(0);
+
+        var reservaDb = await db.ReservasStock.SingleAsync(r => r.Id == reserva.ReservaId);
+        reservaDb.CantidadConsumida.Should().Be(5);
+        reservaDb.Estado.Should().Be(EstadoReserva.Consumida);
+        reservaDb.FechaFinalizacion.Should().NotBeNull();
+
+        var outbound = await db.MovimientosInventario
+            .Where(m => m.OrdenId == ordenId &&
+                        m.TipoMovimiento == TipoMovimientoInventario.DespachoOutbound)
+            .ToListAsync();
+
+        outbound.Sum(m => m.Cantidad).Should().Be(5);
+        outbound.Should().HaveCount(2, "la reserva estaba distribuida entre dos ubicaciones y el segundo intento es idempotente");
+    }
+
+    [Fact]
+    public async Task ConsumirReservasOrdenAsync_DebeRechazarReservaNoConfirmada()
+    {
+        await using var db = CrearDb();
+        var producto = CrearProducto();
+        var ubicacion = CrearUbicacion("PAS-A-RCK-01-NIV-01-POS-01");
+        var stock = CrearStock(producto.Id, ubicacion, total: 8);
+
+        db.AddRange(producto, ubicacion, stock);
+        await db.SaveChangesAsync();
+
+        var sut = CrearSut(db);
+        var ordenId = Guid.NewGuid();
+        await sut.ReservarStockAsync(producto.Id, 3, ordenId);
+
+        var act = async () => await sut.ConsumirReservasOrdenAsync(ordenId);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*no puede consumirse*");
+
+        stock.CantidadTotal.Should().Be(8);
+        stock.CantidadReservada.Should().Be(3);
+        (await db.MovimientosInventario.CountAsync(m =>
+            m.TipoMovimiento == TipoMovimientoInventario.DespachoOutbound)).Should().Be(0);
+    }
+
     private static CatalogDbContext CrearDb()
     {
         var options = new DbContextOptionsBuilder<CatalogDbContext>()
