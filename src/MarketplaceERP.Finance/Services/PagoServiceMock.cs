@@ -5,6 +5,8 @@ using MarketplaceERP.Shared.DTOs;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
+using Microsoft.Extensions.Hosting;
+
 namespace MarketplaceERP.Finance.Services;
 
 /// <summary>
@@ -15,29 +17,29 @@ namespace MarketplaceERP.Finance.Services;
 public class PagoServiceMock : IPaymentGateway
 {
     private readonly IConfiguration _configuration;
+    private readonly IHostEnvironment _environment;
     private readonly ILogger<PagoServiceMock> _logger;
 
     public PagoServiceMock(
         IConfiguration configuration,
+        IHostEnvironment environment,
         ILogger<PagoServiceMock> logger)
     {
         _configuration = configuration;
+        _environment = environment;
         _logger = logger;
     }
 
     /// <inheritdoc />
     public virtual Task<PagoResult> ProcesarPagoAsync(PagoRequest request)
     {
-        var envName = _configuration["ASPNETCORE_ENVIRONMENT"] 
-            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") 
-            ?? "Development";
+        bool allowMock = bool.TryParse(_configuration["Payments:AllowMock"], out var am) && am;
+        bool esProduccion = _environment.IsProduction();
 
-        bool esProduccion = string.Equals(envName, "Production", StringComparison.OrdinalIgnoreCase);
-
-        // En Producción, si no hay pasarela real configurada, no se debe procesar cobros ficticios con el mock
-        if (esProduccion)
+        // En Producción, el mock solo se permite si Payments:AllowMock está explícitamente en true
+        if (esProduccion && !allowMock)
         {
-            _logger.LogCritical("Intento de cobro con PagoServiceMock en entorno Production para OrdenId={OrdenId}. Abortando con 503.", request.OrdenId);
+            _logger.LogCritical("Intento de cobro con PagoServiceMock en entorno Production sin Payments:AllowMock=true para OrdenId={OrdenId}. Abortando con 503.", request.OrdenId);
             throw new InvalidOperationException("La pasarela de pagos no está configurada en entorno de producción. Servicio no disponible temporalmente.");
         }
 

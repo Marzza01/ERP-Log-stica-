@@ -122,6 +122,12 @@ public sealed class CheckoutOrchestrator
         {
             pagoResult = await _paymentGateway.ProcesarPagoAsync(pagoRequest);
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("pasarela de pagos no está configurada") || ex.Message.Contains("503"))
+        {
+            _logger.LogError(ex, "Saga Paso 2: Pasarela no disponible. Liberando reserva {ReservaId}.", reservaId);
+            await _stockService.LiberarStockAsync(reservaId);
+            throw;
+        }
         catch (Exception ex)
         {
             // Error inesperado en la pasarela → compensar reserva

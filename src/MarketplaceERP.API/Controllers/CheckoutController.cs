@@ -37,17 +37,20 @@ public class CheckoutController : ControllerBase
     private readonly CheckoutOrchestrator _orchestrator;
     private readonly FinanceDbContext _financeDb;
     private readonly CatalogDbContext _catalogDb;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<CheckoutController> _logger;
 
     public CheckoutController(
         CheckoutOrchestrator orchestrator,
         FinanceDbContext financeDb,
         CatalogDbContext catalogDb,
+        IConfiguration configuration,
         ILogger<CheckoutController> logger)
     {
         _orchestrator = orchestrator;
         _financeDb = financeDb;
         _catalogDb = catalogDb;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -107,19 +110,29 @@ public class CheckoutController : ControllerBase
 
         // 4. Verificar si la clave de idempotencia ya existe
         var registroExistente = await _financeDb.IdempotencyKeys
-            .AsNoTracking()
             .FirstOrDefaultAsync(k => k.UsuarioId == compradorId && k.Key == idempotencyKey, cancellationToken);
 
         if (registroExistente != null)
         {
-            // Misma clave + diferente payload -> 409 Conflict
-            if (registroExistente.RequestHash != requestHash)
+            // Definición de comportamiento: si la clave tiene más de 24 horas (expirada), se purga y se permite una nueva orden
+            if (DateTime.UtcNow >= registroExistente.FechaExpiracion)
             {
-                return Conflict(new { mensaje = "La clave de idempotencia ya fue utilizada con una solicitud diferente." });
+                _logger.LogInformation("Clave de idempotencia '{Key}' para usuario {UsuarioId} expiró a las {Exp}. Purgando para permitir nueva transacción.",
+                    idempotencyKey, compradorId, registroExistente.FechaExpiracion);
+                _financeDb.IdempotencyKeys.Remove(registroExistente);
+                await _financeDb.SaveChangesAsync(cancellationToken);
             }
+            else
+            {
+                // Misma clave + diferente payload -> 409 Conflict
+                if (registroExistente.RequestHash != requestHash)
+                {
+                    return Conflict(new { mensaje = "La clave de idempotencia ya fue utilizada con una solicitud diferente." });
+                }
 
-            // Misma clave + mismo payload -> devolver la respuesta previa almacenada sin volver a cobrar
-            return StatusCode(registroExistente.StatusCode, JsonSerializer.Deserialize<object>(registroExistente.ResponseJson));
+                // Misma clave + mismo payload -> devolver la respuesta previa almacenada sin volver a cobrar
+                return StatusCode(registroExistente.StatusCode, JsonSerializer.Deserialize<object>(registroExistente.ResponseJson));
+            }
         }
 
         // 5. Validar items del request
@@ -194,7 +207,11 @@ public class CheckoutController : ControllerBase
 
         subTotal = Math.Round(subTotal, 2, MidpointRounding.AwayFromZero);
         decimal iva13 = Math.Round(subTotal * 0.13m, 2, MidpointRounding.AwayFromZero);
-        decimal costoEnvio = 5.00m; // Tarifa base logística
+        
+        // Costo de envío extraído de configuración (Checkout:CostoEnvioDefault, fallback 5.00m)
+        decimal costoEnvio = decimal.TryParse(_configuration["Checkout:CostoEnvioDefault"], out var cEnv) ? cEnv : 5.00m;
+        costoEnvio = Math.Round(costoEnvio, 2, MidpointRounding.AwayFromZero);
+
         decimal montoTotal = Math.Round(subTotal + iva13 + costoEnvio, 2, MidpointRounding.AwayFromZero);
 
         // 9. Ejecución atómica dentro de UNA sola transacción EF Core
@@ -288,16 +305,25 @@ public class CheckoutController : ControllerBase
         catch (StockInsuficienteException ex)
         {
             _logger.LogWarning(ex, "Checkout fallido por stock insuficiente.");
+            _financeDb.ChangeTracker.Clear();
+            var ordenHuérfana = await _financeDb.Ordenes.FindAsync(new object[] { ordenId });
+            if (ordenHuérfana != null) { _financeDb.Ordenes.Remove(ordenHuérfana); await _financeDb.SaveChangesAsync(CancellationToken.None); }
             return Conflict(new { mensaje = ex.Message, tipo = "StockInsuficiente" });
         }
         catch (PagoFallidoException ex)
         {
             _logger.LogWarning(ex, "Checkout fallido por rechazo de pago.");
+            _financeDb.ChangeTracker.Clear();
+            var ordenHuérfana = await _financeDb.Ordenes.FindAsync(new object[] { ordenId });
+            if (ordenHuérfana != null) { _financeDb.Ordenes.Remove(ordenHuérfana); await _financeDb.SaveChangesAsync(CancellationToken.None); }
             return Conflict(new { mensaje = ex.Message, tipo = "PagoFallido" });
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("pasarela de pagos no está configurada") || ex.Message.Contains("503"))
         {
             _logger.LogError(ex, "Checkout fallido por pasarela no disponible.");
+            _financeDb.ChangeTracker.Clear();
+            var ordenHuérfana = await _financeDb.Ordenes.FindAsync(new object[] { ordenId });
+            if (ordenHuérfana != null) { _financeDb.Ordenes.Remove(ordenHuérfana); await _financeDb.SaveChangesAsync(CancellationToken.None); }
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { mensaje = ex.Message });
         }
     }

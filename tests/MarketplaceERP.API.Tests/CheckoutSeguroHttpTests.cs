@@ -4,12 +4,14 @@
  */
 
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -206,5 +208,267 @@ public class CheckoutSeguroHttpTests : IClassFixture<CustomWebApplicationFactory
             var partidas = await finDb.PartidasContables.Where(p => p.ReferenciaOrigenId == orden.Id).ToListAsync();
             partidas.Should().HaveCount(1);
         }
+    }
+
+    [Fact]
+    public async Task Checkout_Production_SinPasarelaConfigurada_Retorna503SinOrdenNiAsiento()
+    {
+        // Arrancar una factory que simule Production sin Payments:AllowMock
+        var prodFactory = new CustomWebApplicationFactory()
+        {
+        };
+        var factory = prodFactory.WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Production");
+            builder.UseSetting("ADMIN_EMAIL", "admin@marketplace.local");
+            builder.UseSetting("ADMIN_PASSWORD", "AdminPass123!Secure");
+            builder.UseSetting("Payments:AllowMock", "false");
+        });
+
+        var userId = Guid.NewGuid().ToString();
+        var client = factory.CreateClient();
+        var token = prodFactory.GenerateToken("Comprador", userId);
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var vendedorId = Guid.NewGuid();
+        var prod = new Producto
+        {
+            Id = Guid.NewGuid(),
+            Sku = $"SKU-PROD-503-{Guid.NewGuid():N}",
+            Nombre = "Producto Prod 503",
+            CategoriaNombre = "General",
+            PrecioB2C = 50m,
+            PrecioB2B = 40m,
+            EstaPublicado = true,
+            VendedorId = vendedorId
+        };
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            catDb.Productos.Add(prod);
+            await catDb.SaveChangesAsync();
+        }
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new
+            {
+                Items = new[] { new { ProductoId = prod.Id, Cantidad = 1 } }
+            })
+        };
+        req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+
+        // Verificar que no quedó orden ni asiento huérfano
+        using (var scope = factory.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            var ordenes = await finDb.Ordenes.Where(o => o.CompradorId == Guid.Parse(userId)).ToListAsync();
+            ordenes.Should().BeEmpty("la pasarela falló y la transacción debe revertirse");
+
+            var partidas = await finDb.PartidasContables
+                .Where(p => p.ReferenciaOrigenId != Guid.Empty)
+                .ToListAsync();
+            partidas.Should().BeEmpty("no debe existir asiento contable sin orden completada");
+        }
+    }
+
+    [Fact]
+    public async Task Checkout_CarritoConDosVendedores_Retorna400()
+    {
+        var client = _factory.CreateClientWithAuth("Comprador");
+        var vendedor1 = Guid.NewGuid();
+        var vendedor2 = Guid.NewGuid();
+
+        var prod1 = new Producto
+        {
+            Id = Guid.NewGuid(),
+            Sku = $"SKU-V1-{Guid.NewGuid():N}",
+            Nombre = "Producto Vendedor 1",
+            CategoriaNombre = "General",
+            PrecioB2C = 100m,
+            PrecioB2B = 90m,
+            EstaPublicado = true,
+            VendedorId = vendedor1
+        };
+        var prod2 = new Producto
+        {
+            Id = Guid.NewGuid(),
+            Sku = $"SKU-V2-{Guid.NewGuid():N}",
+            Nombre = "Producto Vendedor 2",
+            CategoriaNombre = "General",
+            PrecioB2C = 50m,
+            PrecioB2B = 40m,
+            EstaPublicado = true,
+            VendedorId = vendedor2
+        };
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            catDb.Productos.AddRange(prod1, prod2);
+            await catDb.SaveChangesAsync();
+        }
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new
+            {
+                Items = new[]
+                {
+                    new { ProductoId = prod1.Id, Cantidad = 1 },
+                    new { ProductoId = prod2.Id, Cantidad = 1 }
+                }
+            })
+        };
+        req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await res.Content.ReadAsStringAsync();
+        body.Should().Contain("vendedor");
+    }
+
+    [Fact]
+    public async Task Checkout_ProductoNoPublicado_Retorna400()
+    {
+        var client = _factory.CreateClientWithAuth("Comprador");
+        var vendedorId = Guid.NewGuid();
+        var prod = new Producto
+        {
+            Id = Guid.NewGuid(),
+            Sku = $"SKU-NOPUB-{Guid.NewGuid():N}",
+            Nombre = "Producto No Publicado",
+            CategoriaNombre = "General",
+            PrecioB2C = 100m,
+            PrecioB2B = 90m,
+            EstaPublicado = false,
+            VendedorId = vendedorId
+        };
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            catDb.Productos.Add(prod);
+            await catDb.SaveChangesAsync();
+        }
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new
+            {
+                Items = new[] { new { ProductoId = prod.Id, Cantidad = 1 } }
+            })
+        };
+        req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await res.Content.ReadAsStringAsync();
+        body.Should().Contain("publicado");
+    }
+
+    [Theory]
+    [InlineData(0, "mayor a 0")]
+    [InlineData(-1, "mayor a 0")]
+    [InlineData(1001, "1000")]
+    public async Task Checkout_CantidadFueraDeRango_Retorna400(int cantidad, string mensajeEsperado)
+    {
+        var client = _factory.CreateClientWithAuth("Comprador");
+        var vendedorId = Guid.NewGuid();
+        var prod = new Producto
+        {
+            Id = Guid.NewGuid(),
+            Sku = $"SKU-QTY-{Guid.NewGuid():N}",
+            Nombre = "Producto Cantidad Test",
+            CategoriaNombre = "General",
+            PrecioB2C = 10m,
+            PrecioB2B = 8m,
+            EstaPublicado = true,
+            VendedorId = vendedorId
+        };
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            catDb.Productos.Add(prod);
+            await catDb.SaveChangesAsync();
+        }
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new
+            {
+                Items = new[] { new { ProductoId = prod.Id, Cantidad = cantidad } }
+            })
+        };
+        req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await res.Content.ReadAsStringAsync();
+        body.Should().Contain(mensajeEsperado);
+    }
+
+    [Fact]
+    public async Task Checkout_ClaveIdempotenciaExpirada_PurgaYPermiteNuevoCheckout()
+    {
+        var userId = Guid.NewGuid().ToString();
+        var client = _factory.CreateClientWithAuth("Comprador", userId: userId);
+        var idempotencyKey = Guid.NewGuid().ToString();
+        var vendedorId = Guid.NewGuid();
+
+        var prod = new Producto
+        {
+            Id = Guid.NewGuid(),
+            Sku = $"SKU-EXP-{Guid.NewGuid():N}",
+            Nombre = "Producto Expiración",
+            CategoriaNombre = "General",
+            PrecioB2C = 30m,
+            PrecioB2B = 25m,
+            EstaPublicado = true,
+            VendedorId = vendedorId
+        };
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            catDb.Productos.Add(prod);
+            await catDb.SaveChangesAsync();
+        }
+
+        // Sembrar una clave de idempotencia ya expirada directamente en BD
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            finDb.IdempotencyKeys.Add(new IdempotencyKeyRecord
+            {
+                Id = Guid.NewGuid(),
+                Key = idempotencyKey,
+                UsuarioId = Guid.Parse(userId),
+                RequestHash = "hash_viejo_expirado",
+                StatusCode = 200,
+                ResponseJson = "{}",
+                FechaCreacion = DateTime.UtcNow.AddHours(-25),
+                FechaExpiracion = DateTime.UtcNow.AddHours(-1)
+            });
+            await finDb.SaveChangesAsync();
+        }
+
+        // Usar la misma clave con un payload nuevo: debe funcionar (clave purgada)
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new
+            {
+                Items = new[] { new { ProductoId = prod.Id, Cantidad = 1 } }
+            })
+        };
+        req.Headers.Add("Idempotency-Key", idempotencyKey);
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.OK, "la clave expirada debe purgarse y permitir un nuevo checkout");
     }
 }

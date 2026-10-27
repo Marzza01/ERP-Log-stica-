@@ -109,7 +109,18 @@ export default function CheckoutPage() {
       toast.success('¡Compra confirmada!', `Tu orden ha sido generada exitosamente (${num}).`);
     } catch (err: any) {
       // En caso de fallo, se conserva idempotencyKey para permitir reintentos seguros sin duplicar cobros
-      toast.error('Error al procesar compra', err?.message || 'No se pudo completar el checkout.');
+      let titulo = 'Error al procesar compra';
+      let mensaje = err?.message || 'No se pudo completar el checkout.';
+
+      if (err?.status === 400 && (mensaje.includes('mismo vendedor') || mensaje.includes('separadas'))) {
+        titulo = 'Carrito con múltiples vendedores';
+        mensaje = 'Tu carrito contiene productos de diferentes vendedores. Una orden solo puede pertenecer a un único vendedor; por favor realiza compras separadas para cada vendedor.';
+      } else if (err?.status === 503 || mensaje.includes('pasarela de pagos no está configurada') || mensaje.includes('temporalmente')) {
+        titulo = 'Pasarela de pagos no disponible (503)';
+        mensaje = 'El servicio de procesamiento de pagos no está disponible temporalmente. Por favor, intenta más tarde o contacta a soporte técnico.';
+      }
+
+      toast.error(titulo, mensaje);
     } finally {
       setProcesando(false);
     }

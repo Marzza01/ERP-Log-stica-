@@ -344,6 +344,11 @@ El script levantará automáticamente la API de .NET (puerto 5000) y la interfaz
      dotnet test tests/MarketplaceERP.Finance.Tests/MarketplaceERP.Finance.Tests.csproj
      ```
 
+3. **Configuración de Pagos y Seguridad en Producción:**
+   - `Payments:AllowMock`: Por defecto en `false`. En entorno `Production`, la API rechaza cobros con `503 Service Unavailable` a menos que se defina `Payments:AllowMock=true` explícitamente.
+   - `Payments:SimulateFailures`: Por defecto en `false`. Permite simular un 10% de fallos aleatorios únicamente en entornos de desarrollo o pruebas.
+   - `Checkout:CostoEnvioDefault`: Define la tarifa logística base calculada en el checkout (por defecto `$5.00`).
+
 ---
 
 ## 📱 Acceso y Diseño Responsive Multidispositivo
