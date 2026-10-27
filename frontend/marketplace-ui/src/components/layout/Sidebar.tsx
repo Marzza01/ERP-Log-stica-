@@ -17,10 +17,6 @@ interface NavItem {
   icon: React.ReactNode;
   label: string;
   shortLabel?: string;
-  badge?: {
-    count: number | string;
-    variant: 'danger' | 'warning' | 'info';
-  };
 }
 
 interface NavGroup {
@@ -38,7 +34,6 @@ const navGroups: NavGroup[] = [
         icon: <ShoppingCart size={16} />,
         label: 'Órdenes',
         shortLabel: 'Órdenes',
-        badge: { count: '3', variant: 'warning' },
       },
     ],
   },
@@ -50,7 +45,6 @@ const navGroups: NavGroup[] = [
         icon: <Warehouse size={16} />,
         label: 'WMS / Bodega',
         shortLabel: 'Bodega',
-        badge: { count: '1', variant: 'danger' },
       },
       {
         to: '/reabastecimiento',
@@ -94,14 +88,12 @@ const navGroups: NavGroup[] = [
         icon: <RotateCcw size={16} />,
         label: 'Devoluciones',
         shortLabel: 'Devoluciones',
-        badge: { count: '2', variant: 'warning' },
       },
       {
         to: '/compras',
         icon: <ShoppingBag size={16} />,
         label: 'Compras',
         shortLabel: 'Compras',
-        badge: { count: '3', variant: 'info' },
       },
     ],
   },
@@ -114,7 +106,6 @@ const navGroups: NavGroup[] = [
         icon: <Wallet size={16} />,
         label: 'Liquidaciones',
         shortLabel: 'Pagos',
-        badge: { count: '2', variant: 'warning' },
       },
       { to: '/productos',     icon: <Package size={16} />,  label: 'Productos',      shortLabel: 'Productos' },
     ],
@@ -173,11 +164,6 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                   <span className="nav-label nav-label-full">{item.label}</span>
                   {item.shortLabel && (
                     <span className="nav-label nav-label-short">{item.shortLabel}</span>
-                  )}
-                  {item.badge && !collapsed && (
-                    <span className={`nav-badge-pill nav-badge-${item.badge.variant}`}>
-                      {item.badge.count}
-                    </span>
                   )}
                 </NavLink>
               ))}
