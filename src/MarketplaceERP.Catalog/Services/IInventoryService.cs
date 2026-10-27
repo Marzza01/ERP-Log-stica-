@@ -17,6 +17,20 @@ public sealed record RecepcionInventarioResult(
     string Mensaje);
 
 /// <summary>
+/// Resultado de una transferencia física entre ubicaciones WMS.
+/// </summary>
+public sealed record TransferenciaInventarioResult(
+    bool Exitoso,
+    bool YaProcesada,
+    Guid ProductoId,
+    Guid StockOrigenId,
+    Guid StockDestinoId,
+    int CantidadTransferida,
+    int CantidadOrigenDespues,
+    int CantidadDestinoDespues,
+    string Mensaje);
+
+/// <summary>
 /// Operaciones físicas de inventario independientes de Checkout y Finance.
 /// </summary>
 public interface IInventoryService
@@ -44,6 +58,19 @@ public interface IInventoryService
         Guid productoId,
         int cantidad,
         Guid ubicacionAlmacenId,
+        Guid operacionId,
+        string? notas = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Transfiere stock disponible entre dos ubicaciones WMS.
+    /// No mueve unidades reservadas ni bloqueadas y conserva el total físico global del producto.
+    /// La operación es idempotente por OperacionId.
+    /// </summary>
+    Task<TransferenciaInventarioResult> TransferirStockAsync(
+        Guid stockOrigenId,
+        Guid ubicacionDestinoId,
+        int cantidad,
         Guid operacionId,
         string? notas = null,
         CancellationToken cancellationToken = default);

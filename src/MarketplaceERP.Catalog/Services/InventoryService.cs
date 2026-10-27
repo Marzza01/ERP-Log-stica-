@@ -342,6 +342,258 @@ internal sealed class InventoryService : IInventoryService
         }
     }
 
+
+    public async Task<TransferenciaInventarioResult> TransferirStockAsync(
+        Guid stockOrigenId,
+        Guid ubicacionDestinoId,
+        int cantidad,
+        Guid operacionId,
+        string? notas = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (stockOrigenId == Guid.Empty)
+            return FalloTransferencia("StockOrigenId es obligatorio.");
+        if (ubicacionDestinoId == Guid.Empty)
+            return FalloTransferencia("UbicacionDestinoId es obligatorio.");
+        if (cantidad <= 0)
+            return FalloTransferencia("La cantidad a transferir debe ser mayor que cero.");
+        if (operacionId == Guid.Empty)
+            return FalloTransferencia("OperacionId es obligatorio.");
+
+        await using var transaction = await BeginTransactionIfRelationalAsync(cancellationToken);
+
+        try
+        {
+            // Leer primero la ubicación de origen sin bloquear para poder adquirir las ubicaciones
+            // en un orden global estable. Después se bloquea y revalida el saldo.
+            var stockSnapshot = await _dbContext.StockFisico
+                .AsNoTracking()
+                .SingleOrDefaultAsync(s => s.Id == stockOrigenId, cancellationToken);
+
+            if (stockSnapshot is null)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloTransferencia($"El saldo de stock {stockOrigenId} no existe.");
+            }
+
+            if (!stockSnapshot.UbicacionAlmacenId.HasValue)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloTransferencia("El stock de origen no tiene una ubicación WMS asignada.");
+            }
+
+            var ubicacionOrigenId = stockSnapshot.UbicacionAlmacenId.Value;
+            if (ubicacionOrigenId == ubicacionDestinoId)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloTransferencia("La ubicación de destino debe ser diferente a la ubicación de origen.");
+            }
+
+            // Bloquear ambas ubicaciones en orden estable evita carreras por capacidad
+            // y evita deadlocks en transferencias opuestas A→B / B→A.
+            var ubicacionIds = new[] { ubicacionOrigenId, ubicacionDestinoId }
+                .OrderBy(id => id)
+                .ToArray();
+
+            UbicacionAlmacen? primera = null;
+            UbicacionAlmacen? segunda = null;
+            foreach (var ubicacionId in ubicacionIds)
+            {
+                var bloqueada = await GetUbicacionForUpdateAsync(ubicacionId, cancellationToken);
+                if (primera is null)
+                    primera = bloqueada;
+                else
+                    segunda = bloqueada;
+            }
+
+            var ubicacionOrigen = primera?.Id == ubicacionOrigenId ? primera : segunda;
+            var ubicacionDestino = primera?.Id == ubicacionDestinoId ? primera : segunda;
+
+            if (ubicacionOrigen is null)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloTransferencia($"La ubicación de origen {ubicacionOrigenId} no existe.");
+            }
+
+            if (ubicacionDestino is null)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloTransferencia($"La ubicación de destino {ubicacionDestinoId} no existe.");
+            }
+
+            var stockOrigen = await GetStockForUpdateAsync(stockOrigenId, cancellationToken);
+            if (stockOrigen is null)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloTransferencia($"El saldo de stock {stockOrigenId} ya no existe.");
+            }
+
+            if (stockOrigen.UbicacionAlmacenId != ubicacionOrigenId)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloTransferencia(
+                    "El stock de origen cambió de ubicación mientras se preparaba la transferencia. Actualice WMS e intente de nuevo.");
+            }
+
+            var referencia = $"TRF-{operacionId:N}";
+
+            // La salida es la marca de idempotencia de toda la transferencia.
+            var movimientoExistente = await _dbContext.MovimientosInventario
+                .AsNoTracking()
+                .FirstOrDefaultAsync(m =>
+                    m.TipoMovimiento == TipoMovimientoInventario.TransferenciaSalida &&
+                    m.Referencia == referencia,
+                    cancellationToken);
+
+            if (movimientoExistente is not null)
+            {
+                if (movimientoExistente.ProductoId != stockOrigen.ProductoId ||
+                    movimientoExistente.Cantidad != cantidad ||
+                    movimientoExistente.UbicacionOrigenId != ubicacionOrigenId ||
+                    movimientoExistente.UbicacionDestinoId != ubicacionDestinoId)
+                {
+                    await RollbackIfNeededAsync(transaction, cancellationToken);
+                    return FalloTransferencia("OperacionId ya fue utilizado con datos diferentes.");
+                }
+
+                var stockDestinoExistente = await _dbContext.StockFisico
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(s =>
+                        s.ProductoId == stockOrigen.ProductoId &&
+                        s.UbicacionAlmacenId == ubicacionDestinoId,
+                        cancellationToken);
+
+                await CommitIfNeededAsync(transaction, cancellationToken);
+
+                return new TransferenciaInventarioResult(
+                    true,
+                    true,
+                    stockOrigen.ProductoId,
+                    stockOrigen.Id,
+                    stockDestinoExistente?.Id ?? Guid.Empty,
+                    cantidad,
+                    stockOrigen.CantidadTotal,
+                    stockDestinoExistente?.CantidadTotal ?? 0,
+                    "La transferencia ya había sido procesada; no se duplicó el movimiento.");
+            }
+
+            if (stockOrigen.CantidadDisponible < cantidad)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloTransferencia(
+                    $"Stock disponible insuficiente para transferir. " +
+                    $"Disponible: {stockOrigen.CantidadDisponible}; solicitado: {cantidad}. " +
+                    "Las unidades reservadas o bloqueadas no pueden moverse.");
+            }
+
+            var ocupacionDestino = await _dbContext.StockFisico
+                .Where(s => s.UbicacionAlmacenId == ubicacionDestinoId)
+                .SumAsync(s => (int?)s.CantidadTotal, cancellationToken) ?? 0;
+
+            if (ocupacionDestino + cantidad > ubicacionDestino.CapacidadMaxima)
+            {
+                await RollbackIfNeededAsync(transaction, cancellationToken);
+                return FalloTransferencia(
+                    $"La transferencia excede la capacidad de {ubicacionDestino.Codigo}. " +
+                    $"Ocupación actual: {ocupacionDestino}; capacidad: {ubicacionDestino.CapacidadMaxima}; transferencia: {cantidad}.");
+            }
+
+            var stockDestino = await _dbContext.StockFisico
+                .AsTracking()
+                .SingleOrDefaultAsync(s =>
+                    s.ProductoId == stockOrigen.ProductoId &&
+                    s.UbicacionAlmacenId == ubicacionDestinoId,
+                    cancellationToken);
+
+            var ahora = DateTime.UtcNow;
+            if (stockDestino is null)
+            {
+                stockDestino = new StockFisico
+                {
+                    Id = Guid.NewGuid(),
+                    ProductoId = stockOrigen.ProductoId,
+                    CantidadTotal = 0,
+                    CantidadReservada = 0,
+                    CantidadBloqueada = 0,
+                    PuntoReorden = stockOrigen.PuntoReorden,
+                    UbicacionAlmacenId = ubicacionDestino.Id,
+                    UbicacionCodigo = ubicacionDestino.Codigo,
+                    UltimaActualizacion = ahora
+                };
+                _dbContext.StockFisico.Add(stockDestino);
+            }
+
+            stockOrigen.CantidadTotal -= cantidad;
+            stockOrigen.UbicacionCodigo = ubicacionOrigen.Codigo;
+            stockOrigen.UltimaActualizacion = ahora;
+
+            stockDestino.CantidadTotal += cantidad;
+            stockDestino.UbicacionCodigo = ubicacionDestino.Codigo;
+            stockDestino.UltimaActualizacion = ahora;
+
+            var totalRestanteOrigen = stockOrigen.CantidadTotal +
+                (await _dbContext.StockFisico
+                    .Where(s => s.UbicacionAlmacenId == ubicacionOrigenId && s.Id != stockOrigen.Id)
+                    .SumAsync(s => (int?)s.CantidadTotal, cancellationToken) ?? 0);
+
+            ubicacionOrigen.EstaOcupada = totalRestanteOrigen > 0;
+            ubicacionDestino.EstaOcupada = true;
+
+            var observaciones = string.IsNullOrWhiteSpace(notas)
+                ? $"Transferencia WMS de {ubicacionOrigen.Codigo} a {ubicacionDestino.Codigo}."
+                : notas.Trim();
+
+            _dbContext.MovimientosInventario.AddRange(
+                new MovimientoInventario
+                {
+                    Id = Guid.NewGuid(),
+                    ProductoId = stockOrigen.ProductoId,
+                    TipoMovimiento = TipoMovimientoInventario.TransferenciaSalida,
+                    Cantidad = cantidad,
+                    UbicacionOrigenId = ubicacionOrigenId,
+                    UbicacionDestinoId = ubicacionDestinoId,
+                    Referencia = referencia,
+                    Observaciones = observaciones,
+                    FechaMovimiento = ahora
+                },
+                new MovimientoInventario
+                {
+                    Id = Guid.NewGuid(),
+                    ProductoId = stockOrigen.ProductoId,
+                    TipoMovimiento = TipoMovimientoInventario.TransferenciaEntrada,
+                    Cantidad = cantidad,
+                    UbicacionOrigenId = ubicacionOrigenId,
+                    UbicacionDestinoId = ubicacionDestinoId,
+                    Referencia = referencia,
+                    Observaciones = observaciones,
+                    FechaMovimiento = ahora
+                });
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await CommitIfNeededAsync(transaction, cancellationToken);
+
+            _logger.LogInformation(
+                "Transferencia WMS aplicada. ProductoId={ProductoId}, Cantidad={Cantidad}, Origen={Origen}, Destino={Destino}, Operacion={OperacionId}",
+                stockOrigen.ProductoId, cantidad, ubicacionOrigen.Codigo, ubicacionDestino.Codigo, operacionId);
+
+            return new TransferenciaInventarioResult(
+                true,
+                false,
+                stockOrigen.ProductoId,
+                stockOrigen.Id,
+                stockDestino.Id,
+                cantidad,
+                stockOrigen.CantidadTotal,
+                stockDestino.CantidadTotal,
+                "Transferencia WMS registrada correctamente.");
+        }
+        catch
+        {
+            await RollbackIfNeededAsync(transaction, cancellationToken);
+            throw;
+        }
+    }
+
     private async Task<Producto?> GetProductoForUpdateBySkuAsync(
         string sku,
         CancellationToken cancellationToken)
@@ -372,6 +624,24 @@ internal sealed class InventoryService : IInventoryService
 
         return await _dbContext.Productos
             .FromSqlInterpolated($"SELECT * FROM catalog.productos WHERE \"Id\" = {productoId} FOR UPDATE")
+            .AsTracking()
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
+
+    private async Task<StockFisico?> GetStockForUpdateAsync(
+        Guid stockId,
+        CancellationToken cancellationToken)
+    {
+        if (!_dbContext.Database.IsRelational())
+        {
+            return await _dbContext.StockFisico
+                .AsTracking()
+                .SingleOrDefaultAsync(s => s.Id == stockId, cancellationToken);
+        }
+
+        return await _dbContext.StockFisico
+            .FromSqlInterpolated($"SELECT * FROM catalog.stock_fisico WHERE \"Id\" = {stockId} FOR UPDATE")
             .AsTracking()
             .SingleOrDefaultAsync(cancellationToken);
     }
@@ -422,6 +692,9 @@ internal sealed class InventoryService : IInventoryService
 
     private static string ConstruirReferencia(Guid operacionId, Guid itemOrdenCompraId) =>
         $"INB-{operacionId:N}-ITEM-{itemOrdenCompraId:N}";
+
+    private static TransferenciaInventarioResult FalloTransferencia(string mensaje) =>
+        new(false, false, Guid.Empty, Guid.Empty, Guid.Empty, 0, 0, 0, mensaje);
 
     private static RecepcionInventarioResult Fallo(string mensaje) =>
         new(false, false, Guid.Empty, Guid.Empty, 0, mensaje);

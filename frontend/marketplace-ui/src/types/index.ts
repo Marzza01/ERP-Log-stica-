@@ -171,11 +171,39 @@ export interface StockFisicoWms {
   productoId: string;
   cantidadTotal: number;
   cantidadReservada: number;
+  cantidadBloqueada: number;
   cantidadDisponible: number;
   puntoReorden: number;
   ubicacionAlmacenId?: string;
   ubicacionCodigo: string;
   ultimaActualizacion: string;
+}
+
+export interface StockTransferenciaWms {
+  id: string;
+  productoId: string;
+  sku: string;
+  productoNombre: string;
+  cantidadTotal: number;
+  cantidadReservada: number;
+  cantidadBloqueada: number;
+  cantidadDisponible: number;
+  ubicacionAlmacenId?: string;
+  ubicacionCodigo: string;
+  zona: string;
+  ultimaActualizacion: string;
+}
+
+export interface TransferenciaInventarioResult {
+  exitoso: boolean;
+  yaProcesada: boolean;
+  productoId: string;
+  stockOrigenId: string;
+  stockDestinoId: string;
+  cantidadTransferida: number;
+  cantidadOrigenDespues: number;
+  cantidadDestinoDespues: number;
+  mensaje: string;
 }
 
 export interface UbicacionAlmacen {
@@ -242,7 +270,7 @@ export interface PickList {
 }
 
 // ── PAQUETE (FULFILLMENT) ─────────────────────────────────────────────────────
-export type EstadoPaquete = 'Pendiente' | 'Empacando' | 'ListoParaDespacho' | 'Despachado';
+export type EstadoPaquete = 'Pendiente' | 'Empacando' | 'ListoParaDespacho';
 
 export interface Paquete {
   id: string;
@@ -300,8 +328,10 @@ export type Estado3WayMatch = 'Conforme' | 'Discrepante' | 'Pendiente';
 export interface ItemOrdenCompra {
   id: string;
   productoId: string;
+  skuReferencia?: string;
   descripcion: string;
   cantidad: number;
+  cantidadRecibida?: number;
   precioUnitario: number;
   total: number;
 }

@@ -10,8 +10,8 @@ using Microsoft.AspNetCore.Mvc;
 namespace MarketplaceERP.API.Controllers;
 
 /// <summary>
-/// Controlador de Warehouse Management System (WMS) para mapeo dinámico de bodega (Célula A - PDF 1 y PDF 2).
-/// Gestiona Pasillos, Racks, Niveles y Posiciones de Almacenamiento.
+/// Controlador de Warehouse Management System (WMS) para mapeo dinámico de bodega.
+/// Gestiona ubicaciones y transferencias físicas de stock entre posiciones.
 /// </summary>
 [ApiController]
 [Route("api/wms")]
@@ -27,9 +27,6 @@ public class WmsController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>
-    /// Obtiene el mapa dinámico completo de la bodega central de LOGIMKT con métricas de ocupación.
-    /// </summary>
     [HttpGet("mapa")]
     [ProducesResponseType(typeof(ResumenBodegaDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetMapaBodega()
@@ -38,9 +35,6 @@ public class WmsController : ControllerBase
         return Ok(resumen);
     }
 
-    /// <summary>
-    /// Lista las ubicaciones físicas de almacenamiento con filtros por pasillo y disponibilidad.
-    /// </summary>
     [HttpGet("ubicaciones")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> ListarUbicaciones([FromQuery] string? pasillo, [FromQuery] bool? soloDisponibles)
@@ -50,7 +44,50 @@ public class WmsController : ControllerBase
     }
 
     /// <summary>
-    /// Reubica un lote de stock físico a una nueva posición dentro del almacén.
+    /// Lista saldos físicos WMS con producto y disponibilidad para transferencias operativas.
+    /// </summary>
+    [HttpGet("stocks")]
+    [ProducesResponseType(typeof(IEnumerable<StockWmsDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ListarStocks([FromQuery] Guid? ubicacionId, [FromQuery] string? sku)
+    {
+        var stocks = await _wmsService.ListarStocksAsync(ubicacionId, sku);
+        return Ok(stocks);
+    }
+
+    /// <summary>
+    /// Transfiere una cantidad de stock disponible entre dos ubicaciones WMS.
+    /// Unidades reservadas o bloqueadas no pueden moverse.
+    /// </summary>
+    [HttpPost("transferir")]
+    [Authorize(Roles = "Admin,Vendedor")]
+    [ProducesResponseType(typeof(TransferenciaInventarioResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(TransferenciaInventarioResult), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Transferir([FromBody] TransferirStockRequest request)
+    {
+        var resultado = await _wmsService.TransferirStockAsync(
+            request.StockFisicoId,
+            request.NuevaUbicacionId,
+            request.Cantidad,
+            request.OperacionId,
+            request.Observaciones);
+
+        if (!resultado.Exitoso)
+        {
+            _logger.LogWarning(
+                "Transferencia WMS rechazada. Stock={StockId}, Destino={Destino}, Cantidad={Cantidad}, Motivo={Motivo}",
+                request.StockFisicoId,
+                request.NuevaUbicacionId,
+                request.Cantidad,
+                resultado.Mensaje);
+            return BadRequest(resultado);
+        }
+
+        return Ok(resultado);
+    }
+
+    /// <summary>
+    /// Endpoint legado para mover un saldo completo sin reservas ni bloqueos.
+    /// La UI nueva utiliza /transferir.
     /// </summary>
     [HttpPost("reubicar")]
     [Authorize(Roles = "Admin,Vendedor")]
@@ -61,7 +98,10 @@ public class WmsController : ControllerBase
         var exito = await _wmsService.ReubicarStockAsync(request.StockFisicoId, request.NuevaUbicacionId);
         if (!exito)
         {
-            return BadRequest(new { mensaje = "No se pudo reubicar el stock. Verifique que los IDs existan." });
+            return BadRequest(new
+            {
+                mensaje = "No se pudo reubicar el saldo completo. Verifique IDs y confirme que no existan unidades reservadas o bloqueadas."
+            });
         }
 
         return Ok(new { mensaje = "Stock reubicado exitosamente en el WMS." });
@@ -69,3 +109,9 @@ public class WmsController : ControllerBase
 }
 
 public record ReubicarStockRequest(Guid StockFisicoId, Guid NuevaUbicacionId);
+public record TransferirStockRequest(
+    Guid StockFisicoId,
+    Guid NuevaUbicacionId,
+    int Cantidad,
+    Guid OperacionId,
+    string? Observaciones = null);

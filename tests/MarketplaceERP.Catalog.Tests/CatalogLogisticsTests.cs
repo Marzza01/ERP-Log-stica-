@@ -89,7 +89,8 @@ public class CatalogLogisticsTests
         dbContext.UbicacionesAlmacen.AddRange(u1, u2);
         await dbContext.SaveChangesAsync();
 
-        var wmsService = new WmsService(dbContext, NullLogger<WmsService>.Instance);
+        var inventoryService = new InventoryService(dbContext, NullLogger<InventoryService>.Instance);
+        var wmsService = new WmsService(dbContext, inventoryService, NullLogger<WmsService>.Instance);
 
         // Act
         var resumen = await wmsService.ObtenerMapaBodegaAsync();
@@ -104,7 +105,7 @@ public class CatalogLogisticsTests
     }
 
     [Fact]
-    public async Task WmsService_ReubicarStock_ActualizaUbicacionCorrectamente()
+    public async Task WmsService_ReubicarStock_TransfiereSaldoCompletoCorrectamente()
     {
         // Arrange
         using var dbContext = CreateInMemoryDbContext();
@@ -140,16 +141,25 @@ public class CatalogLogisticsTests
         dbContext.StockFisico.Add(stock);
         await dbContext.SaveChangesAsync();
 
-        var wmsService = new WmsService(dbContext, NullLogger<WmsService>.Instance);
+        var inventoryService = new InventoryService(dbContext, NullLogger<InventoryService>.Instance);
+        var wmsService = new WmsService(dbContext, inventoryService, NullLogger<WmsService>.Instance);
 
         // Act
         var result = await wmsService.ReubicarStockAsync(stock.Id, uDestino.Id);
 
         // Assert
         result.Should().BeTrue();
-        var stockActualizado = await dbContext.StockFisico.FindAsync(stock.Id);
-        stockActualizado!.UbicacionAlmacenId.Should().Be(uDestino.Id);
-        stockActualizado.UbicacionCodigo.Should().Be(uDestino.Codigo);
+        var stockOrigenActualizado = await dbContext.StockFisico.FindAsync(stock.Id);
+        stockOrigenActualizado!.UbicacionAlmacenId.Should().Be(uOrigen.Id);
+        stockOrigenActualizado.CantidadTotal.Should().Be(0);
+
+        var stockDestino = await dbContext.StockFisico
+            .SingleAsync(s => s.ProductoId == stock.ProductoId && s.UbicacionAlmacenId == uDestino.Id);
+        stockDestino.CantidadTotal.Should().Be(30);
+        stockDestino.UbicacionCodigo.Should().Be(uDestino.Codigo);
+
+        var origenActualizado = await dbContext.UbicacionesAlmacen.FindAsync(uOrigen.Id);
+        origenActualizado!.EstaOcupada.Should().BeFalse();
 
         var destinoActualizado = await dbContext.UbicacionesAlmacen.FindAsync(uDestino.Id);
         destinoActualizado!.EstaOcupada.Should().BeTrue();

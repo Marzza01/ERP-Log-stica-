@@ -13,11 +13,16 @@ namespace MarketplaceERP.Catalog.Services;
 public class WmsService : IWmsService
 {
     private readonly CatalogDbContext _dbContext;
+    private readonly IInventoryService _inventoryService;
     private readonly ILogger<WmsService> _logger;
 
-    public WmsService(CatalogDbContext dbContext, ILogger<WmsService> logger)
+    public WmsService(
+        CatalogDbContext dbContext,
+        IInventoryService inventoryService,
+        ILogger<WmsService> logger)
     {
         _dbContext = dbContext;
+        _inventoryService = inventoryService;
         _logger = logger;
     }
 
@@ -32,7 +37,7 @@ public class WmsService : IWmsService
             .ToListAsync(cancellationToken);
 
         int total = ubicaciones.Count;
-        int ocupadas = ubicaciones.Count(u => u.EstaOcupada || u.StocksAlmacenados.Any());
+        int ocupadas = ubicaciones.Count(u => u.EstaOcupada || u.StocksAlmacenados.Any(s => s.CantidadTotal > 0));
         int disponibles = total - ocupadas;
         decimal pct = total > 0 ? Math.Round(((decimal)ocupadas / total) * 100m, 2) : 0m;
 
@@ -42,7 +47,7 @@ public class WmsService : IWmsService
                 Pasillo: g.Key,
                 TotalRacks: g.Select(x => x.Rack).Distinct().Count(),
                 TotalPosiciones: g.Count(),
-                PosicionesOcupadas: g.Count(x => x.EstaOcupada || x.StocksAlmacenados.Any()),
+                PosicionesOcupadas: g.Count(x => x.EstaOcupada || x.StocksAlmacenados.Any(s => s.CantidadTotal > 0)),
                 Ubicaciones: g.ToList()
             ))
             .ToList();
@@ -51,7 +56,9 @@ public class WmsService : IWmsService
     }
 
     public async Task<IEnumerable<UbicacionAlmacen>> ListarUbicacionesAsync(
-        string? pasillo = null, bool? soloDisponibles = null, CancellationToken cancellationToken = default)
+        string? pasillo = null,
+        bool? soloDisponibles = null,
+        CancellationToken cancellationToken = default)
     {
         var query = _dbContext.UbicacionesAlmacen.AsQueryable();
 
@@ -63,8 +70,8 @@ public class WmsService : IWmsService
         if (soloDisponibles.HasValue)
         {
             query = soloDisponibles.Value
-                ? query.Where(u => !u.EstaOcupada)
-                : query.Where(u => u.EstaOcupada);
+                ? query.Where(u => !u.EstaOcupada && !u.StocksAlmacenados.Any(s => s.CantidadTotal > 0))
+                : query.Where(u => u.EstaOcupada || u.StocksAlmacenados.Any(s => s.CantidadTotal > 0));
         }
 
         return await query
@@ -72,38 +79,95 @@ public class WmsService : IWmsService
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<bool> ReubicarStockAsync(Guid stockFisicoId, Guid nuevaUbicacionId, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<StockWmsDto>> ListarStocksAsync(
+        Guid? ubicacionId = null,
+        string? sku = null,
+        CancellationToken cancellationToken = default)
     {
-        var stock = await _dbContext.StockFisico.FindAsync(new object[] { stockFisicoId }, cancellationToken);
-        var nuevaUbicacion = await _dbContext.UbicacionesAlmacen.FindAsync(new object[] { nuevaUbicacionId }, cancellationToken);
+        var query = _dbContext.StockFisico
+            .AsNoTracking()
+            .Include(s => s.Producto)
+            .Include(s => s.UbicacionAlmacen)
+            .Where(s => s.CantidadTotal > 0)
+            .AsQueryable();
 
-        if (stock is null || nuevaUbicacion is null)
+        if (ubicacionId.HasValue)
+            query = query.Where(s => s.UbicacionAlmacenId == ubicacionId.Value);
+
+        if (!string.IsNullOrWhiteSpace(sku))
         {
+            var filtroSku = sku.Trim();
+            query = query.Where(s => s.Producto.Sku.Contains(filtroSku));
+        }
+
+        var stocks = await query
+            .OrderBy(s => s.Producto.Sku)
+            .ThenBy(s => s.UbicacionCodigo)
+            .ToListAsync(cancellationToken);
+
+        return stocks.Select(s => new StockWmsDto(
+            s.Id,
+            s.ProductoId,
+            s.Producto.Sku,
+            s.Producto.Nombre,
+            s.CantidadTotal,
+            s.CantidadReservada,
+            s.CantidadBloqueada,
+            s.CantidadDisponible,
+            s.UbicacionAlmacenId,
+            s.UbicacionCodigo,
+            s.UbicacionAlmacen?.Zona ?? string.Empty,
+            s.UltimaActualizacion));
+    }
+
+    public Task<TransferenciaInventarioResult> TransferirStockAsync(
+        Guid stockFisicoId,
+        Guid nuevaUbicacionId,
+        int cantidad,
+        Guid operacionId,
+        string? observaciones = null,
+        CancellationToken cancellationToken = default) =>
+        _inventoryService.TransferirStockAsync(
+            stockFisicoId,
+            nuevaUbicacionId,
+            cantidad,
+            operacionId,
+            observaciones,
+            cancellationToken);
+
+    public async Task<bool> ReubicarStockAsync(
+        Guid stockFisicoId,
+        Guid nuevaUbicacionId,
+        CancellationToken cancellationToken = default)
+    {
+        var stock = await _dbContext.StockFisico
+            .AsNoTracking()
+            .SingleOrDefaultAsync(s => s.Id == stockFisicoId, cancellationToken);
+
+        if (stock is null || stock.CantidadTotal <= 0)
             return false;
-        }
 
-        // Si tenía ubicación previa, marcarla como potencialmente libre si no tiene otros items
-        if (stock.UbicacionAlmacenId.HasValue)
+        // El endpoint legado solo puede mover el saldo completo si todo es disponible.
+        // Unidades reservadas o bloqueadas deben permanecer en su ubicación actual.
+        if (stock.CantidadDisponible != stock.CantidadTotal)
+            return false;
+
+        var resultado = await _inventoryService.TransferirStockAsync(
+            stockFisicoId,
+            nuevaUbicacionId,
+            stock.CantidadTotal,
+            Guid.NewGuid(),
+            "Reubicación completa solicitada mediante endpoint legado.",
+            cancellationToken);
+
+        if (resultado.Exitoso)
         {
-            var anteriorUbicacion = await _dbContext.UbicacionesAlmacen
-                .Include(u => u.StocksAlmacenados)
-                .FirstOrDefaultAsync(u => u.Id == stock.UbicacionAlmacenId.Value, cancellationToken);
-
-            if (anteriorUbicacion is not null && anteriorUbicacion.StocksAlmacenados.Count <= 1)
-            {
-                anteriorUbicacion.EstaOcupada = false;
-            }
+            _logger.LogInformation(
+                "Stock {StockId} reubicado completamente a {NuevaUbicacionId}",
+                stockFisicoId,
+                nuevaUbicacionId);
         }
 
-        stock.UbicacionAlmacenId = nuevaUbicacion.Id;
-        stock.UbicacionCodigo = nuevaUbicacion.Codigo;
-        stock.UltimaActualizacion = DateTime.UtcNow;
-
-        nuevaUbicacion.EstaOcupada = true;
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("Stock {StockId} reubicado a {NuevaUbicacion}", stockFisicoId, nuevaUbicacion.Codigo);
-
-        return true;
+        return resultado.Exitoso;
     }
 }

@@ -3,37 +3,45 @@
  * Todos los derechos reservados © 2026
  */
 
-import React, { useEffect, useState } from 'react';
-import { MapPin, RefreshCw, MoveRight } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Boxes, MapPin, MoveRight, RefreshCw } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
 import AlertBanner from '../../components/ui/AlertBanner';
 import { wmsApi } from '../../api/wms';
-import type { UbicacionAlmacen, ResumenBodega } from '../../types';
+import type { ResumenBodega, StockTransferenciaWms, UbicacionAlmacen } from '../../types';
 
 export default function WmsPage() {
   const [resumen, setResumen] = useState<ResumenBodega | null>(null);
   const [ubicaciones, setUbicaciones] = useState<UbicacionAlmacen[]>([]);
+  const [stocks, setStocks] = useState<StockTransferenciaWms[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterPasillo, setFilterPasillo] = useState('');
   const [soloDisp, setSoloDisp] = useState(false);
-  const [reubicarModal, setReubicarModal] = useState(false);
+
+  const [transferModal, setTransferModal] = useState(false);
   const [stockFisicoId, setStockFisicoId] = useState('');
   const [nuevaUbicacionId, setNuevaUbicacionId] = useState('');
-  const [reubicando, setReubicando] = useState(false);
-  const [errorReubicacion, setErrorReubicacion] = useState('');
+  const [cantidadTransferir, setCantidadTransferir] = useState('');
+  const [observaciones, setObservaciones] = useState('');
+  const [operacionId, setOperacionId] = useState('');
+  const [transfiriendo, setTransfiriendo] = useState(false);
+  const [errorTransferencia, setErrorTransferencia] = useState('');
+  const [mensajeTransferencia, setMensajeTransferencia] = useState('');
 
   const load = async () => {
     setLoading(true);
     try {
-      const [r, u] = await Promise.all([
+      const [r, u, s] = await Promise.all([
         wmsApi.getMapaBodega(),
-        wmsApi.listarUbicaciones({ pasillo: filterPasillo || undefined, soloDisponibles: soloDisp || undefined }),
+        wmsApi.listarUbicaciones(),
+        wmsApi.listarStocks(),
       ]);
       setResumen(r);
       setUbicaciones(u);
+      setStocks(s);
     } catch {
-      // Demo con el mismo contrato del backend.
+      // Fallback demo heredado del proyecto general. Se retirará en la fase de depuración final.
       const pasillos = ['A', 'B', 'C', 'D'];
       const demo: UbicacionAlmacen[] = Array.from({ length: 40 }, (_, i) => {
         const pasillo = pasillos[i % 4];
@@ -52,9 +60,9 @@ export default function WmsPage() {
           fechaCreacion: new Date().toISOString(),
         };
       });
-      const filtradas = filterPasillo ? demo.filter(u => u.pasillo === filterPasillo) : demo;
       const ocupadas = demo.filter(u => u.estaOcupada).length;
-      setUbicaciones(soloDisp ? filtradas.filter(u => !u.estaOcupada) : filtradas);
+      setUbicaciones(demo);
+      setStocks([]);
       setResumen({
         totalUbicaciones: demo.length,
         ocupadas,
@@ -76,26 +84,83 @@ export default function WmsPage() {
     }
   };
 
-  useEffect(() => { load(); }, [filterPasillo, soloDisp]);
+  useEffect(() => { load(); }, []);
 
-  const handleReubicar = async () => {
-    if (!stockFisicoId || !nuevaUbicacionId) {
-      setErrorReubicacion('Debes indicar el ID del stock y la nueva ubicación.');
+  const ubicacionesVisibles = useMemo(() => {
+    return ubicaciones.filter(u => {
+      if (filterPasillo && u.pasillo !== filterPasillo) return false;
+      if (soloDisp && u.estaOcupada) return false;
+      return true;
+    });
+  }, [ubicaciones, filterPasillo, soloDisp]);
+
+  const stockSeleccionado = useMemo(
+    () => stocks.find(s => s.id === stockFisicoId) ?? null,
+    [stocks, stockFisicoId]
+  );
+
+  const abrirTransferencia = () => {
+    setStockFisicoId('');
+    setNuevaUbicacionId('');
+    setCantidadTransferir('');
+    setObservaciones('');
+    setOperacionId(crypto.randomUUID());
+    setErrorTransferencia('');
+    setTransferModal(true);
+  };
+
+  const cerrarTransferencia = () => {
+    if (transfiriendo) return;
+    setTransferModal(false);
+    setErrorTransferencia('');
+  };
+
+  const handleTransferir = async () => {
+    const cantidad = Number(cantidadTransferir);
+
+    if (!stockSeleccionado) {
+      setErrorTransferencia('Debes seleccionar un saldo de stock de origen.');
+      return;
+    }
+    if (!nuevaUbicacionId) {
+      setErrorTransferencia('Debes seleccionar la ubicación de destino.');
+      return;
+    }
+    if (!Number.isInteger(cantidad) || cantidad <= 0) {
+      setErrorTransferencia('La cantidad debe ser un entero mayor que cero.');
+      return;
+    }
+    if (cantidad > stockSeleccionado.cantidadDisponible) {
+      setErrorTransferencia(`Solo hay ${stockSeleccionado.cantidadDisponible} unidades disponibles para transferir.`);
+      return;
+    }
+    if (stockSeleccionado.ubicacionAlmacenId === nuevaUbicacionId) {
+      setErrorTransferencia('La ubicación de destino debe ser distinta a la de origen.');
       return;
     }
 
-    setReubicando(true);
-    setErrorReubicacion('');
+    setTransfiriendo(true);
+    setErrorTransferencia('');
     try {
-      await wmsApi.reubicar(stockFisicoId, nuevaUbicacionId);
-      setReubicarModal(false);
-      setStockFisicoId('');
-      setNuevaUbicacionId('');
+      const resultado = await wmsApi.transferir({
+        stockFisicoId: stockSeleccionado.id,
+        nuevaUbicacionId,
+        cantidad,
+        operacionId,
+        observaciones: observaciones.trim() || undefined,
+      });
+
+      setMensajeTransferencia(
+        resultado.yaProcesada
+          ? 'La transferencia ya había sido procesada; no se duplicó inventario.'
+          : `Transferencia completada: ${resultado.cantidadTransferida} unidades.`
+      );
+      setTransferModal(false);
       await load();
     } catch (error) {
-      setErrorReubicacion(error instanceof Error ? error.message : 'No se pudo reubicar el stock.');
+      setErrorTransferencia(error instanceof Error ? error.message : 'No se pudo transferir el stock.');
     } finally {
-      setReubicando(false);
+      setTransfiriendo(false);
     }
   };
 
@@ -113,16 +178,19 @@ export default function WmsPage() {
     )},
   ];
 
+  const destinosDisponibles = ubicaciones.filter(u => u.id !== stockSeleccionado?.ubicacionAlmacenId);
+  const stocksTransferibles = stocks.filter(s => s.cantidadDisponible > 0 && s.ubicacionAlmacenId);
+
   return (
     <div>
       <div className="page-header">
         <div>
           <h1 className="page-title">WMS — Bodega LOGIMKT</h1>
-          <p className="page-subtitle">Mapa dinámico de almacén con métricas de ocupación</p>
+          <p className="page-subtitle">Mapa de almacén y transferencias reales entre ubicaciones</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary" onClick={() => setReubicarModal(true)}>
-            <MoveRight size={13} /> Reubicar Stock
+          <button className="btn btn-secondary" onClick={abrirTransferencia}>
+            <MoveRight size={13} /> Transferir Stock
           </button>
           <button className="btn btn-secondary" onClick={load}>
             <RefreshCw size={13} /> Actualizar
@@ -130,13 +198,21 @@ export default function WmsPage() {
         </div>
       </div>
 
-      {/* Métricas Homogéneas y Neutrales */}
+      {mensajeTransferencia && (
+        <AlertBanner
+          variant="success"
+          title="Transferencia WMS completada"
+          message={mensajeTransferencia}
+          onClose={() => setMensajeTransferencia('')}
+        />
+      )}
+
       {resumen && (
         <>
           <div className="stat-grid" style={{ marginBottom: 16 }}>
             {[
               { label: 'Total Ubicaciones', value: resumen.totalUbicaciones, icon: <MapPin size={18} /> },
-              { label: 'Ocupadas', value: resumen.ocupadas, icon: <MapPin size={18} /> },
+              { label: 'Ocupadas', value: resumen.ocupadas, icon: <Boxes size={18} /> },
               { label: 'Disponibles', value: resumen.disponibles, icon: <MapPin size={18} /> },
               {
                 label: '% Ocupación',
@@ -169,7 +245,6 @@ export default function WmsPage() {
         </>
       )}
 
-      {/* Filtros */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <select className="form-input" value={filterPasillo} onChange={e => setFilterPasillo(e.target.value)} style={{ width: 'auto', fontSize: 12 }}>
           <option value="">Todos los pasillos</option>
@@ -177,46 +252,110 @@ export default function WmsPage() {
         </select>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
           <input type="checkbox" checked={soloDisp} onChange={e => setSoloDisp(e.target.checked)} />
-          Solo disponibles
+          Solo posiciones vacías
         </label>
       </div>
 
       <DataTable<UbicacionAlmacen>
         title="Ubicaciones de Almacén"
         columns={columns}
-        data={ubicaciones}
+        data={ubicacionesVisibles}
         loading={loading}
         rowKey={r => r.id}
         pageSize={15}
         emptyMessage="No hay ubicaciones con estos filtros"
       />
 
-      {/* Modal reubicar */}
       <Modal
-        title="Reubicar Stock"
-        open={reubicarModal}
-        onClose={() => setReubicarModal(false)}
+        title="Transferir Stock entre Ubicaciones"
+        open={transferModal}
+        onClose={cerrarTransferencia}
         footer={
           <>
-            <button className="btn btn-secondary" onClick={() => setReubicarModal(false)}>Cancelar</button>
-            <button className="btn btn-primary" onClick={handleReubicar} disabled={reubicando}>{reubicando ? 'Reubicando...' : 'Confirmar reubicación'}</button>
+            <button className="btn btn-secondary" onClick={cerrarTransferencia} disabled={transfiriendo}>Cancelar</button>
+            <button className="btn btn-primary" onClick={handleTransferir} disabled={transfiriendo}>
+              {transfiriendo ? 'Transfiriendo...' : 'Confirmar transferencia'}
+            </button>
           </>
         }
       >
         <div className="form-group">
-          <label className="form-label">ID Stock Físico</label>
-          <input className="form-input" value={stockFisicoId} onChange={e => setStockFisicoId(e.target.value)} placeholder="UUID del stock a reubicar..." />
-        </div>
-        <div className="form-group">
-          <label className="form-label">Nueva Ubicación</label>
-          <select className="form-input" value={nuevaUbicacionId} onChange={e => setNuevaUbicacionId(e.target.value)}>
-            <option value="">Seleccionar ubicación...</option>
-            {ubicaciones.filter(u => !u.estaOcupada).map(u => (
-              <option key={u.id} value={u.id}>{u.codigo} — {u.zona}</option>
+          <label className="form-label">Stock de origen</label>
+          <select
+            className="form-input"
+            value={stockFisicoId}
+            onChange={e => {
+              setStockFisicoId(e.target.value);
+              setCantidadTransferir('');
+              setNuevaUbicacionId('');
+              setErrorTransferencia('');
+            }}
+          >
+            <option value="">Seleccionar saldo...</option>
+            {stocksTransferibles.map(stock => (
+              <option key={stock.id} value={stock.id}>
+                {stock.sku} — {stock.ubicacionCodigo} — Disponible: {stock.cantidadDisponible}
+              </option>
             ))}
           </select>
         </div>
-        {errorReubicacion && <AlertBanner variant="danger" title="No se pudo reubicar" message={errorReubicacion} />}
+
+        {stockSeleccionado && (
+          <div style={{ marginBottom: 12, padding: 10, border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }}>
+            <strong>{stockSeleccionado.productoNombre}</strong>
+            <div>SKU: {stockSeleccionado.sku}</div>
+            <div>Origen: {stockSeleccionado.ubicacionCodigo}</div>
+            <div>
+              Físico: {stockSeleccionado.cantidadTotal} · Reservado: {stockSeleccionado.cantidadReservada} · Bloqueado: {stockSeleccionado.cantidadBloqueada} · Disponible: {stockSeleccionado.cantidadDisponible}
+            </div>
+          </div>
+        )}
+
+        <div className="form-group">
+          <label className="form-label">Cantidad a transferir</label>
+          <input
+            type="number"
+            min={1}
+            max={stockSeleccionado?.cantidadDisponible ?? undefined}
+            className="form-input"
+            value={cantidadTransferir}
+            onChange={e => setCantidadTransferir(e.target.value)}
+            placeholder={stockSeleccionado ? `Máximo ${stockSeleccionado.cantidadDisponible}` : 'Selecciona primero el stock'}
+            disabled={!stockSeleccionado}
+          />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Ubicación de destino</label>
+          <select
+            className="form-input"
+            value={nuevaUbicacionId}
+            onChange={e => setNuevaUbicacionId(e.target.value)}
+            disabled={!stockSeleccionado}
+          >
+            <option value="">Seleccionar ubicación...</option>
+            {destinosDisponibles.map(u => (
+              <option key={u.id} value={u.id}>
+                {u.codigo} — {u.zona} — Capacidad {u.capacidadMaxima}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Observaciones (opcional)</label>
+          <textarea
+            className="form-input"
+            value={observaciones}
+            onChange={e => setObservaciones(e.target.value)}
+            rows={3}
+            placeholder="Motivo operativo de la transferencia..."
+          />
+        </div>
+
+        {errorTransferencia && (
+          <AlertBanner variant="danger" title="No se pudo transferir" message={errorTransferencia} />
+        )}
       </Modal>
     </div>
   );
