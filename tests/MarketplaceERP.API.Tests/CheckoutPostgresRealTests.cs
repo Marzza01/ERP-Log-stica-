@@ -29,6 +29,7 @@ namespace MarketplaceERP.API.Tests;
 /// 2. Rollback por pago fallido: si el pago falla, no queda orden huérfana ni asiento contable en la BD.
 /// 3. Flujo completo: tras checkout la orden queda en Aprobada y la liquidación la toma SOLO tras marcarla Entregada.
 /// </summary>
+[Collection("PostgresRealTests")]
 public class CheckoutPostgresRealTests : IAsyncLifetime
 {
     private static readonly string? RawConnStr = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION");

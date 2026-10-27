@@ -23,6 +23,7 @@ namespace MarketplaceERP.Finance.Tests;
 /// Requiere TEST_PG_CONNECTION (ej: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=xxx").
 /// Si no está definida en el entorno, los tests se omiten limpiamente.
 /// </summary>
+[Collection("PostgresRealTests")]
 public class LiquidacionPostgresRealTests : IAsyncLifetime
 {
     private static readonly string? RawConnStr = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION");

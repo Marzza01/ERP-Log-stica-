@@ -270,6 +270,58 @@ public class CheckoutSeguroHttpTests : IClassFixture<CustomWebApplicationFactory
     }
 
     [Fact]
+    public async Task Checkout_Production_ConAllowMockTrue_Retorna200()
+    {
+        // Arrancar una factory en Production pero con Payments:AllowMock = true
+        var prodFactory = new CustomWebApplicationFactory();
+        var factory = prodFactory.WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Production");
+            builder.UseSetting("ADMIN_EMAIL", "admin@marketplace.local");
+            builder.UseSetting("ADMIN_PASSWORD", "AdminPass123!Secure");
+            builder.UseSetting("Payments:AllowMock", "true");
+        });
+
+        var userId = Guid.NewGuid().ToString();
+        var client = factory.CreateClient();
+        var token = prodFactory.GenerateToken("Comprador", userId);
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var vendedorId = Guid.NewGuid();
+        var prod = new Producto
+        {
+            Id = Guid.NewGuid(),
+            Sku = $"SKU-PROD-200-{Guid.NewGuid():N}",
+            Nombre = "Producto Prod 200",
+            CategoriaNombre = "General",
+            PrecioB2C = 50m,
+            PrecioB2B = 40m,
+            EstaPublicado = true,
+            VendedorId = vendedorId
+        };
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            catDb.Productos.Add(prod);
+            catDb.StockFisico.Add(new StockFisico { Id = Guid.NewGuid(), ProductoId = prod.Id, CantidadTotal = 10, CantidadReservada = 0 });
+            await catDb.SaveChangesAsync();
+        }
+
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/checkout")
+        {
+            Content = JsonContent.Create(new
+            {
+                Items = new[] { new { ProductoId = prod.Id, Cantidad = 1 } }
+            })
+        };
+        req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var res = await client.SendAsync(req);
+        res.StatusCode.Should().Be(HttpStatusCode.OK, "cuando Payments:AllowMock=true en Production, el mock de pasarela debe procesar el checkout");
+    }
+
+    [Fact]
     public async Task Checkout_CarritoConDosVendedores_Retorna400()
     {
         var client = _factory.CreateClientWithAuth("Comprador");
@@ -640,5 +692,47 @@ public class CheckoutSeguroHttpTests : IClassFixture<CustomWebApplicationFactory
             var stock = await catDb.StockFisico.FirstAsync(s => s.ProductoId == prodId);
             stock.CantidadReservada.Should().Be(0);
         }
+    }
+
+    [Fact]
+    public async Task PagosHuerfanos_SeguridadYConsulta_Retorna401_403_200()
+    {
+        // 1. Sin token -> 401 Unauthorized
+        var anonClient = _factory.CreateClient();
+        var anonRes = await anonClient.GetAsync("/api/contabilidad/pagos-huerfanos");
+        anonRes.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        // 2. Con rol Comprador -> 403 Forbidden
+        var compradorClient = _factory.CreateClientWithAuth("Comprador");
+        var forbidRes = await compradorClient.GetAsync("/api/contabilidad/pagos-huerfanos");
+        forbidRes.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        // 3. Con rol Admin -> 200 OK
+        var adminClient = _factory.CreateClientWithAuth("Admin");
+        var huerfanoId = Guid.NewGuid();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            finDb.PagosConciliacionHuerfanos.Add(new PagoConciliacionHuerfano
+            {
+                Id = huerfanoId,
+                OrdenId = Guid.NewGuid(),
+                TransaccionId = $"TX-TEST-{Guid.NewGuid():N}",
+                Monto = 125.50m,
+                Moneda = "USD",
+                MotivoFallo = "Fallo simulado para prueba de endpoint",
+                Reembolsado = false,
+                FechaRegistro = DateTime.UtcNow
+            });
+            await finDb.SaveChangesAsync();
+        }
+
+        var adminRes = await adminClient.GetAsync("/api/contabilidad/pagos-huerfanos?soloSinResolver=true");
+        adminRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var lista = await adminRes.Content.ReadFromJsonAsync<List<PagoConciliacionHuerfano>>();
+        lista.Should().NotBeNull();
+        lista!.Any(p => p.Id == huerfanoId).Should().BeTrue("el registro pendiente de conciliación debe ser devuelto al Admin");
     }
 }

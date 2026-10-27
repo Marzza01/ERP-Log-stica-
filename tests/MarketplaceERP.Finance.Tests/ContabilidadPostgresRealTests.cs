@@ -29,6 +29,7 @@ namespace MarketplaceERP.Finance.Tests;
 ///  (f) Paginación de Libro Diario retorna Total y respeta pageSize.
 /// Requiere variable de entorno TEST_PG_CONNECTION.
 /// </summary>
+[Collection("PostgresRealTests")]
 public class ContabilidadPostgresRealTests : IAsyncLifetime
 {
     private static readonly string? RawConnStr = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION");
@@ -370,19 +371,28 @@ public class ContabilidadPostgresRealTests : IAsyncLifetime
         Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada.");
 
         var numerosGenerados = new ConcurrentBag<string>();
+        using var throttle = new SemaphoreSlim(20, 20);
         var tasks = Enumerable.Range(1, 100).Select(i => Task.Run(async () =>
         {
-            await using var db = CreateDbContext();
-            var service = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
-
-            var lineas = new List<LineaAsientoInput>
+            await throttle.WaitAsync();
+            try
             {
-                new("1101", 10m * i, 0m),
-                new("4101", 0m, 10m * i)
-            };
+                await using var db = CreateDbContext();
+                var service = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
 
-            var partida = await service.GenerarAsientoManualAsync($"Asiento Concurrente {i}", "Ajuste", lineas);
-            numerosGenerados.Add(partida.NumeroPartida);
+                var lineas = new List<LineaAsientoInput>
+                {
+                    new("1101", 10m * i, 0m),
+                    new("4101", 0m, 10m * i)
+                };
+
+                var partida = await service.GenerarAsientoManualAsync($"Asiento Concurrente {i}", "Ajuste", lineas);
+                numerosGenerados.Add(partida.NumeroPartida);
+            }
+            finally
+            {
+                throttle.Release();
+            }
         }));
 
         await Task.WhenAll(tasks);

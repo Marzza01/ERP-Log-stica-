@@ -3,9 +3,12 @@
  * Todos los derechos reservados © 2026
  */
 
+using MarketplaceERP.Finance.Data;
+using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace MarketplaceERP.API.Controllers;
 
@@ -21,11 +24,16 @@ namespace MarketplaceERP.API.Controllers;
 public class ContabilidadController : ControllerBase
 {
     private readonly IContabilidadService _contabilidad;
+    private readonly FinanceDbContext _financeDb;
     private readonly ILogger<ContabilidadController> _logger;
 
-    public ContabilidadController(IContabilidadService contabilidad, ILogger<ContabilidadController> logger)
+    public ContabilidadController(
+        IContabilidadService contabilidad,
+        FinanceDbContext financeDb,
+        ILogger<ContabilidadController> logger)
     {
         _contabilidad = contabilidad;
+        _financeDb = financeDb;
         _logger = logger;
     }
 
@@ -149,6 +157,33 @@ public class ContabilidadController : ControllerBase
         {
             return BadRequest(new { mensaje = ex.Message });
         }
+    }
+
+    // ── GET /api/contabilidad/pagos-huerfanos ─────────────────────────────────
+    /// <summary>
+    /// Retorna los pagos huérfanos pendientes de resolución o conciliación manual.
+    /// Solo accesible para usuarios con rol Admin.
+    /// </summary>
+    [HttpGet("pagos-huerfanos", Name = "ObtenerPagosHuerfanos")]
+    [Authorize(Roles = "Admin")]
+    [ProducesResponseType(typeof(IEnumerable<PagoConciliacionHuerfano>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ObtenerPagosHuerfanos(
+        [FromQuery] bool? soloSinResolver = true,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _financeDb.PagosConciliacionHuerfanos.AsQueryable();
+
+        if (soloSinResolver == true)
+        {
+            query = query.Where(p => !p.Reembolsado && p.FechaResolucion == null);
+        }
+
+        var lista = await query
+            .OrderByDescending(p => p.FechaRegistro)
+            .Take(100)
+            .ToListAsync(cancellationToken);
+
+        return Ok(lista);
     }
 }
 

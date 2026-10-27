@@ -74,21 +74,87 @@ public class ReservaStockCleanupService : BackgroundService
         var ahora = DateTime.UtcNow;
         var reservasExpiradas = await dbContext.ReservasStock
             .Where(r => r.Estado == EstadoReserva.Pendiente && r.FechaExpiracion != null && r.FechaExpiracion <= ahora)
-            .Select(r => r.Id)
             .ToListAsync(cancellationToken);
 
         int liberadas = 0;
-        foreach (var reservaId in reservasExpiradas)
+        foreach (var reserva in reservasExpiradas)
         {
             try
             {
-                await stockService.LiberarStockAsync(reservaId);
-                liberadas++;
-                _logger.LogInformation("Reserva expirada {ReservaId} liberada con éxito por ReservaStockCleanupService.", reservaId);
+                // Si la reserva está ligada a una orden, verificar si la orden fue aprobada/pagada en Finance
+                bool ordenPagada = false;
+                if (reserva.OrdenId != Guid.Empty && dbContext.Database.IsRelational())
+                {
+                    try
+                    {
+                        await using var cmd = dbContext.Database.GetDbConnection().CreateCommand();
+                        cmd.CommandText = @"
+                            SELECT 1 
+                            FROM information_schema.tables 
+                            WHERE table_schema = 'finance' AND table_name = 'ordenes'
+                            LIMIT 1;";
+
+                        if (cmd.Connection!.State != System.Data.ConnectionState.Open)
+                        {
+                            await cmd.Connection.OpenAsync(cancellationToken);
+                        }
+
+                        var tableExists = await cmd.ExecuteScalarAsync(cancellationToken);
+                        if (tableExists != null)
+                        {
+                            await using var checkCmd = dbContext.Database.GetDbConnection().CreateCommand();
+                            checkCmd.CommandText = @"
+                                SELECT ""Estado"" 
+                                FROM finance.ordenes 
+                                WHERE ""Id"" = @ordenId 
+                                LIMIT 1;";
+                            var p = checkCmd.CreateParameter();
+                            p.ParameterName = "@ordenId";
+                            p.Value = reserva.OrdenId;
+                            checkCmd.Parameters.Add(p);
+
+                            var estadoObj = await checkCmd.ExecuteScalarAsync(cancellationToken);
+                            if (estadoObj != null)
+                            {
+                                string estadoStr = estadoObj.ToString() ?? string.Empty;
+                                if (string.Equals(estadoStr, "Aprobada", StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(estadoStr, "EnProceso", StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(estadoStr, "Enviada", StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(estadoStr, "Entregada", StringComparison.OrdinalIgnoreCase) ||
+                                    (int.TryParse(estadoStr, out var num) && num >= 1 && num <= 4))
+                                {
+                                    ordenPagada = true;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception exCheck)
+                    {
+                        _logger.LogWarning(exCheck, "No se pudo verificar estado de la orden {OrdenId} en Finance. Continuando flujo...", reserva.OrdenId);
+                    }
+                }
+
+                if (ordenPagada)
+                {
+                    // Reconciliación: la orden ya se pagó pero el proceso murió antes de ComprometerReservasOrdenAsync.
+                    // Se pasa a Comprometida y se retira la expiración.
+                    reserva.Estado = EstadoReserva.Comprometida;
+                    reserva.FechaExpiracion = null;
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                    _logger.LogInformation("Reserva expirada {ReservaId} reconciliada a Comprometida porque la orden {OrdenId} ya está aprobada/pagada.",
+                        reserva.Id, reserva.OrdenId);
+                }
+                else
+                {
+                    // Orden inexistente, cancelada o aún pendiente de pago -> Liberar stock
+                    await stockService.LiberarStockAsync(reserva.Id);
+                    liberadas++;
+                    _logger.LogInformation("Reserva expirada {ReservaId} liberada con éxito por ReservaStockCleanupService.", reserva.Id);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error al liberar reserva expirada {ReservaId}.", reservaId);
+                _logger.LogError(ex, "Error al procesar reserva expirada {ReservaId}.", reserva.Id);
             }
         }
 

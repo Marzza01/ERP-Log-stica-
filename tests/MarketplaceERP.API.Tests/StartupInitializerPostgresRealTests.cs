@@ -27,6 +27,7 @@ namespace MarketplaceERP.API.Tests;
 /// (b) Una segunda ejecución consecutiva es idempotente (no duplica el Admin ni arroja errores).
 /// (c) En Production con base de datos inalcanzable, el initializer lanza InvalidOperationException tras los reintentos.
 /// </summary>
+[Collection("PostgresRealTests")]
 public class StartupInitializerPostgresRealTests : IAsyncLifetime
 {
     private static readonly string? RawConnStr = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION");

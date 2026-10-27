@@ -68,6 +68,18 @@ Este documento centraliza y documenta cada una de las fases, cambios de arquitec
 - **Reembolso Real de Pasarela:** La interfaz `IPaymentGateway` cuenta con el método `ReembolsarAsync` y la tabla `finance.pagos_conciliacion_huerfanos`. Queda **pendiente de negocio e infraestructura** la integración con las APIs oficiales de pasarelas reales (ej: Pagadito, Wompi, Serfinsa, Stripe) y su webhook de reverso.
 - **Dependencia `Microsoft.Extensions.Hosting.Abstractions` en `MarketplaceERP.Finance`:** Requerida por `IHostEnvironment` en `PagoServiceMock` para verificar de forma segura y tipada si el entorno es `Production` (`_environment.IsProduction()`).
 
+### 5. Procedimiento Manual de Conciliación de Pagos Huérfanos
+Cuando un checkout realiza el cobro en la pasarela de pagos pero la transacción posterior en base de datos falla (por ejemplo por excepción contable, desconexión o fallo en persistencia) y la pasarela no admite reembolso automático:
+1. **Detección y Monitoreo:**
+   - La API registra el incidente con nivel `CRITICAL/ERROR` y persiste los datos del cobro en la tabla `finance.pagos_conciliacion_huerfanos`.
+   - El equipo de Finanzas/Auditoría consulta los pagos sin resolver a través del endpoint seguro `GET /api/contabilidad/pagos-huerfanos?soloSinResolver=true` (restringido al rol `Admin`).
+2. **Verificación en Portal de Pasarela:**
+   - El analista financiero toma el `TransaccionId`, `Monto` y `FechaRegistro` reportados en la tabla.
+   - Accede a la consola de la pasarela bancaria (ej: portal de Pagadito, Wompi, Serfinsa) y localiza la transacción cobrada al cliente.
+3. **Resolución:**
+   - **Opción A (Reverso Directo en Portal):** Se procesa el reembolso manual al tarjetahabiente a través del portal de la pasarela. Al confirmarse el reverso bancario, se actualiza el registro en `finance.pagos_conciliacion_huerfanos` marcando `Reembolsado = true`, `ReembolsoTransaccionId = <ID_REVERSO>` y `FechaResolucion = UtcNow`.
+   - **Opción B (Regeneración de Pedido):** Si el cliente solicita conservar su compra, se asocia el cobro a una nueva orden manual y se genera el asiento de ajuste contable correspondiente, cerrando el registro con notas de auditoría.
+
 ---
 
 ## Fase 1: Núcleo de Catálogo, WMS y Flujo Base

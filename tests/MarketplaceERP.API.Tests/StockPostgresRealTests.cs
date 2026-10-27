@@ -34,6 +34,7 @@ namespace MarketplaceERP.API.Tests;
 /// (e) expired reservation → released by cleanup job
 /// (f) 20 concurrent checkouts for stock of 5 → stock never negative, exactly 5 OK
 /// </summary>
+[Collection("PostgresRealTests")]
 public class StockPostgresRealTests : IAsyncLifetime
 {
     private static readonly string? RawConnStr = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION");
@@ -465,6 +466,126 @@ public class StockPostgresRealTests : IAsyncLifetime
         // 4. Verificar que la reserva Comprometida fue liberada y el stock quedó restaurado
         using (var scope = _factory.Services.CreateScope())
         {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var reserva = await catDb.ReservasStock.FirstAsync(r => r.Id == reservaId);
+            reserva.Estado.Should().Be(EstadoReserva.Liberada);
+
+            var stockDb = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stockDb.CantidadReservada.Should().Be(0);
+            stockDb.CantidadDisponible.Should().Be(10);
+        }
+    }
+
+    [SkippableFact]
+    public async Task TestH_ReservaPendienteVencida_DeOrdenAprobada_EsReconciliadaAComprometidaPorJob()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        var (productoId, vendedorId) = await CrearProductoConStockAsync(cantidadTotal: 10);
+        var compradorId = Guid.NewGuid();
+        var ordenId = Guid.NewGuid();
+        var reservaId = Guid.NewGuid();
+
+        // Simular que el proceso murió justo tras commitear la orden en Finance (Aprobada)
+        // pero antes de llamar a ComprometerReservasOrdenAsync (la reserva quedó Pendiente y venció)
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+
+            // Orden pagada/aprobada en Finance
+            finDb.Ordenes.Add(new Orden
+            {
+                Id = ordenId,
+                NumeroOrden = $"ORD-REC-{Guid.NewGuid():N}",
+                CompradorId = compradorId,
+                VendedorId = vendedorId,
+                SubTotal = 40m,
+                MontoTotal = 50.20m,
+                Estado = EstadoOrden.Aprobada,
+                FechaCreacion = DateTime.UtcNow.AddMinutes(-20),
+                FechaAprobacion = DateTime.UtcNow.AddMinutes(-20)
+            });
+            await finDb.SaveChangesAsync();
+
+            // Reserva asociada a la orden en estado Pendiente y ya vencida
+            catDb.ReservasStock.Add(new ReservaStock
+            {
+                Id = reservaId,
+                ProductoId = productoId,
+                OrdenId = ordenId,
+                Cantidad = 3,
+                Estado = EstadoReserva.Pendiente,
+                FechaReserva = DateTime.UtcNow.AddMinutes(-20),
+                FechaExpiracion = DateTime.UtcNow.AddMinutes(-5)
+            });
+
+            // Actualizar stock reservado
+            var stockDb = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stockDb.CantidadReservada = 3;
+            await catDb.SaveChangesAsync();
+        }
+
+        // Ejecutar el job de limpieza
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var cleanup = scope.ServiceProvider.GetRequiredService<IHostedService>() as ReservaStockCleanupService
+                ?? new ReservaStockCleanupService(scope.ServiceProvider, scope.ServiceProvider.GetRequiredService<IConfiguration>(), Moq.Mock.Of<Microsoft.Extensions.Logging.ILogger<ReservaStockCleanupService>>());
+
+            int liberadas = await cleanup.PurgarReservasExpiradasAsync();
+            liberadas.Should().Be(0, "la reserva no debe ser liberada porque su orden ya está aprobada/pagada");
+
+            // Verificar que la reserva pasó a Comprometida y se eliminó la expiración
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var reserva = await catDb.ReservasStock.FirstAsync(r => r.Id == reservaId);
+            reserva.Estado.Should().Be(EstadoReserva.Comprometida);
+            reserva.FechaExpiracion.Should().BeNull();
+
+            // El stock físico sigue reservado
+            var stockDb = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stockDb.CantidadReservada.Should().Be(3);
+            stockDb.CantidadDisponible.Should().Be(7);
+        }
+    }
+
+    [SkippableFact]
+    public async Task TestI_ReservaPendienteVencida_DeOrdenInexistente_EsLiberadaPorJob()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        var (productoId, _) = await CrearProductoConStockAsync(cantidadTotal: 10);
+        var reservaId = Guid.NewGuid();
+        var ordenInexistenteId = Guid.NewGuid();
+
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+            catDb.ReservasStock.Add(new ReservaStock
+            {
+                Id = reservaId,
+                ProductoId = productoId,
+                OrdenId = ordenInexistenteId,
+                Cantidad = 2,
+                Estado = EstadoReserva.Pendiente,
+                FechaReserva = DateTime.UtcNow.AddMinutes(-20),
+                FechaExpiracion = DateTime.UtcNow.AddMinutes(-5)
+            });
+
+            var stockDb = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stockDb.CantidadReservada = 2;
+            await catDb.SaveChangesAsync();
+        }
+
+        // Ejecutar job
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var cleanup = scope.ServiceProvider.GetRequiredService<IHostedService>() as ReservaStockCleanupService
+                ?? new ReservaStockCleanupService(scope.ServiceProvider, scope.ServiceProvider.GetRequiredService<IConfiguration>(), Moq.Mock.Of<Microsoft.Extensions.Logging.ILogger<ReservaStockCleanupService>>());
+
+            int liberadas = await cleanup.PurgarReservasExpiradasAsync();
+            liberadas.Should().Be(1, "la reserva de orden inexistente debe ser liberada");
+
             var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
             var reserva = await catDb.ReservasStock.FirstAsync(r => r.Id == reservaId);
             reserva.Estado.Should().Be(EstadoReserva.Liberada);
