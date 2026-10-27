@@ -217,9 +217,15 @@ public class ProductosController : ControllerBase
         if (archivo is null || archivo.Length == 0)
             return BadRequest(new { mensaje = "Debe proporcionar un archivo CSV válido." });
 
-        // Vendedor y Categoría por defecto para la carga masiva de catálogo
-        var defaultVendedorId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-        var defaultCategoriaId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        // Obtener o crear Vendedor y Categoría por defecto desde la BD (sin GUIDs mágicos)
+        var coreDb = HttpContext.RequestServices.GetRequiredService<MarketplaceERP.Core.Data.CoreDbContext>();
+        var defaultVendedor = await coreDb.Vendedores.FirstOrDefaultAsync(v => v.Email == "vendedor.oficial@marketplaceerp.com")
+            ?? (await coreDb.Vendedores.FirstOrDefaultAsync());
+        var defaultCategoria = await coreDb.Categorias.FirstOrDefaultAsync(c => c.Nombre == "General")
+            ?? (await coreDb.Categorias.FirstOrDefaultAsync());
+
+        var defaultVendedorId = defaultVendedor?.Id ?? Guid.NewGuid();
+        var defaultCategoriaId = defaultCategoria?.Id ?? Guid.NewGuid();
 
         using var stream = archivo.OpenReadStream();
         var resultado = await _importService.ImportarCatalogoCsvAsync(stream, defaultVendedorId, defaultCategoriaId);
@@ -235,8 +241,14 @@ public class ProductosController : ControllerBase
     [ProducesResponseType(typeof(ImportResult), StatusCodes.Status200OK)]
     public async Task<IActionResult> Seed500()
     {
-        var defaultVendedorId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-        var defaultCategoriaId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var coreDb = HttpContext.RequestServices.GetRequiredService<MarketplaceERP.Core.Data.CoreDbContext>();
+        var defaultVendedor = await coreDb.Vendedores.FirstOrDefaultAsync(v => v.Email == "vendedor.oficial@marketplaceerp.com")
+            ?? (await coreDb.Vendedores.FirstOrDefaultAsync());
+        var defaultCategoria = await coreDb.Categorias.FirstOrDefaultAsync(c => c.Nombre == "General")
+            ?? (await coreDb.Categorias.FirstOrDefaultAsync());
+
+        var defaultVendedorId = defaultVendedor?.Id ?? Guid.NewGuid();
+        var defaultCategoriaId = defaultCategoria?.Id ?? Guid.NewGuid();
 
         var posiblesRutas = new[]
         {

@@ -19,7 +19,7 @@ services:
       retries: 5
 
   # ── API Backend (.NET 8) ──────────────────────────────────────────────────────
-  app:
+  api:
     build:
       context: .
       dockerfile: src/MarketplaceERP.API/Dockerfile
@@ -48,7 +48,7 @@ services:
     container_name: marketplace_frontend
     restart: unless-stopped
     depends_on:
-      - app
+      - api
     ports:
       - "3000:80"
 
