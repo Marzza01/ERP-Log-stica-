@@ -3,12 +3,14 @@
  * Todos los derechos reservados © 2026
  */
 
-import React, { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React, { Suspense, lazy, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { ToastProvider } from './context/ToastContext';
+import { ToastProvider, useToast } from './context/ToastContext';
+import { setForbiddenHandler } from './api/client';
 import Layout from './components/layout/Layout';
 import LoginPage from './pages/auth/LoginPage';
+import SinAccesoPage from './pages/auth/SinAccesoPage';
 
 const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage'));
 const OrdenesPage = lazy(() => import('./pages/ordenes/OrdenesPage'));
@@ -31,6 +33,58 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
+function RoleRouteGuard({
+  allowedRoles,
+  children,
+}: {
+  allowedRoles: string[];
+  children: React.ReactNode;
+}) {
+  const { isAuthenticated, usuario } = useAuth();
+  const location = useLocation();
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  const currentRole = usuario?.rol || '';
+
+  if (!allowedRoles.includes(currentRole)) {
+    return <SinAccesoPage />;
+  }
+
+  return <>{children}</>;
+}
+
+function HomeRedirect() {
+  const { usuario, isAuthenticated } = useAuth();
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (usuario?.rol === 'Comprador') {
+    return <Navigate to="/sin-acceso" replace />;
+  }
+
+  if (usuario?.rol === 'Vendedor') {
+    return <Navigate to="/ordenes" replace />;
+  }
+
+  return <Navigate to="/dashboard" replace />;
+}
+
+function GlobalForbiddenListener() {
+  const toast = useToast();
+
+  useEffect(() => {
+    setForbiddenHandler((msg: string) => {
+      toast.error('Acceso denegado (403)', msg);
+    });
+  }, [toast]);
+
+  return null;
+}
 function RouteLoading() {
   return (
     <div style={{ padding: 24 }} aria-live="polite" aria-busy="true">
@@ -47,32 +101,33 @@ function AppRoutes() {
   return (
     <Suspense fallback={<RouteLoading />}>
       <Routes>
-        <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+        <Route path="/login" element={isAuthenticated ? <HomeRedirect /> : <LoginPage />} />
 
         <Route path="/" element={
           <ProtectedRoute>
             <Layout />
           </ProtectedRoute>
         }>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="ordenes" element={<OrdenesPage />} />
-          <Route path="wms" element={<WmsPage />} />
-          <Route path="reabastecimiento" element={<ReabastecimientoPage />} />
-          <Route path="proveedores" element={<ProveedoresPage />} />
-          <Route path="ajustes" element={<AjustesPage />} />
-          <Route path="conteos" element={<ConteosPage />} />
-          <Route path="alertas-inventario" element={<AlertasInventarioPage />} />
-          <Route path="bloqueos-inventario" element={<BloqueosInventarioPage />} />
-          <Route path="fulfillment" element={<FulfillmentPage />} />
-          <Route path="rma" element={<RmaPage />} />
-          <Route path="compras" element={<ComprasPage />} />
-          <Route path="contabilidad" element={<ContabilidadPage />} />
-          <Route path="liquidaciones" element={<LiquidacionesPage />} />
-          <Route path="productos" element={<ProductosPage />} />
+          <Route index element={<HomeRedirect />} />
+          <Route path="dashboard" element={<RoleRouteGuard allowedRoles={['Admin']}><DashboardPage /></RoleRouteGuard>} />
+          <Route path="ordenes" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><OrdenesPage /></RoleRouteGuard>} />
+          <Route path="wms" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><WmsPage /></RoleRouteGuard>} />
+          <Route path="reabastecimiento" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><ReabastecimientoPage /></RoleRouteGuard>} />
+          <Route path="proveedores" element={<RoleRouteGuard allowedRoles={['Admin']}><ProveedoresPage /></RoleRouteGuard>} />
+          <Route path="ajustes" element={<RoleRouteGuard allowedRoles={['Admin']}><AjustesPage /></RoleRouteGuard>} />
+          <Route path="conteos" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><ConteosPage /></RoleRouteGuard>} />
+          <Route path="alertas-inventario" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><AlertasInventarioPage /></RoleRouteGuard>} />
+          <Route path="bloqueos-inventario" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><BloqueosInventarioPage /></RoleRouteGuard>} />
+          <Route path="fulfillment" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><FulfillmentPage /></RoleRouteGuard>} />
+          <Route path="rma" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><RmaPage /></RoleRouteGuard>} />
+          <Route path="compras" element={<RoleRouteGuard allowedRoles={['Admin']}><ComprasPage /></RoleRouteGuard>} />
+          <Route path="contabilidad" element={<RoleRouteGuard allowedRoles={['Admin']}><ContabilidadPage /></RoleRouteGuard>} />
+          <Route path="liquidaciones" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><LiquidacionesPage /></RoleRouteGuard>} />
+          <Route path="productos" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><ProductosPage /></RoleRouteGuard>} />
+          <Route path="sin-acceso" element={<SinAccesoPage />} />
         </Route>
 
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<HomeRedirect />} />
       </Routes>
     </Suspense>
   );

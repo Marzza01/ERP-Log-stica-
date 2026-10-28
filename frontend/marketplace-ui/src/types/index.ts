@@ -25,6 +25,7 @@ export interface Usuario {
   nombre: string;
   email: string;
   rol: string;
+  vendedorId?: string;
 }
 
 // ── ÓRDENES (OMS) ────────────────────────────────────────────────────────────

@@ -25,6 +25,7 @@ const routeTitles: Record<string, { label: string; sub: string }> = {
   '/contabilidad': { label: 'Contabilidad', sub: 'Libro diario y balance general' },
   '/liquidaciones': { label: 'Liquidaciones', sub: 'Pagos y splits de comisión' },
   '/productos': { label: 'Productos', sub: 'Catálogo de productos y stock' },
+  '/sin-acceso': { label: 'Acceso restringido', sub: 'Permisos insuficientes para esta sección' },
 };
 
 interface TopbarProps {
@@ -34,6 +35,7 @@ interface TopbarProps {
 export default function Topbar({ onMenuToggle }: TopbarProps) {
   const location = useLocation();
   const { usuario } = useAuth();
+  const puedeVerAlertasInventario = usuario?.rol === 'Admin' || usuario?.rol === 'Vendedor';
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<AlertaInventario[]>([]);
@@ -63,6 +65,14 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
   }, [location.pathname]);
 
   const cargarAlertas = useCallback(async () => {
+    if (!puedeVerAlertasInventario) {
+      setNotifications([]);
+      setNotificationCount(0);
+      setNotificationsError(false);
+      setNotificationsLoading(false);
+      setShowNotifications(false);
+      return;
+    }
     setNotificationsLoading(true);
     setNotificationsError(false);
     try {
@@ -77,7 +87,7 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
     } finally {
       setNotificationsLoading(false);
     }
-  }, []);
+  }, [puedeVerAlertasInventario]);
 
   useEffect(() => {
     void cargarAlertas();
