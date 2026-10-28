@@ -231,11 +231,6 @@ internal sealed class ConteoCiclicoService : IConteoCiclicoService
                 "Conteo cíclico {ConteoId} confirmó diferencia {Diferencia} y generó ajuste {AjusteId}",
                 conteo.Id, diferencia, ajuste.Ajuste.Id);
 
-            // Refresca navegación opcional para que el DTO muestre el estado del ajuste recién creado.
-            conteo.AjusteInventario = await _db.AjustesInventario
-                .AsNoTracking()
-                .SingleOrDefaultAsync(a => a.Id == ajuste.Ajuste.Id, cancellationToken);
-
             return Exito(conteo, "Reconteo completado. Se generó un ajuste pendiente de aprobación; el stock aún no cambió.");
         }
         catch

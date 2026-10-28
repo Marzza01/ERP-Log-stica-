@@ -1,4 +1,4 @@
-name: CI — MarketplaceERP
+﻿name: CI â€” MarketplaceERP
 
 on:
   push:
@@ -20,8 +20,26 @@ jobs:
     name: Build & Test (.NET 8)
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TEST_PG_CONNECTION: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgrespassword"
+
     steps:
-      # 1. Checkout del código
+      # 1. Checkout del cÃ³digo
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -38,6 +56,14 @@ jobs:
       # 4. Build en modo Release
       - name: Build solution
         run: dotnet build MarketplaceERP.sln --no-restore --configuration Release
+
+      # 4.1 Validar que TEST_PG_CONNECTION estÃ© configurada
+      - name: Verify TEST_PG_CONNECTION is set
+        run: |
+          if [ -z "$TEST_PG_CONNECTION" ]; then
+            echo "ERROR: TEST_PG_CONNECTION is not set!"
+            exit 1
+          fi
 
       # 5. Ejecutar tests unitarios
       - name: Run tests
@@ -58,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 6. Checkout del código
+      # 6. Checkout del cÃ³digo
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -85,3 +111,4 @@ jobs:
           name: frontend-dist
           path: frontend/marketplace-ui/dist/
           retention-days: 7
+
