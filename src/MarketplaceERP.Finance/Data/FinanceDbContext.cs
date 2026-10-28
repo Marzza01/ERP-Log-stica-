@@ -71,6 +71,9 @@ public class FinanceDbContext : DbContext
             // Cross-schema references
             entity.Property(o => o.CompradorId).IsRequired();
             entity.Property(o => o.VendedorId).IsRequired();
+            entity.Property(o => o.IdempotencyKey).HasMaxLength(128);
+            entity.Property(o => o.CheckoutPayloadHash).HasMaxLength(64);
+            entity.HasIndex(o => new { o.CompradorId, o.IdempotencyKey }).IsUnique();
             entity.HasIndex(o => o.NumeroOrden).IsUnique();
             entity.HasIndex(o => o.CompradorId);
             entity.HasIndex(o => o.VendedorId);
