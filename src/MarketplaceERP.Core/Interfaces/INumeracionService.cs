@@ -14,5 +14,7 @@ public interface INumeracionService
     Task<string> GenerarNumeroPOAsync(CancellationToken ct = default);
     Task<string> GenerarNumeroPickListAsync(CancellationToken ct = default);
     Task<string> GenerarNumeroGuiaAsync(CancellationToken ct = default);
+    Task<string> GenerarNumeroRmaAsync(CancellationToken ct = default);
+    Task<string> GenerarCodigoAuditoria3WayAsync(CancellationToken ct = default);
 }
 

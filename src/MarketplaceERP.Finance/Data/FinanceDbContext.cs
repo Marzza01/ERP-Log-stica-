@@ -301,6 +301,11 @@ public class FinanceDbContext : DbContext
             .StartsAt(1)
             .IncrementsBy(1);
 
+        // Secuencia para código de auditoría 3-Way Match (PostgreSQL)
+        modelBuilder.HasSequence<long>("CodigoAuditoria3WaySeq", "finance")
+            .StartsAt(1)
+            .IncrementsBy(1);
+
         // ── PartidaContable (Libro Diario) ────────────────────────────────────
         modelBuilder.Entity<PartidaContable>(entity =>
         {

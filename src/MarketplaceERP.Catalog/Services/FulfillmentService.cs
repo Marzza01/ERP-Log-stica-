@@ -24,12 +24,6 @@ public class FulfillmentService : IFulfillmentService
         _logger = logger;
     }
 
-    /// <summary>Constructor de conveniencia para tests unitarios</summary>
-    public FulfillmentService(CatalogDbContext db, ILogger<FulfillmentService> logger)
-        : this(db, new TestInMemoryNumeracionService(), logger)
-    {
-    }
-
     public async Task<PickList> GenerarPickListAsync(GenerarPickListRequest request, CancellationToken cancellationToken = default)
     {
         var numeroPickList = await _numeracionService.GenerarNumeroPickListAsync(cancellationToken);
@@ -191,32 +185,5 @@ public class FulfillmentService : IFulfillmentService
         }
 
         return await query.OrderByDescending(p => p.FechaEmpaque).ToListAsync(cancellationToken);
-    }
-}
-
-/// <summary>
-/// Implementación de INumeracionService exclusiva para tests unitarios / InMemory en Catalog.
-/// </summary>
-internal class TestInMemoryNumeracionService : INumeracionService
-{
-    private static long _pickCounter = 0;
-    private static long _guiaCounter = 0;
-
-    public Task<string> GenerarNumeroOrdenAsync(CancellationToken ct = default)
-        => Task.FromResult($"ORD-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid():N}"[..25]);
-
-    public Task<string> GenerarNumeroPOAsync(CancellationToken ct = default)
-        => Task.FromResult($"PO-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid():N}"[..20]);
-
-    public Task<string> GenerarNumeroPickListAsync(CancellationToken ct = default)
-    {
-        var correlativo = Interlocked.Increment(ref _pickCounter);
-        return Task.FromResult($"PKL-{DateTime.UtcNow:yyyyMMdd}-{correlativo:D4}");
-    }
-
-    public Task<string> GenerarNumeroGuiaAsync(CancellationToken ct = default)
-    {
-        var correlativo = Interlocked.Increment(ref _guiaCounter);
-        return Task.FromResult($"SV-LOGI-{DateTime.UtcNow:yyyyMMdd}-{correlativo:D5}");
     }
 }

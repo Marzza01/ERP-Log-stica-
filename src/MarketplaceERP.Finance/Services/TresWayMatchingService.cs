@@ -3,6 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
+using MarketplaceERP.Core.Interfaces;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -13,11 +14,13 @@ namespace MarketplaceERP.Finance.Services;
 public class TresWayMatchingService : ITresWayMatchingService
 {
     private readonly FinanceDbContext _dbContext;
+    private readonly INumeracionService _numeracionService;
     private readonly ILogger<TresWayMatchingService> _logger;
 
-    public TresWayMatchingService(FinanceDbContext dbContext, ILogger<TresWayMatchingService> logger)
+    public TresWayMatchingService(FinanceDbContext dbContext, INumeracionService numeracionService, ILogger<TresWayMatchingService> logger)
     {
         _dbContext = dbContext;
+        _numeracionService = numeracionService;
         _logger = logger;
     }
 
@@ -71,7 +74,7 @@ public class TresWayMatchingService : ITresWayMatchingService
             po.FechaRecepcionReal = DateTime.UtcNow;
         }
 
-        string codigoAuditoria = $"3WAY-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+        string codigoAuditoria = await _numeracionService.GenerarCodigoAuditoria3WayAsync(cancellationToken);
 
         var match = new MatchTridireccional
         {

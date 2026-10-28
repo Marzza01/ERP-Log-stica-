@@ -27,6 +27,8 @@ public class NumeracionService : INumeracionService
     private static long _memPOCounter = 0;
     private static long _memPickListCounter = 0;
     private static long _memGuiaCounter = 0;
+    private static long _memRmaCounter = 0;
+    private static long _mem3WayCounter = 0;
 
     public NumeracionService(FinanceDbContext financeDb, CatalogDbContext catalogDb)
     {
@@ -96,6 +98,38 @@ public class NumeracionService : INumeracionService
 
         // Formato SV-LOGI-yyyyMMdd-NNNNN (mínimo 5 dígitos, crece si el correlativo lo supera)
         return $"SV-LOGI-{DateTime.UtcNow:yyyyMMdd}-{correlativo:D5}";
+    }
+
+    public async Task<string> GenerarNumeroRmaAsync(CancellationToken ct = default)
+    {
+        long correlativo;
+        if (_catalogDb.Database.IsRelational())
+        {
+            correlativo = await ObtenerNextValAsync(_catalogDb, "catalog.\"NumeroRMASeq\"", ct);
+        }
+        else
+        {
+            correlativo = Interlocked.Increment(ref _memRmaCounter);
+        }
+
+        // Formato RMA-yyyyMMdd-NNNN (mínimo 4 dígitos, crece si el correlativo lo supera)
+        return $"RMA-{DateTime.UtcNow:yyyyMMdd}-{correlativo:D4}";
+    }
+
+    public async Task<string> GenerarCodigoAuditoria3WayAsync(CancellationToken ct = default)
+    {
+        long correlativo;
+        if (_financeDb.Database.IsRelational())
+        {
+            correlativo = await ObtenerNextValAsync(_financeDb, "finance.\"CodigoAuditoria3WaySeq\"", ct);
+        }
+        else
+        {
+            correlativo = Interlocked.Increment(ref _mem3WayCounter);
+        }
+
+        // Formato 3WAY-yyyyMMdd-NNNN (mínimo 4 dígitos, crece si el correlativo lo supera)
+        return $"3WAY-{DateTime.UtcNow:yyyyMMdd}-{correlativo:D4}";
     }
 
     private static async Task<long> ObtenerNextValAsync(DbContext dbContext, string nombreSecuencia, CancellationToken ct)

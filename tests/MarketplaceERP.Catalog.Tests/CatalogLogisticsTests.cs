@@ -175,7 +175,7 @@ public class CatalogLogisticsTests
         dbContext.Productos.Add(producto);
         await dbContext.SaveChangesAsync();
 
-        var rmaService = new RmaService(dbContext, NullLogger<RmaService>.Instance);
+        var rmaService = new RmaService(dbContext, new FakeTestNumeracionService(), NullLogger<RmaService>.Instance);
 
         var rma = await rmaService.RegistrarSolicitudRmaAsync(new RegistrarRmaRequest(
             OrdenId: Guid.NewGuid(),
@@ -221,7 +221,7 @@ public class CatalogLogisticsTests
         dbContext.Productos.Add(producto);
         await dbContext.SaveChangesAsync();
 
-        var rmaService = new RmaService(dbContext, NullLogger<RmaService>.Instance);
+        var rmaService = new RmaService(dbContext, new FakeTestNumeracionService(), NullLogger<RmaService>.Instance);
 
         var rma = await rmaService.RegistrarSolicitudRmaAsync(new RegistrarRmaRequest(
             OrdenId: Guid.NewGuid(),

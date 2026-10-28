@@ -5,6 +5,7 @@
 
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
+using MarketplaceERP.Core.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -13,17 +14,19 @@ namespace MarketplaceERP.Catalog.Services;
 public class RmaService : IRmaService
 {
     private readonly CatalogDbContext _dbContext;
+    private readonly INumeracionService _numeracionService;
     private readonly ILogger<RmaService> _logger;
 
-    public RmaService(CatalogDbContext dbContext, ILogger<RmaService> logger)
+    public RmaService(CatalogDbContext dbContext, INumeracionService numeracionService, ILogger<RmaService> logger)
     {
         _dbContext = dbContext;
+        _numeracionService = numeracionService;
         _logger = logger;
     }
 
     public async Task<DevolucionRMA> RegistrarSolicitudRmaAsync(RegistrarRmaRequest request, CancellationToken cancellationToken = default)
     {
-        string numeroRma = $"RMA-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+        string numeroRma = await _numeracionService.GenerarNumeroRmaAsync(cancellationToken);
 
         var rma = new DevolucionRMA
         {

@@ -214,4 +214,27 @@ public class CheckoutOrchestratorTests
         // Verificar que NO se intentó procesar el pago
         mockPago.Verify(p => p.ProcesarPagoAsync(It.IsAny<PagoRequest>()), Times.Never);
     }
+
+    [Fact]
+    public async Task PagoServiceMock_EnProduccion_NuncaSimulaFallosAleatorios()
+    {
+        // Arrange
+        var mockEnv = new Mock<Microsoft.Extensions.Hosting.IHostEnvironment>();
+        mockEnv.Setup(e => e.EnvironmentName).Returns("Production");
+
+        var mockConfig = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
+        mockConfig.Setup(c => c["Payments:AllowMock"]).Returns("true");
+        mockConfig.Setup(c => c["Payments:SimulateFailures"]).Returns("true"); // Intento de simular fallos en producción
+
+        var mockLogger = new Mock<Microsoft.Extensions.Logging.ILogger<PagoServiceMock>>();
+        var gateway = new PagoServiceMock(mockConfig.Object, mockEnv.Object, mockLogger.Object);
+
+        // Act & Assert: Ejecutar 100 pagos consecutivos en entorno Production con SimulateFailures=true
+        for (int i = 0; i < 100; i++)
+        {
+            var res = await gateway.ProcesarPagoAsync(new PagoRequest(Guid.NewGuid(), Guid.NewGuid(), 100m, "USD"));
+            res.Exitoso.Should().BeTrue("en Production los fallos aleatorios simulados están totalmente deshabilitados por código");
+            res.TransaccionId.Should().NotBeNullOrWhiteSpace();
+        }
+    }
 }

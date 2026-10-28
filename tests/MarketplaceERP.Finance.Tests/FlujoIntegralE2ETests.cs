@@ -52,9 +52,10 @@ public class FlujoIntegralE2ETests
         await using var catalogDb = new CatalogDbContext(catalogOptions);
         await using var financeDb = new FinanceDbContext(financeOptions);
 
-        var matchingService = new TresWayMatchingService(financeDb, NullLogger<TresWayMatchingService>.Instance);
+        var testNumService = new FakeTestNumeracionService();
+        var matchingService = new TresWayMatchingService(financeDb, testNumService, NullLogger<TresWayMatchingService>.Instance);
         var contabilidadService = new ContabilidadService(financeDb, NullLogger<ContabilidadService>.Instance);
-        var fulfillmentService = new FulfillmentService(catalogDb, NullLogger<FulfillmentService>.Instance);
+        var fulfillmentService = new FulfillmentService(catalogDb, testNumService, NullLogger<FulfillmentService>.Instance);
         var liquidacionService = new LiquidacionService(financeDb, contabilidadService, NullLogger<LiquidacionService>.Instance);
 
         // ── 1. Alta de Proveedor y Catálogo de Producto ─────────────────────────

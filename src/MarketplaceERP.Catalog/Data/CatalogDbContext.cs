@@ -201,6 +201,10 @@ public class CatalogDbContext : DbContext
             .StartsAt(1)
             .IncrementsBy(1);
 
+        modelBuilder.HasSequence<long>("NumeroRMASeq", "catalog")
+            .StartsAt(1)
+            .IncrementsBy(1);
+
         // ── PickList ──────────────────────────────────────────────────────────
         modelBuilder.Entity<PickList>(entity =>
         {

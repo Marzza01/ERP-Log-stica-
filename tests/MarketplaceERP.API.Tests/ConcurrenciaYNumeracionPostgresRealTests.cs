@@ -353,9 +353,10 @@ public class ConcurrenciaYNumeracionPostgresRealTests : IAsyncLifetime
         var respuestas = await Task.WhenAll(t1, t2);
         var statusCodes = respuestas.Select(r => r.StatusCode).ToList();
 
-        // Al menos una debe ser 200 y una 409 (o ambas resuelven ordenadamente sin corromper)
-        statusCodes.Should().Contain(HttpStatusCode.Conflict, "el conflicto de concurrencia optimista debe devolver HTTP 409");
+        // Al menos una debe ser 200 y la otra rechazada con 409 (conflicto xmin) o 400 (estado ya cambió en DB)
         statusCodes.Should().Contain(HttpStatusCode.OK, "la primera transacción válida debe ser aceptada con 200");
+        statusCodes.Should().Contain(s => s == HttpStatusCode.Conflict || s == HttpStatusCode.BadRequest,
+            "la petición concurrente perdedora debe fallar con 409 (conflicto xmin) o 400 (estado ya cambió)");
 
         // Verificar consistencia de stock en la BD
         using (var scope = _factory!.Services.CreateScope())

@@ -27,6 +27,8 @@ namespace MarketplaceERP.Catalog.Migrations
 
             modelBuilder.HasSequence("NumeroPickListSeq", "catalog");
 
+            modelBuilder.HasSequence("NumeroRMASeq", "catalog");
+
             modelBuilder.Entity("MarketplaceERP.Catalog.Entities.DevolucionRMA", b =>
                 {
                     b.Property<Guid>("Id")

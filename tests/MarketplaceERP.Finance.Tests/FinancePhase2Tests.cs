@@ -191,7 +191,7 @@ public class TresWayMatchingServiceTests
     public async Task Match3Way_CantidadesYPreciosIdenticos_ResultadoConforme()
     {
         await using var db = CreateDbContext();
-        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var service = new TresWayMatchingService(db, new FakeTestNumeracionService(), NullLogger<TresWayMatchingService>.Instance);
         var (po, factura) = await CrearPOyFactura(db, cantidadOrdenada: 10, montoFactura: 113m);
 
         var req = new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10);
@@ -206,7 +206,7 @@ public class TresWayMatchingServiceTests
     public async Task Match3Way_CantidadDistinta_DiscrepanciaCantidad()
     {
         await using var db = CreateDbContext();
-        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var service = new TresWayMatchingService(db, new FakeTestNumeracionService(), NullLogger<TresWayMatchingService>.Instance);
         var (po, factura) = await CrearPOyFactura(db, cantidadOrdenada: 10, montoFactura: 113m);
 
         var req = new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 8);
@@ -220,7 +220,7 @@ public class TresWayMatchingServiceTests
     public async Task Match3Way_MontoDistinto_DiscrepanciaPrecio()
     {
         await using var db = CreateDbContext();
-        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var service = new TresWayMatchingService(db, new FakeTestNumeracionService(), NullLogger<TresWayMatchingService>.Instance);
         var (po, factura) = await CrearPOyFactura(db, cantidadOrdenada: 10, montoFactura: 150m); // PO es 113
 
         var req = new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10);
@@ -234,7 +234,7 @@ public class TresWayMatchingServiceTests
     public async Task Match3Way_CantidadYMontoDistintos_DiscrepanciaTotal()
     {
         await using var db = CreateDbContext();
-        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var service = new TresWayMatchingService(db, new FakeTestNumeracionService(), NullLogger<TresWayMatchingService>.Instance);
         var (po, factura) = await CrearPOyFactura(db, cantidadOrdenada: 10, montoFactura: 200m);
 
         var req = new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 7);

@@ -23,6 +23,8 @@ namespace MarketplaceERP.Finance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.HasSequence("CodigoAuditoria3WaySeq", "finance");
+
             modelBuilder.HasSequence("NumeroOrdenSeq", "finance");
 
             modelBuilder.HasSequence("NumeroPOSeq", "finance");

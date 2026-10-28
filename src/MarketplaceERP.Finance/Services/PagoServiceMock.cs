@@ -43,8 +43,8 @@ public class PagoServiceMock : IPaymentGateway
             throw new InvalidOperationException("La pasarela de pagos no está configurada en entorno de producción. Servicio no disponible temporalmente.");
         }
 
-        // El fallo aleatorio solo opera si Payments:SimulateFailures está explícitamente activado en Development/Test
-        bool simularFallos = bool.TryParse(_configuration["Payments:SimulateFailures"], out var sim) && sim;
+        // El fallo aleatorio NUNCA puede ejecutarse en Production, incluso si Payments:AllowMock o SimulateFailures estuviesen seteados
+        bool simularFallos = !esProduccion && bool.TryParse(_configuration["Payments:SimulateFailures"], out var sim) && sim;
 
         if (simularFallos && Random.Shared.NextDouble() < 0.10)
         {

@@ -29,7 +29,7 @@ public class FulfillmentServiceTests
     {
         // Arrange
         using var db = CreateInMemoryDbContext();
-        var service = new FulfillmentService(db, NullLogger<FulfillmentService>.Instance);
+        var service = new FulfillmentService(db, new FakeTestNumeracionService(), NullLogger<FulfillmentService>.Instance);
 
         var prod1 = Guid.NewGuid();
         var prod2 = Guid.NewGuid();
@@ -73,7 +73,7 @@ public class FulfillmentServiceTests
     {
         // Arrange
         using var db = CreateInMemoryDbContext();
-        var service = new FulfillmentService(db, NullLogger<FulfillmentService>.Instance);
+        var service = new FulfillmentService(db, new FakeTestNumeracionService(), NullLogger<FulfillmentService>.Instance);
 
         var item = new ItemPickList
         {
@@ -120,7 +120,7 @@ public class FulfillmentServiceTests
     {
         // Arrange
         using var db = CreateInMemoryDbContext();
-        var service = new FulfillmentService(db, NullLogger<FulfillmentService>.Instance);
+        var service = new FulfillmentService(db, new FakeTestNumeracionService(), NullLogger<FulfillmentService>.Instance);
 
         var request = new EmpacarDespachoRequest(
             OrdenId: Guid.NewGuid(),
