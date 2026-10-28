@@ -74,6 +74,11 @@ public class Orden
     /// <summary>Indicador si la orden cumplió On-Time In-Full (OTIF)</summary>
     public bool? CumplioOTIF { get; set; }
 
+    /// <summary>
+    /// Token de concurrencia optimista (xmin en PostgreSQL / uint Version).
+    /// </summary>
+    public uint Version { get; set; }
+
     // Navegación
     public ICollection<ItemOrden> Items { get; set; } = new List<ItemOrden>();
     public SplitPago? SplitPago { get; set; }

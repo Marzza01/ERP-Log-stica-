@@ -26,6 +26,7 @@ public class OrdenesController : ControllerBase
     private readonly MarketplaceERP.Finance.Data.FinanceDbContext _db;
     private readonly MarketplaceERP.Catalog.Data.CatalogDbContext _catalogDb;
     private readonly MarketplaceERP.Core.Interfaces.IStockService _stockService;
+    private readonly MarketplaceERP.Core.Interfaces.INumeracionService _numeracionService;
     private readonly IContabilidadService _contabilidad;
     private readonly ILogger<OrdenesController> _logger;
 
@@ -33,12 +34,14 @@ public class OrdenesController : ControllerBase
         MarketplaceERP.Finance.Data.FinanceDbContext db,
         MarketplaceERP.Catalog.Data.CatalogDbContext catalogDb,
         MarketplaceERP.Core.Interfaces.IStockService stockService,
+        MarketplaceERP.Core.Interfaces.INumeracionService numeracionService,
         IContabilidadService contabilidad,
         ILogger<OrdenesController> logger)
     {
         _db = db;
         _catalogDb = catalogDb;
         _stockService = stockService;
+        _numeracionService = numeracionService;
         _contabilidad = contabilidad;
         _logger = logger;
     }
@@ -153,10 +156,11 @@ public class OrdenesController : ControllerBase
             }
         }
 
+        var numeroOrden = await _numeracionService.GenerarNumeroOrdenAsync(cancellationToken);
         var orden = new Orden
         {
             Id = Guid.NewGuid(),
-            NumeroOrden = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(10000, 99999)}",
+            NumeroOrden = numeroOrden,
             CompradorId = compradorId,
             VendedorId = req.VendedorId,
             Estado = EstadoOrden.Pendiente,
@@ -244,29 +248,34 @@ public class OrdenesController : ControllerBase
                 break;
             case EstadoOrden.Enviada:
                 orden.FechaEnvio = DateTime.UtcNow;
-                orden.GuiaEnvio = req.GuiaEnvio ?? $"GU-{Random.Shared.Next(100000, 999999)}";
+                orden.GuiaEnvio = req.GuiaEnvio ?? await _numeracionService.GenerarNumeroGuiaAsync(cancellationToken);
                 break;
             case EstadoOrden.Entregada:
                 orden.FechaEntregaReal = DateTime.UtcNow;
                 break;
             case EstadoOrden.Cancelada:
                 orden.FechaCancelacion = DateTime.UtcNow;
-                // Liberar reservas activas (Pendientes, Comprometidas o Confirmadas) de stock asociadas a la orden
-                var reservasActivas = await _catalogDb.ReservasStock
-                    .Where(r => r.OrdenId == orden.Id && (r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Pendiente 
-                                                       || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Comprometida
-                                                       || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Confirmada))
-                    .ToListAsync(cancellationToken);
-
-                foreach (var res in reservasActivas)
-                {
-                    _logger.LogInformation("Liberando reserva {ReservaId} por cancelación de orden {OrdenId}.", res.Id, orden.Id);
-                    await _stockService.LiberarStockAsync(res.Id);
-                }
                 break;
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+
+        // Si la transición a Cancelada se persistió con éxito en la base de datos (concurrencia optimista ganada),
+        // procedemos a liberar las reservas de inventario asociadas.
+        if (nuevoEstado == EstadoOrden.Cancelada)
+        {
+            var reservasActivas = await _catalogDb.ReservasStock
+                .Where(r => r.OrdenId == orden.Id && (r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Pendiente 
+                                                   || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Comprometida
+                                                   || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Confirmada))
+                .ToListAsync(cancellationToken);
+
+            foreach (var res in reservasActivas)
+            {
+                _logger.LogInformation("Liberando reserva {ReservaId} por cancelación de orden {OrdenId}.", res.Id, orden.Id);
+                await _stockService.LiberarStockAsync(res.Id);
+            }
+        }
 
         _logger.LogInformation("Orden {NumeroOrden}: {De} → {A}", orden.NumeroOrden, estadoAnterior, nuevoEstado);
 

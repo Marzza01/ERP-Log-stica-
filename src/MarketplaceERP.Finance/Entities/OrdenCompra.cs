@@ -42,6 +42,11 @@ public class OrdenCompra
     public DateTime? FechaEnvioProveedor { get; set; }
     public DateTime? FechaRecepcionReal { get; set; }
 
+    /// <summary>
+    /// Token de concurrencia optimista (xmin en PostgreSQL / uint Version).
+    /// </summary>
+    public uint Version { get; set; }
+
     // Navegación
     public ICollection<ItemOrdenCompra> Items { get; set; } = new List<ItemOrdenCompra>();
     public ICollection<FacturaProveedor> Facturas { get; set; } = new List<FacturaProveedor>();

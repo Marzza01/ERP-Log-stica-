@@ -39,6 +39,7 @@ public class CheckoutController : ControllerBase
     private readonly FinanceDbContext _financeDb;
     private readonly CatalogDbContext _catalogDb;
     private readonly IStockService _stockService;
+    private readonly MarketplaceERP.Core.Interfaces.INumeracionService _numeracionService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<CheckoutController> _logger;
 
@@ -47,6 +48,7 @@ public class CheckoutController : ControllerBase
         FinanceDbContext financeDb,
         CatalogDbContext catalogDb,
         IStockService stockService,
+        MarketplaceERP.Core.Interfaces.INumeracionService numeracionService,
         IConfiguration configuration,
         ILogger<CheckoutController> logger)
     {
@@ -54,6 +56,7 @@ public class CheckoutController : ControllerBase
         _financeDb = financeDb;
         _catalogDb = catalogDb;
         _stockService = stockService;
+        _numeracionService = numeracionService;
         _configuration = configuration;
         _logger = logger;
     }
@@ -225,13 +228,14 @@ public class CheckoutController : ControllerBase
         {
             var resultado = await strategy.ExecuteAsync(async () =>
             {
+                var numeroOrden = await _numeracionService.GenerarNumeroOrdenAsync(cancellationToken);
                 await using var tx = await _financeDb.Database.BeginTransactionAsync(cancellationToken);
 
                 // Crear Orden en estado inicial Aprobada (pagada con éxito)
                 var orden = new Orden
                 {
                     Id = ordenId,
-                    NumeroOrden = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(10000, 99999)}",
+                    NumeroOrden = numeroOrden,
                     CompradorId = compradorId,
                     VendedorId = vendedorId,
                     SubTotal = subTotal,

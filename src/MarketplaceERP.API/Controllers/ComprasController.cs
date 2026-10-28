@@ -25,17 +25,20 @@ public class ComprasController : ControllerBase
     private readonly MarketplaceERP.Finance.Data.FinanceDbContext _db;
     private readonly ITresWayMatchingService _matching;
     private readonly IContabilidadService _contabilidad;
+    private readonly MarketplaceERP.Core.Interfaces.INumeracionService _numeracionService;
     private readonly ILogger<ComprasController> _logger;
 
     public ComprasController(
         MarketplaceERP.Finance.Data.FinanceDbContext db,
         ITresWayMatchingService matching,
         IContabilidadService contabilidad,
+        MarketplaceERP.Core.Interfaces.INumeracionService numeracionService,
         ILogger<ComprasController> logger)
     {
         _db = db;
         _matching = matching;
         _contabilidad = contabilidad;
+        _numeracionService = numeracionService;
         _logger = logger;
     }
 
@@ -92,7 +95,7 @@ public class ComprasController : ControllerBase
         if (req.Items == null || req.Items.Count == 0)
             return BadRequest(new { mensaje = "La PO debe tener al menos un ítem." });
 
-        var numeroPO = $"PO-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+        var numeroPO = await _numeracionService.GenerarNumeroPOAsync(cancellationToken);
 
         var po = new OrdenCompra
         {

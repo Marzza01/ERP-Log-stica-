@@ -397,3 +397,33 @@ Cuando un checkout realiza el cobro en la pasarela de pagos pero la transacción
   - (a) Tratamiento tributario si la comisión marketplace genera débito fiscal adicional y mecanismo de emisión de comprobante de retención / factura por servicios de intermediación al vendedor.
   - (b) Clasificación del `CostoEnvio` dentro de la cuenta `4101` vs cuenta separada de ingresos por transporte/flete.
 
+---
+
+## Fase 8: Numeración Única Secuencial y Concurrencia Optimista
+
+### 1. Numeración Correlativa Basada en Secuencias de Base de Datos
+- **Eliminación de Aleatoriedad y Colisiones:** Se eliminaron las llamadas a `Random.Shared.Next(...)` y `Count()+1` para la generación de identificadores de negocio.
+- **Secuencias Dedicadas en PostgreSQL:**
+  - `finance."NumeroOrdenSeq"`: Genera identificadores con formato `ORD-yyyyMMdd-NNNNN` (mínimo 5 dígitos, expansible).
+  - `finance."NumeroPOSeq"`: Genera identificadores con formato `PO-yyyyMMdd-NNNN` (mínimo 4 dígitos, expansible).
+  - `catalog."NumeroPickListSeq"`: Genera identificadores con formato `PKL-yyyyMMdd-NNNN` (mínimo 4 dígitos, expansible).
+  - `catalog."NumeroGuiaSeq"`: Genera identificadores con formato `SV-LOGI-yyyyMMdd-NNNNN` (mínimo 5 dígitos, expansible).
+- **Servicio Centralizado `INumeracionService`:** Implementado en `MarketplaceERP.API.Services.NumeracionService` e inyectado en `CheckoutController`, `OrdenesController`, `ComprasController` y `FulfillmentService`.
+- **Comportamiento ante Fallos:** No existe fallback silencioso; si PostgreSQL falla al avanzar la secuencia, la excepción se propaga. Para tests unitarios no relacionales (InMemory), se suministran contadores atómicos `Interlocked` independientes sin afectar la lógica de producción.
+- **Índices Únicos:** Migraciones dedicadas aplican restricciones e índices `UNIQUE` sobre `NumeroOrden`, `NumeroPO`, `NumeroPickList` y `NumeroGuia`.
+
+> [!NOTE]
+> **Comportamiento de Secuencias PostgreSQL y Huecos Correlativos:**
+> Las secuencias de PostgreSQL (`nextval`) avanzan de manera atómica fuera del alcance de las transacciones ACID convencionales.
+> Por diseño del motor relacional, si una transacción que consumió un valor de secuencia realiza un `ROLLBACK`, dicho valor no se retrocede ni se reutiliza para evitar bloqueos y condiciones de carrera entre transacciones concurrentes.
+> En consecuencia, pueden presentarse saltos o huecos numéricos en el correlativo en caso de errores o cancelaciones en checkout o creación de órdenes. Si por requerimientos de la administración tributaria salvadoreña el correlativo contable o fiscal exige una serie continua estricta y sin saltos, se debe validar con el contador la implementación de una tabla de control secuencial con bloqueo pesimista `SELECT ... FOR UPDATE` o numeración diferida al momento de la emisión formal del comprobante fiscal.
+
+### 2. Concurrencia Optimista en Entidades Transaccionales
+- **Tokens de Concurrencia (`xmin` / `IsRowVersion`):**
+  - Mapeado en `Orden` (`finance.ordenes`), `OrdenCompra` (`finance.ordenes_compra`) y `PickList` (`catalog.PickLists`).
+  - `Liquidacion` ya contaba con `IsRowVersion`.
+  - **StockFisico:** No utiliza token de concurrencia optimista dado que todas las reservas, liberaciones y consumos se ejecutan de manera atómica directa a nivel SQL (`UPDATE catalog.stock_fisico SET ... WHERE ... AND (CantidadTotal - CantidadReservada) >= @cant`).
+- **Manejo Global de Concurrencia:** Filtro global `ConcurrencyExceptionFilter` (`IExceptionFilter`) registrado en el pipeline MVC que captura `DbUpdateConcurrencyException` y responde de manera estandarizada con `HTTP 409 Conflict` sin exponer detalles internos de la base de datos.
+- **Protección de Máquina de Estados:** En transiciones concurrentes de órdenes (ej. `Cancelada` vs `Enviada`), la primera transacción en confirmar gana y la segunda recibe `409 Conflict`. La liberación de stock en cancelación solo se ejecuta tras confirmar la persistencia de la orden en la BD, evitando desalineaciones de inventario.
+
+

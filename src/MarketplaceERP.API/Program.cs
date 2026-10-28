@@ -147,7 +147,13 @@ builder.Services.AddCoreServices(builder.Configuration);
 builder.Services.AddCatalogServices(builder.Configuration);
 builder.Services.AddFinanceServices(builder.Configuration);
 
-builder.Services.AddControllers()
+// Servicio unificado de numeración secuencial
+builder.Services.AddScoped<MarketplaceERP.Core.Interfaces.INumeracionService, MarketplaceERP.API.Services.NumeracionService>();
+
+builder.Services.AddControllers(options =>
+{
+    options.Filters.Add<MarketplaceERP.API.Filters.ConcurrencyExceptionFilter>();
+})
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;

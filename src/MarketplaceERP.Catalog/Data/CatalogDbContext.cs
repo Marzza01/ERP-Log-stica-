@@ -191,5 +191,44 @@ public class CatalogDbContext : DbContext
                   .HasForeignKey(m => m.ProductoId)
                   .OnDelete(DeleteBehavior.Restrict);
         });
+
+        // ── Secuencias de Catalog (PostgreSQL) ──────────────────────────────────
+        modelBuilder.HasSequence<long>("NumeroPickListSeq", "catalog")
+            .StartsAt(1)
+            .IncrementsBy(1);
+
+        modelBuilder.HasSequence<long>("NumeroGuiaSeq", "catalog")
+            .StartsAt(1)
+            .IncrementsBy(1);
+
+        // ── PickList ──────────────────────────────────────────────────────────
+        modelBuilder.Entity<PickList>(entity =>
+        {
+            entity.ToTable("PickLists");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.NumeroPickList).HasMaxLength(50).IsRequired();
+            entity.HasIndex(p => p.NumeroPickList).IsUnique();
+
+            // Token de concurrencia optimista
+            if (Database.IsNpgsql())
+            {
+                entity.Property(p => p.Version)
+                      .IsRowVersion();
+            }
+            else
+            {
+                entity.Property(p => p.Version)
+                      .IsConcurrencyToken();
+            }
+        });
+
+        // ── PaqueteDespacho ───────────────────────────────────────────────────
+        modelBuilder.Entity<PaqueteDespacho>(entity =>
+        {
+            entity.ToTable("PaquetesDespacho");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.NumeroGuia).HasMaxLength(50).IsRequired();
+            entity.HasIndex(p => p.NumeroGuia).IsUnique();
+        });
     }
 }

@@ -23,6 +23,10 @@ namespace MarketplaceERP.Finance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.HasSequence("NumeroOrdenSeq", "finance");
+
+            modelBuilder.HasSequence("NumeroPOSeq", "finance");
+
             modelBuilder.HasSequence("PartidaContableNumeroSeq", "finance");
 
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.FacturaProveedor", b =>
@@ -482,6 +486,12 @@ namespace MarketplaceERP.Finance.Migrations
                     b.Property<Guid>("VendedorId")
                         .HasColumnType("uuid");
 
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.Property<string>("ZonaEnvio")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -575,6 +585,12 @@ namespace MarketplaceERP.Finance.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasDefaultValue("Crédito 30 días");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.HasKey("Id");
 

@@ -5,6 +5,7 @@
 
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
+using MarketplaceERP.Core.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -13,20 +14,29 @@ namespace MarketplaceERP.Catalog.Services;
 public class FulfillmentService : IFulfillmentService
 {
     private readonly CatalogDbContext _db;
+    private readonly INumeracionService _numeracionService;
     private readonly ILogger<FulfillmentService> _logger;
 
-    public FulfillmentService(CatalogDbContext db, ILogger<FulfillmentService> logger)
+    public FulfillmentService(CatalogDbContext db, INumeracionService numeracionService, ILogger<FulfillmentService> logger)
     {
         _db = db;
+        _numeracionService = numeracionService;
         _logger = logger;
+    }
+
+    /// <summary>Constructor de conveniencia para tests unitarios</summary>
+    public FulfillmentService(CatalogDbContext db, ILogger<FulfillmentService> logger)
+        : this(db, new TestInMemoryNumeracionService(), logger)
+    {
     }
 
     public async Task<PickList> GenerarPickListAsync(GenerarPickListRequest request, CancellationToken cancellationToken = default)
     {
+        var numeroPickList = await _numeracionService.GenerarNumeroPickListAsync(cancellationToken);
         var pickList = new PickList
         {
             Id = Guid.NewGuid(),
-            NumeroPickList = $"PKL-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}",
+            NumeroPickList = numeroPickList,
             OrdenId = request.OrdenId,
             NumeroOrden = request.NumeroOrden,
             OperadorAsignado = string.IsNullOrWhiteSpace(request.OperadorAsignado) ? "Operador Bodega 1" : request.OperadorAsignado,
@@ -117,10 +127,11 @@ public class FulfillmentService : IFulfillmentService
 
     public async Task<PaqueteDespacho> EmpacarYRotularAsync(EmpacarDespachoRequest request, CancellationToken cancellationToken = default)
     {
+        var numeroGuia = await _numeracionService.GenerarNumeroGuiaAsync(cancellationToken);
         var paquete = new PaqueteDespacho
         {
             Id = Guid.NewGuid(),
-            NumeroGuia = $"SV-LOGI-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(10000, 99999)}",
+            NumeroGuia = numeroGuia,
             OrdenId = request.OrdenId,
             NumeroOrden = request.NumeroOrden,
             Estado = EstadoPacking.ListoParaDespacho,
@@ -180,5 +191,32 @@ public class FulfillmentService : IFulfillmentService
         }
 
         return await query.OrderByDescending(p => p.FechaEmpaque).ToListAsync(cancellationToken);
+    }
+}
+
+/// <summary>
+/// Implementación de INumeracionService exclusiva para tests unitarios / InMemory en Catalog.
+/// </summary>
+internal class TestInMemoryNumeracionService : INumeracionService
+{
+    private static long _pickCounter = 0;
+    private static long _guiaCounter = 0;
+
+    public Task<string> GenerarNumeroOrdenAsync(CancellationToken ct = default)
+        => Task.FromResult($"ORD-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid():N}"[..25]);
+
+    public Task<string> GenerarNumeroPOAsync(CancellationToken ct = default)
+        => Task.FromResult($"PO-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid():N}"[..20]);
+
+    public Task<string> GenerarNumeroPickListAsync(CancellationToken ct = default)
+    {
+        var correlativo = Interlocked.Increment(ref _pickCounter);
+        return Task.FromResult($"PKL-{DateTime.UtcNow:yyyyMMdd}-{correlativo:D4}");
+    }
+
+    public Task<string> GenerarNumeroGuiaAsync(CancellationToken ct = default)
+    {
+        var correlativo = Interlocked.Increment(ref _guiaCounter);
+        return Task.FromResult($"SV-LOGI-{DateTime.UtcNow:yyyyMMdd}-{correlativo:D5}");
     }
 }

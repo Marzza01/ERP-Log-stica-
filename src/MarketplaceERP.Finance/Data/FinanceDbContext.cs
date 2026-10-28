@@ -72,6 +72,18 @@ public class FinanceDbContext : DbContext
             entity.Property(o => o.DireccionEntrega).HasMaxLength(500);
             entity.Property(o => o.FechaCreacion).HasDefaultValueSql("NOW()");
 
+            // Token de concurrencia optimista
+            if (Database.IsNpgsql())
+            {
+                entity.Property(o => o.Version)
+                      .IsRowVersion();
+            }
+            else
+            {
+                entity.Property(o => o.Version)
+                      .IsConcurrencyToken();
+            }
+
             entity.Ignore(o => o.FechaCompletada);
 
             // Cross-schema references
@@ -182,6 +194,18 @@ public class FinanceDbContext : DbContext
             entity.Property(p => p.Observaciones).HasMaxLength(1000);
             entity.Property(p => p.FechaEmision).HasDefaultValueSql("NOW()");
 
+            // Token de concurrencia optimista
+            if (Database.IsNpgsql())
+            {
+                entity.Property(p => p.Version)
+                      .IsRowVersion();
+            }
+            else
+            {
+                entity.Property(p => p.Version)
+                      .IsConcurrencyToken();
+            }
+
             entity.HasIndex(p => p.NumeroPO).IsUnique();
             entity.HasIndex(p => p.ProveedorId);
             entity.HasIndex(p => p.Estado);
@@ -264,6 +288,16 @@ public class FinanceDbContext : DbContext
 
         // Secuencia para número de partida contable (PostgreSQL)
         modelBuilder.HasSequence<long>("PartidaContableNumeroSeq", "finance")
+            .StartsAt(1)
+            .IncrementsBy(1);
+
+        // Secuencia para número de orden (PostgreSQL)
+        modelBuilder.HasSequence<long>("NumeroOrdenSeq", "finance")
+            .StartsAt(1)
+            .IncrementsBy(1);
+
+        // Secuencia para número de orden de compra (PostgreSQL)
+        modelBuilder.HasSequence<long>("NumeroPOSeq", "finance")
             .StartsAt(1)
             .IncrementsBy(1);
 

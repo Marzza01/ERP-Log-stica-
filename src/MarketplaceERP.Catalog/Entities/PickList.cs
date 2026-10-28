@@ -25,6 +25,11 @@ public class PickList
     public DateTime? FechaInicio { get; set; }
     public DateTime? FechaFin { get; set; }
 
+    /// <summary>
+    /// Token de concurrencia optimista (xmin en PostgreSQL / uint Version).
+    /// </summary>
+    public uint Version { get; set; }
+
     public ICollection<ItemPickList> Items { get; set; } = new List<ItemPickList>();
 }
 
