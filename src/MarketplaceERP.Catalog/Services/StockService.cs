@@ -11,6 +11,7 @@ using MarketplaceERP.Shared.DTOs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 
 namespace MarketplaceERP.Catalog.Services;
 
@@ -29,11 +30,18 @@ internal sealed class StockService : IStockService
 {
     private readonly CatalogDbContext _dbContext;
     private readonly ILogger<StockService> _logger;
+    private readonly TimeSpan _vigenciaReserva;
 
-    public StockService(CatalogDbContext dbContext, ILogger<StockService> logger)
+    public StockService(CatalogDbContext dbContext, ILogger<StockService> logger, IConfiguration? configuration = null)
     {
         _dbContext = dbContext;
         _logger = logger;
+        // Vigencia aplicable solo a reservas nuevas. No se modifican las históricas.
+        var ttl = 30;
+        var textoTtl = configuration?["Reservas:TTLMinutos"];
+        if (textoTtl is not null && (!int.TryParse(textoTtl, out ttl) || ttl is < 5 or > 1440))
+            throw new InvalidOperationException("Reservas:TTLMinutos debe estar entre 5 y 1440.");
+        _vigenciaReserva = TimeSpan.FromMinutes(ttl);
     }
 
     /// <inheritdoc />
@@ -112,7 +120,8 @@ internal sealed class StockService : IStockService
                 CantidadLiberada = 0,
                 CantidadConsumida = 0,
                 Estado = EstadoReserva.Pendiente,
-                FechaReserva = ahora
+                FechaReserva = ahora,
+                FechaExpiracion = ahora.Add(_vigenciaReserva)
             };
 
             _dbContext.ReservasStock.Add(reserva);

@@ -146,6 +146,7 @@ builder.Services.AddCors(options =>
 builder.Services.AddCoreServices(builder.Configuration);
 builder.Services.AddCatalogServices(builder.Configuration);
 builder.Services.AddFinanceServices(builder.Configuration, builder.Environment.IsDevelopment());
+builder.Services.AddScoped<MarketplaceERP.API.Services.ReservasExpiracionService>();
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

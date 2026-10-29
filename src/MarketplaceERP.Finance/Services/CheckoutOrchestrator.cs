@@ -143,6 +143,22 @@ public sealed class CheckoutOrchestrator
                 "El intento no pudo registrarse correctamente; es necesario revisar la reserva antes de continuar.", ex);
         }
 
+        // Carrera segura con expiración administrativa I3: si la orden se
+        // canceló mientras se preparaba la reserva o el intento durable, nunca
+        // llamar al proveedor. La expiración toma FOR UPDATE en finance.ordenes
+        // y la inserción de intentos toma KEY SHARE por su FK; ambas se serializan.
+        var estadoActual = await _dbContext.Ordenes.AsNoTracking()
+            .Where(o => o.Id == command.OrdenId)
+            .Select(o => (EstadoOrden?)o.Estado)
+            .SingleOrDefaultAsync();
+        if (estadoActual == EstadoOrden.Cancelada)
+        {
+            await CambiarEstadoAsync(intento, EstadoIntentoPago.Rechazado);
+            await _stockService.LiberarStockAsync(reservaId);
+            throw new PagoFallidoException(command.OrdenId,
+                "La orden fue cancelada antes del envío a la pasarela.");
+        }
+
         // ── PASO 2: Procesar Pago ─────────────────────────────────────────────
         // Si falla: LiberarStock (compensación) → loggear → lanzar PagoFallidoException
         _logger.LogDebug("Saga Paso 2: ProcesarPago. OrdenId={OrdenId}", command.OrdenId);
