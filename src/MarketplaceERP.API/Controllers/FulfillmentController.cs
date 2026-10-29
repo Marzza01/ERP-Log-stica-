@@ -8,6 +8,7 @@ using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace MarketplaceERP.API.Controllers;
@@ -17,6 +18,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Conecta el WMS (Célula A) con el OMS (Célula B).
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin,Vendedor")]
 [Route("api/fulfillment")]
 [Produces("application/json")]
 public class FulfillmentController : ControllerBase

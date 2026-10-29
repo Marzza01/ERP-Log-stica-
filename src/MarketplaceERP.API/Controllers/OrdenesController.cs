@@ -6,6 +6,7 @@
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace MarketplaceERP.API.Controllers;
@@ -16,6 +17,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Requisito: PDF1 R-OMS-01 a R-OMS-08
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin,Vendedor")]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class OrdenesController : ControllerBase
