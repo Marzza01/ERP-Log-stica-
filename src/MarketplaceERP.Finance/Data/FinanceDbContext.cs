@@ -20,6 +20,9 @@ public class FinanceDbContext : DbContext
     public DbSet<Orden> Ordenes => Set<Orden>();
     public DbSet<ItemOrden> ItemsOrden => Set<ItemOrden>();
     public DbSet<SplitPago> SplitsPago => Set<SplitPago>();
+    public DbSet<IntentoPago> IntentosPago => Set<IntentoPago>();
+    public DbSet<ConciliacionPago> ConciliacionesPago => Set<ConciliacionPago>();
+    public DbSet<ReembolsoPago> ReembolsosPago => Set<ReembolsoPago>();
     public DbSet<Liquidacion> Liquidaciones => Set<Liquidacion>();
 
     // Procurement / Compras
@@ -71,6 +74,9 @@ public class FinanceDbContext : DbContext
             // Cross-schema references
             entity.Property(o => o.CompradorId).IsRequired();
             entity.Property(o => o.VendedorId).IsRequired();
+            entity.Property(o => o.IdempotencyKey).HasMaxLength(128);
+            entity.Property(o => o.CheckoutPayloadHash).HasMaxLength(64);
+            entity.HasIndex(o => new { o.CompradorId, o.IdempotencyKey }).IsUnique();
             entity.HasIndex(o => o.NumeroOrden).IsUnique();
             entity.HasIndex(o => o.CompradorId);
             entity.HasIndex(o => o.VendedorId);
@@ -98,6 +104,63 @@ public class FinanceDbContext : DbContext
                   .WithMany(o => o.Items)
                   .HasForeignKey(i => i.OrdenId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Intento de pago, registro durable previo a la pasarela ─────────
+        modelBuilder.Entity<IntentoPago>(entity =>
+        {
+            entity.ToTable("intentos_pago");
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.Id).ValueGeneratedNever();
+            entity.Property(i => i.ReferenciaOperacion).HasMaxLength(80).IsRequired();
+            entity.Property(i => i.Monto).HasPrecision(18, 2).IsRequired();
+            entity.Property(i => i.Moneda).HasMaxLength(3).IsRequired();
+            entity.Property(i => i.Estado).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(i => i.TransaccionId).HasMaxLength(200);
+            entity.Property(i => i.ReservaId);
+            entity.Property(i => i.CreadoUtc).IsRequired();
+            entity.Property(i => i.ActualizadoUtc).IsRequired();
+            entity.HasIndex(i => i.OrdenId).IsUnique();
+            entity.HasIndex(i => i.ReferenciaOperacion).IsUnique();
+            entity.HasIndex(i => i.Estado);
+            entity.HasOne<Orden>().WithMany().HasForeignKey(i => i.OrdenId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ── Auditoría durable de conciliaciones ────────────────────────────────
+        modelBuilder.Entity<ConciliacionPago>(entity =>
+        {
+            entity.ToTable("conciliaciones_pago");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Id).ValueGeneratedNever();
+            entity.Property(c => c.Decision).HasMaxLength(80).IsRequired();
+            entity.Property(c => c.TransaccionId).HasMaxLength(200);
+            entity.Property(c => c.ConsultadoUtc).IsRequired();
+            entity.HasIndex(c => new { c.OrdenId, c.ConsultadoUtc });
+            entity.HasOne<IntentoPago>().WithMany().HasForeignKey(c => c.IntentoPagoId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ── Reembolso íntegro idempotente por orden ──────────────────────────
+        modelBuilder.Entity<ReembolsoPago>(entity =>
+        {
+            entity.ToTable("reembolsos_pago");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.Id).ValueGeneratedNever();
+            entity.Property(r => r.ClaveIdempotencia).HasMaxLength(80).IsRequired();
+            entity.Property(r => r.TransaccionId).HasMaxLength(200).IsRequired();
+            entity.Property(r => r.Monto).HasPrecision(18, 2).IsRequired();
+            entity.Property(r => r.Moneda).HasMaxLength(3).IsRequired();
+            entity.Property(r => r.Estado).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(r => r.ReembolsoProveedorId).HasMaxLength(200);
+            entity.Property(r => r.Version).IsConcurrencyToken().IsRequired();
+            entity.Property(r => r.CreadoUtc).IsRequired();
+            entity.Property(r => r.ActualizadoUtc).IsRequired();
+            entity.HasIndex(r => r.OrdenId).IsUnique();
+            entity.HasIndex(r => r.ClaveIdempotencia).IsUnique();
+            entity.HasIndex(r => r.Estado);
+            entity.HasOne<Orden>().WithMany().HasForeignKey(r => r.OrdenId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // ── SplitPago ─────────────────────────────────────────────────────────

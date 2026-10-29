@@ -1,0 +1,57 @@
+name: LOGIMKT Grupo A - Regresion
+
+on:
+  push:
+    branches: [integracion-auditoria-grupo-a]
+  pull_request:
+    branches: [integracion-auditoria-grupo-a]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: grupo-a-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validar:
+    name: .NET 8 y React/TypeScript
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Obtener repositorio
+        uses: actions/checkout@v4
+      - name: Configurar .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Configurar Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restaurar .NET
+        run: dotnet restore MarketplaceERP.sln
+      - name: Compilar .NET
+        run: dotnet build MarketplaceERP.sln --no-restore --nologo
+      - name: Pruebas automatizadas .NET
+        run: dotnet test MarketplaceERP.sln --no-build --nologo
+      - name: Instalar dependencias frontend
+        shell: pwsh
+        working-directory: frontend/marketplace-ui
+        run: |
+          if (Test-Path -LiteralPath package-lock.json) {
+            npm.cmd ci --no-audit --no-fund
+          } else {
+            npm.cmd install --package-lock=false --no-audit --no-fund
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Fallo instalacion frontend.' }
+      - name: Regresion estado e idempotencia Checkout
+        working-directory: frontend/marketplace-ui
+        run: npm.cmd run test:checkout
+      - name: Compilar TypeScript y Vite
+        working-directory: frontend/marketplace-ui
+        run: npm.cmd run build
+
+# Esta ejecucion es sin conexiones a PostgreSQL, sin pasarelas reales ni
+# migraciones. La prueba transaccional QA debe ejecutarse de forma separada.

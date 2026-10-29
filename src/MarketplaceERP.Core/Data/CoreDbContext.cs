@@ -22,6 +22,7 @@ public class CoreDbContext : DbContext
     public DbSet<Categoria> Categorias => Set<Categoria>();
     public DbSet<ReglaComision> ReglasComision => Set<ReglaComision>();
     public DbSet<Proveedor> Proveedores => Set<Proveedor>();
+    public DbSet<Usuario> Usuarios => Set<Usuario>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -112,6 +113,27 @@ public class CoreDbContext : DbContext
 
             entity.HasIndex(p => p.NombreComercial);
             entity.HasIndex(p => p.Nit);
+        });
+
+        // ── Usuario ───────────────────────────────────────────────────────────
+        modelBuilder.Entity<Usuario>(entity =>
+        {
+            entity.ToTable("usuarios");
+            entity.HasKey(u => u.Id);
+            entity.Property(u => u.Id).ValueGeneratedOnAdd();
+            entity.Property(u => u.Email).HasMaxLength(254).IsRequired();
+            entity.HasIndex(u => u.Email).IsUnique();
+            entity.Property(u => u.PasswordHash).HasMaxLength(500).IsRequired();
+            entity.Property(u => u.Rol).HasMaxLength(50).IsRequired();
+            entity.Property(u => u.Nombre).HasMaxLength(200).IsRequired();
+            entity.Property(u => u.Activo).HasDefaultValue(true);
+            entity.Property(u => u.FechaRegistro).HasDefaultValueSql("NOW()");
+
+            entity.HasOne(u => u.Vendedor)
+                  .WithMany()
+                  .HasForeignKey(u => u.VendedorId)
+                  .OnDelete(DeleteBehavior.SetNull)
+                  .IsRequired(false);
         });
     }
 }

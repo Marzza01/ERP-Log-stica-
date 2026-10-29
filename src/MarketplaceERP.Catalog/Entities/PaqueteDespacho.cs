@@ -3,13 +3,17 @@
  * Todos los derechos reservados © 2026
  */
 
+using System.Text.Json.Serialization;
+
 namespace MarketplaceERP.Catalog.Entities;
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum EstadoPacking
 {
     Pendiente = 0,
     Empacando = 1,
-    ListoParaDespacho = 2
+    ListoParaDespacho = 2,
+    Despachado = 3
 }
 
 public class PaqueteDespacho

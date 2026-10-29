@@ -8,6 +8,7 @@ import { Truck, CheckCircle2, PackageCheck, Play, ArrowRight, Layers, Box, Alert
 import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
+import AlertBanner from '../../components/ui/AlertBanner';
 import { useToast } from '../../context/ToastContext';
 import { fulfillmentApi, type ConfirmarItemPickingRequest, type EmpacarRequest } from '../../api/fulfillment';
 import type { PickList, Paquete } from '../../types';
@@ -18,6 +19,7 @@ export default function FulfillmentPage() {
   const [pickLists, setPickLists] = useState<PickList[]>([]);
   const [paquetes, setPaquetes] = useState<Paquete[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState('');
 
   // Modal picking
   const [selectedPickList, setSelectedPickList] = useState<PickList | null>(null);
@@ -29,19 +31,22 @@ export default function FulfillmentPage() {
   const [packForm, setPackForm] = useState<EmpacarRequest>({
     ordenId: '',
     numeroOrden: '',
-    transportista: 'LOGIMKT Express',
-    municipioDestino: 'San Salvador',
-    departamentoDestino: 'San Salvador',
     pesoRealKg: 1.2,
     largoCm: 25,
     anchoCm: 20,
     altoCm: 15,
-    observaciones: '',
+    transportista: 'LOGIMKT Express',
+    departamentoDestino: 'San Salvador',
+    municipioDestino: 'San Salvador',
+    direccionEntrega: '',
+    contactoReceptor: '',
+    telefonoReceptor: '',
   });
   const [savingPack, setSavingPack] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setErrorCarga('');
     try {
       const [pls, pkgs] = await Promise.all([
         fulfillmentApi.listarPickLists(),
@@ -49,68 +54,10 @@ export default function FulfillmentPage() {
       ]);
       setPickLists(pls);
       setPaquetes(pkgs);
-    } catch {
-      // Mock data for seamless offline/dev experience
-      const mockPickLists: PickList[] = [
-        {
-          id: 'pl-101',
-          numeroPickList: 'PK-2026-001',
-          ordenId: 'ord-8812',
-          numeroOrden: 'ORD-20260918-10042',
-          operadorAsignado: 'Carlos Morales (Bodega Central)',
-          estado: 'Pendiente',
-          fechaCreacion: new Date(Date.now() - 3600000).toISOString(),
-          items: [
-            { id: 'it-1', sku: 'SKU-LOGI-8801', nombreProducto: 'Smartphone Galaxy A54 128GB', cantidadSolicitada: 1, cantidadRecolectada: 0, ubicacionCodigo: 'A-01-02-P1', pasillo: 'A', rack: '01', nivel: '02', orden: 1 },
-            { id: 'it-2', sku: 'SKU-LOGI-8802', nombreProducto: 'Audífonos Bluetooth Noise Cancelling', cantidadSolicitada: 2, cantidadRecolectada: 0, ubicacionCodigo: 'A-02-01-P2', pasillo: 'A', rack: '02', nivel: '01', orden: 2 },
-            { id: 'it-3', sku: 'SKU-LOGI-8803', nombreProducto: 'Cargador Rápido GaN 65W', cantidadSolicitada: 1, cantidadRecolectada: 0, ubicacionCodigo: 'B-01-03-P1', pasillo: 'B', rack: '01', nivel: '03', orden: 3 },
-          ],
-        },
-        {
-          id: 'pl-102',
-          numeroPickList: 'PK-2026-002',
-          ordenId: 'ord-8815',
-          numeroOrden: 'ORD-20260918-10045',
-          operadorAsignado: 'Elena Vásquez (Bodega Central)',
-          estado: 'EnProceso',
-          fechaCreacion: new Date(Date.now() - 7200000).toISOString(),
-          items: [
-            { id: 'it-4', sku: 'SKU-LOGI-9920', nombreProducto: 'Monitor Gamer 27" QHD 165Hz', cantidadSolicitada: 1, cantidadRecolectada: 1, ubicacionCodigo: 'C-04-01-P1', pasillo: 'C', rack: '04', nivel: '01', orden: 1 },
-            { id: 'it-5', sku: 'SKU-LOGI-9921', nombreProducto: 'Teclado Mecánico RGB Switch Red', cantidadSolicitada: 1, cantidadRecolectada: 0, ubicacionCodigo: 'C-05-02-P2', pasillo: 'C', rack: '05', nivel: '02', orden: 2 },
-          ],
-        },
-      ];
-
-      const mockPaquetes: Paquete[] = [
-        {
-          id: 'pkg-501',
-          numeroGuia: 'GUIA-LOGI-77182',
-          numeroOrden: 'ORD-20260918-10039',
-          transportista: 'LOGIMKT Express',
-          pesoRealKg: 1.85,
-          volumenM3: 0.0075,
-          municipioDestino: 'Santa Tecla',
-          departamentoDestino: 'La Libertad',
-          estado: 'Empacado',
-          fechaEmpaque: new Date(Date.now() - 5400000).toISOString(),
-        },
-        {
-          id: 'pkg-502',
-          numeroGuia: 'GUIA-DHL-44091',
-          numeroOrden: 'ORD-20260918-10031',
-          transportista: 'DHL Express',
-          pesoRealKg: 4.20,
-          volumenM3: 0.0240,
-          municipioDestino: 'San Miguel',
-          departamentoDestino: 'San Miguel',
-          estado: 'Despachado',
-          fechaEmpaque: new Date(Date.now() - 14400000).toISOString(),
-          fechaDespacho: new Date(Date.now() - 10800000).toISOString(),
-        },
-      ];
-
-      setPickLists(mockPickLists);
-      setPaquetes(mockPaquetes);
+    } catch (error) {
+      setPickLists([]);
+      setPaquetes([]);
+      setErrorCarga(error instanceof Error ? error.message : 'No se pudo cargar Fulfillment desde la API.');
     } finally {
       setLoading(false);
     }
@@ -126,7 +73,7 @@ export default function FulfillmentPage() {
     setSelectedPickList(pl);
     const initialChecked: Record<string, boolean> = {};
     pl.items.forEach(it => {
-      initialChecked[it.id] = (it.cantidadRecolectada ?? 0) >= it.cantidadSolicitada;
+      initialChecked[it.id] = (it.cantidadRecogida ?? 0) >= it.cantidadSolicitada;
     });
     setConfirmItems(initialChecked);
   };
@@ -141,41 +88,39 @@ export default function FulfillmentPage() {
     try {
       const confirmaciones: ConfirmarItemPickingRequest[] = selectedPickList.items.map(it => ({
         itemPickListId: it.id,
-        cantidadRecolectada: confirmItems[it.id] ? it.cantidadSolicitada : 0,
-        recogido: !!confirmItems[it.id],
+        cantidadRecogida: confirmItems[it.id] ? it.cantidadSolicitada : 0,
       }));
-
       await fulfillmentApi.confirmarPicking(selectedPickList.id, confirmaciones);
       toast.success('Picking Confirmado', `PickList ${selectedPickList.numeroPickList} procesada.`);
-    } catch {
-      toast.success('Picking Confirmado (Local)', `PickList ${selectedPickList.numeroPickList} actualizada.`);
-    } finally {
-      setPickLists(prev => prev.map(p => {
-        if (p.id !== selectedPickList.id) return p;
-        const allDone = selectedPickList.items.every(it => confirmItems[it.id]);
-        return {
-          ...p,
-          estado: allDone ? 'Completada' : 'EnProceso',
-          items: p.items.map(it => ({
-            ...it,
-            cantidadRecolectada: confirmItems[it.id] ? it.cantidadSolicitada : 0,
-          })),
-        };
-      }));
-      setSavingPick(false);
       setSelectedPickList(null);
+      await loadData();
+    } catch (error) {
+      toast.error('Error de picking', error instanceof Error ? error.message : 'No fue posible confirmar el picking.');
+    } finally {
+      setSavingPick(false);
     }
   };
 
   const handleDespachar = async (paqueteId: string) => {
     const pkg = paquetes.find(p => p.id === paqueteId);
     try {
-      await fulfillmentApi.despachar(paqueteId);
-      toast.success('Paquete Despachado', `Guía ${pkg?.numeroGuia || paqueteId} entregada al transportista.`);
-    } catch {
-      toast.success('Paquete Despachado (Local)', `Guía ${pkg?.numeroGuia || paqueteId} en tránsito.`);
+      const resp = await fulfillmentApi.despachar(paqueteId);
+      const fechaDespacho = resp?.fechaDespacho || new Date().toISOString();
+
+      setPaquetes(prev => prev.map(p =>
+        p.id === paqueteId
+          ? { ...p, estado: 'Despachado', fechaDespacho }
+          : p
+      ));
+
+      toast.success(
+        'Paquete Despachado',
+        `Guía ${pkg?.numeroGuia || paqueteId} entregada al transportista y stock consumido.`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No fue posible completar el despacho.';
+      toast.error('Despacho rechazado', message);
     }
-    setPaquetes(prev => prev.map(p => p.id === paqueteId ? { ...p, estado: 'Despachado', fechaDespacho: new Date().toISOString() } : p));
   };
 
   const pesoVolumetrico = ((packForm.largoCm * packForm.anchoCm * packForm.altoCm) / 5000).toFixed(2);
@@ -183,39 +128,12 @@ export default function FulfillmentPage() {
   const handleSavePacking = async () => {
     setSavingPack(true);
     try {
-      const resp = await fulfillmentApi.empacar(packForm.ordenId || crypto.randomUUID(), packForm);
-      const newPkg: Paquete = {
-        id: crypto.randomUUID(),
-        numeroGuia: resp?.numeroGuia || `GUIA-LOGI-${Math.floor(10000 + Math.random() * 90000)}`,
-        numeroOrden: packForm.numeroOrden || 'ORD-2026-NUEVA',
-        transportista: packForm.transportista,
-        pesoRealKg: packForm.pesoRealKg,
-        volumenM3: ((packForm.largoCm * packForm.anchoCm * packForm.altoCm) / 1000000).toFixed(4),
-        municipioDestino: packForm.municipioDestino,
-        departamentoDestino: packForm.departamentoDestino,
-        estado: 'Empacado',
-        fechaEmpaque: new Date().toISOString(),
-      };
-      setPaquetes(prev => [newPkg, ...prev]);
-      toast.success('Empaque Completado', `Guía ${newPkg.numeroGuia} generada para ${newPkg.municipioDestino}.`);
+      const resp = await fulfillmentApi.empacar(packForm.ordenId, packForm);
+      toast.success('Empaque Completado', `Guía ${resp.numeroGuia} generada correctamente.`);
       setPackModalOpen(false);
-    } catch {
-      // fallback create package
-      const newPkg: Paquete = {
-        id: crypto.randomUUID(),
-        numeroGuia: `GUIA-LOGI-${Math.floor(10000 + Math.random() * 90000)}`,
-        numeroOrden: packForm.numeroOrden || 'ORD-2026-NUEVA',
-        transportista: packForm.transportista,
-        pesoRealKg: packForm.pesoRealKg,
-        volumenM3: ((packForm.largoCm * packForm.anchoCm * packForm.altoCm) / 1000000).toFixed(4),
-        municipioDestino: packForm.municipioDestino,
-        departamentoDestino: packForm.departamentoDestino,
-        estado: 'Empacado',
-        fechaEmpaque: new Date().toISOString(),
-      };
-      setPaquetes(prev => [newPkg, ...prev]);
-      toast.success('Empaque Completado (Local)', `Guía ${newPkg.numeroGuia} lista para despacho.`);
-      setPackModalOpen(false);
+      await loadData();
+    } catch (error) {
+      toast.error('Error de empaque', error instanceof Error ? error.message : 'No fue posible completar el empaque.');
     } finally {
       setSavingPack(false);
     }
@@ -272,6 +190,10 @@ export default function FulfillmentPage() {
         </div>
       </div>
 
+      {errorCarga && (
+        <AlertBanner variant="danger" title="Fulfillment no disponible" message={errorCarga} action={{ label: 'Reintentar', onClick: loadData }} />
+      )}
+
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
         <button
@@ -309,7 +231,7 @@ export default function FulfillmentPage() {
           }}
         >
           <Box size={16} />
-          Paquetes Empacados ({paquetes.filter(p => p.estado === 'Empacado').length})
+          Paquetes Empacados ({paquetes.filter(p => p.estado === 'ListoParaDespacho' && !p.fechaDespacho).length})
         </button>
 
         <button
@@ -328,7 +250,7 @@ export default function FulfillmentPage() {
           }}
         >
           <Truck size={16} />
-          Historial de Despachos ({paquetes.filter(p => p.estado === 'Despachado').length})
+          Historial de Despachos ({paquetes.filter(p => !!p.fechaDespacho).length})
         </button>
       </div>
 
@@ -357,7 +279,7 @@ export default function FulfillmentPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span>{row.items?.length ?? 0} ítems</span>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    ({row.items?.filter((i: any) => (i.cantidadRecolectada ?? 0) >= i.cantidadSolicitada).length ?? 0} listos)
+                    ({row.items?.filter((i: any) => (i.cantidadRecogida ?? 0) >= i.cantidadSolicitada).length ?? 0} listos)
                   </span>
                 </div>
               ),
@@ -388,7 +310,7 @@ export default function FulfillmentPage() {
                   }}
                 >
                   <Play size={13} style={{ color: 'var(--green)' }} />
-                  {row.estado === 'Completada' ? 'Revisar Ruta' : 'Iniciar Picking'}
+                  {row.estado === 'Completado' ? 'Revisar Ruta' : 'Iniciar Picking'}
                 </button>
               ),
             },
@@ -465,7 +387,7 @@ export default function FulfillmentPage() {
               ),
             },
           ]}
-          data={paquetes.filter(p => p.estado === 'Empacado')}
+          data={paquetes.filter(p => p.estado === 'ListoParaDespacho' && !p.fechaDespacho)}
           keyExtractor={(item) => item.id}
           loading={loading}
           emptyText="No hay paquetes pendientes de despacho."
@@ -510,7 +432,7 @@ export default function FulfillmentPage() {
               render: () => <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.8rem' }}>● En Tránsito / Despachado</span>,
             },
           ]}
-          data={paquetes.filter(p => p.estado === 'Despachado')}
+          data={paquetes.filter(p => p.estado === 'Despachado' || !!p.fechaDespacho)}
           keyExtractor={(item) => item.id}
           loading={loading}
           emptyText="No hay despachos registrados todavía."
@@ -637,26 +559,29 @@ export default function FulfillmentPage() {
             }}
             style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
           >
-            <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                N° de Orden a Empacar
-              </label>
-              <input
-                type="text"
-                placeholder="Ej. ORD-20260918-10042"
-                value={packForm.numeroOrden}
-                onChange={e => setPackForm(f => ({ ...f, numeroOrden: e.target.value }))}
-                required
-                style={{
-                  width: '100%',
-                  padding: '0.5rem 0.75rem',
-                  borderRadius: '6px',
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border)',
-                  color: 'var(--text-primary)',
-                  boxSizing: 'border-box',
-                }}
-              />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>ID de Orden (UUID)</label>
+                <input
+                  type="text"
+                  placeholder="UUID de la orden"
+                  value={packForm.ordenId}
+                  onChange={e => setPackForm(f => ({ ...f, ordenId: e.target.value }))}
+                  required
+                  style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>N° de Orden</label>
+                <input
+                  type="text"
+                  placeholder="Ej. ORD-20260918-10042"
+                  value={packForm.numeroOrden}
+                  onChange={e => setPackForm(f => ({ ...f, numeroOrden: e.target.value }))}
+                  required
+                  style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                />
+              </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
@@ -703,6 +628,40 @@ export default function FulfillmentPage() {
                     color: 'var(--text-primary)',
                     boxSizing: 'border-box',
                   }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Dirección de Entrega</label>
+              <input
+                type="text"
+                value={packForm.direccionEntrega}
+                onChange={e => setPackForm(f => ({ ...f, direccionEntrega: e.target.value }))}
+                required
+                style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Contacto Receptor</label>
+                <input
+                  type="text"
+                  value={packForm.contactoReceptor}
+                  onChange={e => setPackForm(f => ({ ...f, contactoReceptor: e.target.value }))}
+                  required
+                  style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Teléfono Receptor</label>
+                <input
+                  type="text"
+                  value={packForm.telefonoReceptor}
+                  onChange={e => setPackForm(f => ({ ...f, telefonoReceptor: e.target.value }))}
+                  required
+                  style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 />
               </div>
             </div>

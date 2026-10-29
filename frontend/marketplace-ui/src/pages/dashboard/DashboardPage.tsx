@@ -33,46 +33,26 @@ export default function DashboardPage() {
   const load = async () => {
     setLoading(true);
     setError(null);
-    try {
-      const [d, m] = await Promise.all([kpisApi.getDashboard(period), kpisApi.getModeloFinanciero()]);
-      setData(d);
-      setModelo(m);
-    } catch {
-      setError('No se pudo conectar a la API. Usando datos demo.');
-      // Demo data
-      setData({
-        periodo: { desde: '2026-08-18', hasta: '2026-09-18', diasPeriodo: period },
-        generadoEn: new Date().toISOString(),
-        resumenEjecutivo: { totalOrdenes: 248, ordenesEntregadas: 201, ordenesCanceladas: 12, totalMatches3Way: 87, totalRmasPeriodo: 8, totalComisionGenerada: 4820.5 },
-        kpis: [
-          { numero: 1, nombre: 'Fill Rate', valor: 81.05, unidad: '%', meta: 95, semaforo: 'Rojo', descripcion: 'Porcentaje de órdenes completadas', cumpleMeta: false },
-          { numero: 2, nombre: 'OTIF', valor: 0, unidad: '%', meta: 95, semaforo: 'Rojo', descripcion: 'On-Time In-Full', cumpleMeta: false },
-          { numero: 3, nombre: 'Tasa Cancelación', valor: 4.84, unidad: '%', meta: 5, semaforo: 'Verde', descripcion: 'Menor es mejor', cumpleMeta: true },
-          { numero: 4, nombre: 'Tiempo Ciclo Pedido', valor: 0, unidad: 'horas', meta: 48, semaforo: 'Verde', descripcion: 'Tiempo promedio de entrega', cumpleMeta: true },
-          { numero: 5, nombre: 'Rotación de Inventario', valor: 0, unidad: 'veces', meta: 4, semaforo: 'Rojo', descripcion: 'Renovación del inventario', cumpleMeta: false },
-          { numero: 6, nombre: 'Tasa Devolución RMA', valor: 3.98, unidad: '%', meta: 3, semaforo: 'Amarillo', descripcion: 'Porcentaje de devoluciones', cumpleMeta: false },
-          { numero: 7, nombre: 'Precisión 3-Way Match', valor: 100, unidad: '%', meta: 98, semaforo: 'Verde', descripcion: 'Matches conformes', cumpleMeta: true },
-          { numero: 8, nombre: 'Margen Comisión', valor: 10, unidad: '%', meta: 10, semaforo: 'Verde', descripcion: 'Comisión marketplace', cumpleMeta: true },
-        ],
-      });
-      setModelo({
-        generadoEn: new Date().toISOString(),
-        supuestos: {},
-        resumenAnual: { ventasTotalesAnuales: 578234, comisionTotalAnual: 57823, costosTotalesAnuales: 37585, utilidadTotalAnual: 20238 },
-        meses: Array.from({ length: 12 }, (_, i) => ({
-          mes: i + 1,
-          periodo: `2026-${String(i + 1).padStart(2, '0')}`,
-          ventasProyectadas: 48000 * Math.pow(1.08, i),
-          comisionMarketplace: 4800 * Math.pow(1.08, i),
-          costosOperativos: 3120 * Math.pow(1.08, i),
-          utilidadNeta: 1680 * Math.pow(1.08, i),
-          margenNetoPct: 35,
-          factorCrecimiento: Math.pow(1.08, i),
-        })),
-      });
-    } finally {
-      setLoading(false);
+    setData(null);
+    setModelo(null);
+    setSelectedCard(null);
+
+    const [dashboardResult, modelResult] = await Promise.allSettled([
+      kpisApi.getDashboard(period),
+      kpisApi.getModeloFinanciero(),
+    ]);
+
+    if (dashboardResult.status === 'fulfilled') setData(dashboardResult.value);
+    if (modelResult.status === 'fulfilled') setModelo(modelResult.value);
+
+    const failures: string[] = [];
+    if (dashboardResult.status === 'rejected') failures.push('los KPI del período');
+    if (modelResult.status === 'rejected') failures.push('el modelo financiero');
+    if (failures.length) {
+      setError(`No se pudo cargar ${failures.join(' ni ')}. No se mostrarán datos simulados.`);
     }
+
+    setLoading(false);
   };
 
   useEffect(() => { load(); }, [period]);
@@ -91,36 +71,36 @@ export default function DashboardPage() {
     {
       key: 'total_ordenes',
       label: 'Total Órdenes',
-      value: res?.totalOrdenes ?? 0,
+      value: res ? res.totalOrdenes : '—',
       sub: `Últimos ${period} días`,
-      delta: '+8.4%',
-      deltaType: 'up',
+      delta: res ? 'Periodo actual' : 'Sin datos',
+      deltaType: 'neutral',
       icon: <ShoppingCart size={18} />,
     },
     {
       key: 'ordenes_entregadas',
       label: 'Órdenes Entregadas',
-      value: res?.ordenesEntregadas ?? 0,
-      sub: 'Completadas a tiempo',
-      delta: `${res?.totalOrdenes ? Math.round(((res.ordenesEntregadas ?? 0) / res.totalOrdenes) * 100) : 0}% tasa`,
+      value: res ? res.ordenesEntregadas : '—',
+      sub: 'Órdenes completadas',
+      delta: res?.totalOrdenes ? `${Math.round((res.ordenesEntregadas / res.totalOrdenes) * 100)}% tasa` : 'Sin datos',
       deltaType: 'up',
       icon: <Package size={18} />,
     },
     {
       key: 'canceladas',
       label: 'Canceladas',
-      value: res?.ordenesCanceladas ?? 0,
+      value: res ? res.ordenesCanceladas : '—',
       sub: 'Requieren atención',
-      delta: `${res?.totalOrdenes ? ((res.ordenesCanceladas ?? 0) / res.totalOrdenes * 100).toFixed(1) : 0}%`,
+      delta: res?.totalOrdenes ? `${(res.ordenesCanceladas / res.totalOrdenes * 100).toFixed(1)}%` : 'Sin datos',
       deltaType: ((res?.ordenesCanceladas ?? 0) > 10 ? 'down' : 'neutral'),
       icon: <TrendingUp size={18} />,
     },
     {
       key: 'comision_generada',
       label: 'Comisión Generada',
-      value: `$${(res?.totalComisionGenerada ?? 0).toLocaleString('es-SV', { maximumFractionDigits: 0 })}`,
-      sub: 'Marketplace 10%',
-      delta: '100% cobrable',
+      value: res ? `$${res.totalComisionGenerada.toLocaleString('es-SV', { maximumFractionDigits: 0 })}` : '—',
+      sub: 'Comisión reportada',
+      delta: res ? `${res.totalMatches3Way} matches 3-way` : 'Sin datos',
       deltaType: 'neutral',
       icon: <DollarSign size={18} />,
     },
@@ -133,7 +113,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="page-title">Dashboard Ejecutivo</h1>
           <p className="page-subtitle">
-            Monitoreo en tiempo real de fulfillment, nivel de servicio logístico y flujo financiero.
+            Resumen consolidado de fulfillment, nivel de servicio logístico y flujo financiero.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -153,8 +133,8 @@ export default function DashboardPage() {
 
       {error && (
         <AlertBanner
-          variant="warning"
-          title="Modo Demo / Datos Simulados"
+          variant="danger"
+          title="Datos no disponibles"
           message={error}
           action={{
             label: 'Reintentar',
@@ -170,12 +150,13 @@ export default function DashboardPage() {
           <div
             className={`stat-card animate-in stagger-${i + 1}`}
             key={s.label}
-            role="button"
-            tabIndex={0}
-            aria-haspopup="dialog"
-            onClick={() => setSelectedCard({ type: 'stat', key: s.key })}
+            role={data ? 'button' : undefined}
+            tabIndex={data ? 0 : -1}
+            aria-haspopup={data ? 'dialog' : undefined}
+            aria-disabled={!data}
+            onClick={() => data && setSelectedCard({ type: 'stat', key: s.key })}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
+              if (data && (e.key === 'Enter' || e.key === ' ')) {
                 e.preventDefault();
                 setSelectedCard({ type: 'stat', key: s.key });
               }
@@ -232,7 +213,7 @@ export default function DashboardPage() {
             <div className="chart-header">
               <div>
                 <div className="card-title">Proyección Financiera 12 Meses</div>
-                <div className="card-subtitle">Ventas · Comisión · Utilidad (crecimiento 8% mensual)</div>
+                <div className="card-subtitle">Ventas · Comisión · Utilidad calculadas por la API</div>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>

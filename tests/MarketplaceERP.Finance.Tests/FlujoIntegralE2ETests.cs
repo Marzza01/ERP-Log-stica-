@@ -53,7 +53,8 @@ public class FlujoIntegralE2ETests
 
         var matchingService = new TresWayMatchingService(financeDb, NullLogger<TresWayMatchingService>.Instance);
         var contabilidadService = new ContabilidadService(financeDb, NullLogger<ContabilidadService>.Instance);
-        var fulfillmentService = new FulfillmentService(catalogDb, NullLogger<FulfillmentService>.Instance);
+        var stockService = new StockService(catalogDb, NullLogger<StockService>.Instance);
+        var fulfillmentService = new FulfillmentService(catalogDb, stockService, NullLogger<FulfillmentService>.Instance);
         var liquidacionService = new LiquidacionService(financeDb, contabilidadService, NullLogger<LiquidacionService>.Instance);
 
         // ── 1. Alta de Proveedor y Catálogo de Producto ─────────────────────────
@@ -212,6 +213,14 @@ public class FlujoIntegralE2ETests
         partidaVenta.EstaCuadrada.Should().BeTrue();
         partidaVenta.TotalDebe.Should().Be(226m);
 
+        // Confirmar la reserva real que Checkout dejaría lista después del pago.
+        var reservaVenta = await stockService.ReservarStockAsync(productoId, 2, ordenVenta.Id);
+        reservaVenta.Exitoso.Should().BeTrue();
+        await stockService.ConfirmarReservaAsync(reservaVenta.ReservaId);
+
+        stock.CantidadTotal.Should().Be(100);
+        stock.CantidadReservada.Should().Be(2);
+
         // ── 5. Fulfillment: Pick List con Enrutamiento Óptimo S-Shape ─────────
         var pickList = await fulfillmentService.GenerarPickListAsync(new GenerarPickListRequest(
             OrdenId: ordenVenta.Id,
@@ -255,9 +264,17 @@ public class FlujoIntegralE2ETests
         paquete.NumeroGuia.Should().StartWith("SV-LOGI-");
         paquete.VolumenM3.Should().BeGreaterThan(0);
 
-        // Despacho
+        // Despacho: aquí se consume físicamente la reserva.
         var paqueteDespachado = await fulfillmentService.DespacharPaqueteAsync(paquete.Id);
         paqueteDespachado!.FechaDespacho.Should().NotBeNull();
+        paqueteDespachado.Estado.Should().Be(EstadoPacking.Despachado);
+
+        stock.CantidadTotal.Should().Be(98);
+        stock.CantidadReservada.Should().Be(0);
+
+        var reservaConsumida = await catalogDb.ReservasStock.SingleAsync(r => r.Id == reservaVenta.ReservaId);
+        reservaConsumida.Estado.Should().Be(EstadoReserva.Consumida);
+        reservaConsumida.CantidadConsumida.Should().Be(2);
 
         // ── 7. Entrega de Orden y Cierre OMS ───────────────────────────────────
         ordenVenta.Estado = EstadoOrden.Entregada;

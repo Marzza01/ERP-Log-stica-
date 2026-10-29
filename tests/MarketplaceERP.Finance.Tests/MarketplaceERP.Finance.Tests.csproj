@@ -18,6 +18,7 @@
     <PackageReference Include="Moq" Version="4.20.72" />
     <PackageReference Include="FluentAssertions" Version="6.12.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.8" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.8" />
   </ItemGroup>
 
   <ItemGroup>
@@ -27,4 +28,7 @@
     <ProjectReference Include="..\..\src\MarketplaceERP.Catalog\MarketplaceERP.Catalog.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MarketplaceERP.API\MarketplaceERP.API.csproj" />
+  </ItemGroup>
 </Project>

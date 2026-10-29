@@ -22,27 +22,40 @@ export interface GenerarPickListResponse {
 
 export interface ConfirmarItemPickingRequest {
   itemPickListId: string;
-  cantidadRecolectada: number;
-  recogido: boolean;
-  observacion?: string;
+  cantidadRecogida: number;
 }
 
 export interface EmpacarRequest {
   ordenId: string;
   numeroOrden: string;
-  transportista: string;
-  municipioDestino: string;
-  departamentoDestino: string;
   pesoRealKg: number;
   largoCm: number;
   anchoCm: number;
   altoCm: number;
-  observaciones?: string;
+  transportista: string;
+  departamentoDestino: string;
+  municipioDestino: string;
+  direccionEntrega: string;
+  contactoReceptor: string;
+  telefonoReceptor: string;
+}
+
+export interface EmpacarResponse {
+  mensaje: string;
+  numeroGuia: string;
+  numeroOrden: string;
+  cubicaje: {
+    pesoRealKg: number;
+    dimensiones: string;
+    volumenM3: number;
+  };
+  destino: string;
+  transportista: string;
 }
 
 export const fulfillmentApi = {
   listarPickLists: (estado?: string) =>
-    apiClient.get<PickList[]>(`/api/fulfillment/picklists${estado ? `?estado=${estado}` : ''}`),
+    apiClient.get<PickList[]>(`/api/fulfillment/picklists${estado ? `?estado=${encodeURIComponent(estado)}` : ''}`),
 
   generarPickList: (ordenId: string, operador?: string) =>
     apiClient.post<GenerarPickListResponse>(
@@ -50,14 +63,19 @@ export const fulfillmentApi = {
     ),
 
   confirmarPicking: (pickListId: string, confirmaciones: ConfirmarItemPickingRequest[]) =>
-    apiClient.post<any>(`/api/fulfillment/picklists/${pickListId}/confirmar`, confirmaciones),
+    apiClient.post<{ mensaje: string; numeroPickList: string; estado: string }>(
+      `/api/fulfillment/picklists/${pickListId}/confirmar`,
+      confirmaciones
+    ),
 
   listarPaquetes: (estado?: string) =>
-    apiClient.get<Paquete[]>(`/api/fulfillment/paquetes${estado ? `?estado=${estado}` : ''}`),
+    apiClient.get<Paquete[]>(`/api/fulfillment/paquetes${estado ? `?estado=${encodeURIComponent(estado)}` : ''}`),
 
   empacar: (ordenId: string, req: EmpacarRequest) =>
-    apiClient.post<any>(`/api/fulfillment/ordenes/${ordenId}/empacar`, req),
+    apiClient.post<EmpacarResponse>(`/api/fulfillment/ordenes/${ordenId}/empacar`, req),
 
   despachar: (paqueteId: string) =>
-    apiClient.post<any>(`/api/fulfillment/paquetes/${paqueteId}/despachar`),
+    apiClient.post<{ mensaje: string; numeroGuia: string; transportista: string; fechaDespacho?: string; estadoPacking?: string; estadoOrden?: string }>(
+      `/api/fulfillment/paquetes/${paqueteId}/despachar`
+    ),
 };

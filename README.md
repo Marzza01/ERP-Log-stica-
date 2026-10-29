@@ -348,3 +348,15 @@ El sistema cuenta con una arquitectura de interfaz adaptable a 4 perfiles de pan
 
 ---
 *Desarrollado para la materia "Logística en Negocios Digitales". UNICAES 2026.*
+
+<!-- LOGIMKT_GRUPO_A_CIERRE_2026-10-29 -->
+## Entrega tecnica del Grupo A (29/10/2026)
+
+El alcance logistico del Grupo A se considera **validado para entrega academica y demostracion en PostgreSQL QA** al corte tecnico `4c56438` de `integracion-auditoria-grupo-a`. La ejecucion #1 del workflow `LOGIMKT Grupo A - Regresion` finalizo en **Success** para ese commit.
+
+- **Incluye:** inventario, WMS, recepcion y despacho, reservas, Fulfillment, devoluciones RMA, Checkout B2C y controles de acceso JWT, con ensayos de regresion y E2E de QA.
+- **Limite funcional:** `CodigoEAN` y los codigos de barras quedan pendientes de integracion por el integrante responsable; se deben conservar contratos de producto, SKU, lote, inventario y trazabilidad.
+- **Limite de ambiente:** la aprobacion QA no certifica Production; pagos y reembolsos reales no estan habilitados. Las migraciones financieras y la inicializacion productiva requieren validacion separada.
+- **Informe y traspaso:** [Cierre tecnico del Grupo A y guia para CodigoEAN](docs/LOGIMKT_Grupo_A_Cierre_Tecnico_y_Traspaso_CodigoEAN_2026-10-29.md).
+
+Para comprobar el codigo, ejecutar desde la raiz `dotnet build MarketplaceERP.sln` y `dotnet test MarketplaceERP.sln`; en `frontend/marketplace-ui`, ejecutar `npm run test:checkout` y `npm run build`, respetando las dependencias ya instaladas. Estos comandos no sustituyen el E2E aislado ni habilitan pagos reales.

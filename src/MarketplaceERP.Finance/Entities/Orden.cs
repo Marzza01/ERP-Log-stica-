@@ -42,6 +42,11 @@ public class Orden
     public Guid CompradorId { get; set; }
     public Guid VendedorId { get; set; }
 
+    // Identidad de la operación, única por comprador en PostgreSQL.
+    // Nullable para no alterar órdenes existentes ni los flujos ajenos a Checkout.
+    public string? IdempotencyKey { get; set; }
+    public string? CheckoutPayloadHash { get; set; }
+
     public decimal SubTotal { get; set; }
     public decimal ImpuestoIva { get; set; } // IVA 13% en El Salvador
     public decimal CostoEnvio { get; set; }

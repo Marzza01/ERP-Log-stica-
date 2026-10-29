@@ -7,6 +7,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { ShoppingBag, Search, Plus, Filter, AlertCircle, RefreshCw, Edit2, Trash2 } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
+import AlertBanner from '../../components/ui/AlertBanner';
 import { useToast } from '../../context/ToastContext';
 import { productosApi, type CrearProductoRequest } from '../../api/productos';
 import type { Producto } from '../../types';
@@ -16,6 +17,7 @@ export default function ProductosPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCat, setSelectedCat] = useState('');
+  const [errorCarga, setErrorCarga] = useState('');
 
   // Modal
   const [modalOpen, setModalOpen] = useState(false);
@@ -24,14 +26,17 @@ export default function ProductosPage() {
     sku: '',
     nombre: '',
     descripcion: '',
-    precio: 0,
-    costoUnitario: 0,
-    categoria: 'Tecnología',
-    marca: '',
+    categoriaNombre: 'Tecnología',
+    subcategoria: 'General',
+    precioB2C: 0,
+    precioB2B: 0,
+    stockMinimo: 10,
+    proveedorNombre: '',
+    paisOrigen: 'El Salvador',
     pesoKg: 0.5,
-    largoCm: 20,
-    anchoCm: 15,
-    altoCm: 5,
+    dimensionesCm: '20x15x5',
+    unidadMedida: 'Unidad',
+    estadoProducto: 'Activo',
     estaPublicado: true,
   });
   const [saving, setSaving] = useState(false);
@@ -40,61 +45,13 @@ export default function ProductosPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setErrorCarga('');
     try {
       const res = await productosApi.listar(1, 100);
-      const rawItems = res.items || (Array.isArray(res) ? res : []);
-      const mapped: Producto[] = rawItems.map((item: any, idx: number) => ({
-        id: item.id || `prod-${idx + 1}`,
-        sku: item.sku || `SKU-${idx + 1}`,
-        nombre: item.nombre || 'Producto Sin Nombre',
-        descripcion: item.descripcion || '',
-        precio: Number(item.precio ?? item.precioB2C ?? item.precioBase ?? 0),
-        categoria: item.categoria || item.categoriaNombre || 'Tecnología',
-        marca: item.marca || item.proveedorNombre || 'LOGIMKT',
-        activo: item.activo ?? item.estaPublicado ?? true,
-        stockFisico: item.stockFisico || (item.stock ? {
-          cantidadDisponible: item.stock.cantidadDisponible ?? 0,
-          cantidadReservada: item.stock.cantidadReservada ?? 0,
-          cantidadTotal: item.stock.cantidadTotal ?? 0,
-        } : {
-          cantidadDisponible: 15,
-          cantidadReservada: 0,
-          cantidadTotal: 15,
-        }),
-      }));
-      setProductos(mapped);
-    } catch {
-      // Fallback demo data
-      const cats = ['Tecnología', 'Audio & Video', 'Periféricos Gamer', 'Cómputo', 'Accesorios'];
-      const mock: Producto[] = Array.from({ length: 25 }, (_, i) => {
-        const disp = (i * 7) % 65;
-        const res = (i * 3) % 15;
-        return {
-          id: `prod-${i + 1}`,
-          sku: `SKU-LOGI-${1000 + i}`,
-          nombre: [
-            'Smartphone Galaxy A54 5G 128GB',
-            'Audífonos Noise Cancelling Pro',
-            'Monitor Gamer 27" 165Hz IPS',
-            'Teclado Mecánico RGB Switch Red',
-            'Mouse Inalámbrico Ergonómico 4000 DPI',
-            'Cargador GaN Ultra Rápido 65W',
-            'Smartwatch Deportivo GPS 5ATM',
-            'Hub USB-C 8 en 1 HDMI 4K',
-          ][i % 8] + (i > 7 ? ` (Edición ${Math.floor(i / 8) + 1})` : ''),
-          descripcion: 'Producto homologado para logística y almacenamiento en bodega central con control de número de serie.',
-          precio: 25.00 + (i * 18.5),
-          categoria: cats[i % cats.length],
-          marca: ['Samsung', 'Sony', 'ASUS', 'Logitech', 'Anker'][i % 5],
-          activo: true,
-          stockFisico: {
-            cantidadDisponible: disp,
-            cantidadReservada: res,
-            cantidadTotal: disp + res,
-          },
-        };
-      });
-      setProductos(mock);
+      setProductos(res.items ?? []);
+    } catch (error) {
+      setProductos([]);
+      setErrorCarga(error instanceof Error ? error.message : 'No se pudo cargar el catálogo desde la API.');
     } finally {
       setLoading(false);
     }
@@ -107,28 +64,31 @@ export default function ProductosPage() {
   const filtered = productos.filter(p => {
     const matchSearch = p.nombre.toLowerCase().includes(search.toLowerCase()) ||
                         p.sku.toLowerCase().includes(search.toLowerCase());
-    const matchCat = selectedCat ? p.categoria === selectedCat : true;
+    const matchCat = selectedCat ? p.categoriaNombre === selectedCat : true;
     return matchSearch && matchCat;
   });
 
-  const totalDisponibles = productos.reduce((acc, p) => acc + (p.stockFisico?.cantidadDisponible ?? 0), 0);
-  const totalReservados = productos.reduce((acc, p) => acc + (p.stockFisico?.cantidadReservada ?? 0), 0);
-  const skusCriticos = productos.filter(p => (p.stockFisico?.cantidadDisponible ?? 0) < 10).length;
+  const totalDisponibles = productos.reduce((acc, p) => acc + (p.stock?.cantidadDisponible ?? 0), 0);
+  const totalReservados = productos.reduce((acc, p) => acc + (p.stock?.cantidadReservada ?? 0), 0);
+  const skusCriticos = productos.filter(p => (p.stock?.cantidadDisponible ?? 0) < 10).length;
 
   const handleOpenCrear = () => {
     setEditingId(null);
     setForm({
-      sku: `SKU-LOGI-${Math.floor(1000 + Math.random() * 9000)}`,
+      sku: '',
       nombre: '',
       descripcion: '',
-      precio: 49.99,
-      costoUnitario: 35.00,
-      categoria: 'Tecnología',
-      marca: '',
+      categoriaNombre: 'Tecnología',
+      subcategoria: 'General',
+      precioB2C: 0,
+      precioB2B: 0,
+      stockMinimo: 10,
+      proveedorNombre: '',
+      paisOrigen: 'El Salvador',
       pesoKg: 0.5,
-      largoCm: 20,
-      anchoCm: 15,
-      altoCm: 5,
+      dimensionesCm: '20x15x5',
+      unidadMedida: 'Unidad',
+      estadoProducto: 'Activo',
       estaPublicado: true,
     });
     setModalOpen(true);
@@ -140,15 +100,18 @@ export default function ProductosPage() {
       sku: p.sku,
       nombre: p.nombre,
       descripcion: p.descripcion ?? '',
-      precio: p.precio,
-      costoUnitario: 0,
-      categoria: p.categoria,
-      marca: p.marca,
-      pesoKg: 0.5,
-      largoCm: 20,
-      anchoCm: 15,
-      altoCm: 5,
-      estaPublicado: p.activo,
+      categoriaNombre: p.categoriaNombre,
+      subcategoria: p.subcategoria,
+      precioB2C: p.precioB2C,
+      precioB2B: p.precioB2B,
+      stockMinimo: p.stockMinimo,
+      proveedorNombre: p.proveedorNombre,
+      paisOrigen: p.paisOrigen,
+      pesoKg: p.pesoKg,
+      dimensionesCm: p.dimensionesCm,
+      unidadMedida: p.unidadMedida,
+      estadoProducto: p.estadoProducto,
+      estaPublicado: p.estaPublicado,
     });
     setModalOpen(true);
   };
@@ -165,53 +128,14 @@ export default function ProductosPage() {
         await productosApi.crear(form);
         toast.success('Producto Creado', `El SKU ${form.sku} se agregó al catálogo comercial.`);
       }
-    } catch {
-      // optimistic fallback
-      if (editingId) {
-        toast.info('Producto Actualizado (Local)', `Cambios reflejados localmente.`);
-      } else {
-        toast.success('Producto Creado (Local)', `El SKU ${form.sku} se agregó a la vista.`);
-      }
+      await loadData();
+      setModalOpen(false);
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'No fue posible guardar el producto.';
+      toast.error('Error al guardar producto', mensaje);
+    } finally {
+      setSaving(false);
     }
-    if (editingId) {
-      setProductos(prev => prev.map(p => {
-        if (p.id !== editingId) return p;
-        return {
-          ...p,
-          sku: form.sku || p.sku,
-          nombre: form.nombre || p.nombre,
-          descripcion: form.descripcion ?? p.descripcion,
-          precio: Number(form.precio) || 0,
-          categoria: form.categoria || p.categoria || 'Tecnología',
-          marca: form.marca || p.marca || 'N/A',
-          activo: form.estaPublicado ?? p.activo ?? true,
-          stockFisico: p.stockFisico || {
-            cantidadDisponible: 20,
-            cantidadReservada: 0,
-            cantidadTotal: 20,
-          },
-        };
-      }));
-    } else {
-      const nuevo: Producto = {
-        id: crypto.randomUUID(),
-        sku: form.sku || `SKU-LOGI-${Math.floor(1000 + Math.random() * 9000)}`,
-        nombre: form.nombre || 'Nuevo Producto',
-        descripcion: form.descripcion || '',
-        precio: Number(form.precio) || 0,
-        categoria: form.categoria || 'Tecnología',
-        marca: form.marca || 'N/A',
-        activo: form.estaPublicado ?? true,
-        stockFisico: {
-          cantidadDisponible: 20,
-          cantidadReservada: 0,
-          cantidadTotal: 20,
-        },
-      };
-      setProductos(prev => [nuevo, ...prev]);
-    }
-    setSaving(false);
-    setModalOpen(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -223,11 +147,12 @@ export default function ProductosPage() {
     try {
       await productosApi.eliminar(confirmDeleteId);
       toast.warning('Producto Dado de Baja', 'El producto ha sido retirado del catálogo.');
-    } catch {
-      toast.warning('Producto Dado de Baja (Local)', 'El producto ha sido retirado de la vista.');
+      await loadData();
+      setConfirmDeleteId(null);
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'No fue posible dar de baja el producto.';
+      toast.error('Error al dar de baja', mensaje);
     }
-    setProductos(prev => prev.filter(p => p.id !== confirmDeleteId));
-    setConfirmDeleteId(null);
   };
 
   return (
@@ -280,6 +205,10 @@ export default function ProductosPage() {
           </button>
         </div>
       </div>
+
+      {errorCarga && (
+        <AlertBanner variant="danger" title="Catálogo no disponible" message={errorCarga} action={{ label: 'Reintentar', onClick: loadData }} />
+      )}
 
       {/* KPI Cards Strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
@@ -354,11 +283,9 @@ export default function ProductosPage() {
             }}
           >
             <option value="">Todas las Categorías</option>
-            <option value="Tecnología">Tecnología</option>
-            <option value="Audio & Video">Audio & Video</option>
-            <option value="Periféricos Gamer">Periféricos Gamer</option>
-            <option value="Cómputo">Cómputo</option>
-            <option value="Accesorios">Accesorios</option>
+            {Array.from(new Set(productos.map(p => p.categoriaNombre))).filter(Boolean).sort().map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
           </select>
         </div>
       </div>
@@ -377,7 +304,7 @@ export default function ProductosPage() {
             render: (row) => (
               <div>
                 <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{row.nombre}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{row.marca} • {row.categoria}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{row.proveedorNombre} • {row.categoriaNombre}</div>
               </div>
             ),
           },
@@ -386,7 +313,7 @@ export default function ProductosPage() {
             accessor: 'precio',
             render: (row) => (
               <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text-primary)' }}>
-                ${(Number(row.precio) || 0).toFixed(2)}
+                ${(Number(row.precioB2C) || 0).toFixed(2)}
               </span>
             ),
           },
@@ -394,7 +321,7 @@ export default function ProductosPage() {
             header: 'Stock Disponible',
             accessor: 'stockFisico',
             render: (row) => {
-              const disp = row.stockFisico?.cantidadDisponible ?? 0;
+              const disp = row.stock?.cantidadDisponible ?? 0;
               let bg = 'rgba(34, 197, 94, 0.15)';
               let col = 'var(--green)';
               if (disp === 0) {
@@ -416,7 +343,7 @@ export default function ProductosPage() {
             key: 'stockReservado',
             render: (row) => (
               <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                {row.stockFisico?.cantidadReservada ?? 0} unid.
+                {row.stock?.cantidadReservada ?? 0} unid.
               </span>
             ),
             sortable: false,
@@ -514,8 +441,8 @@ export default function ProductosPage() {
                 <input
                   type="number"
                   step="0.01"
-                  value={form.precio}
-                  onChange={e => setForm(f => ({ ...f, precio: parseFloat(e.target.value) || 0 }))}
+                  value={form.precioB2C}
+                  onChange={e => setForm(f => ({ ...f, precioB2C: parseFloat(e.target.value) || 0 }))}
                   required
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 />
@@ -526,8 +453,8 @@ export default function ProductosPage() {
                   Categoría
                 </label>
                 <select
-                  value={form.categoria}
-                  onChange={e => setForm(f => ({ ...f, categoria: e.target.value }))}
+                  value={form.categoriaNombre}
+                  onChange={e => setForm(f => ({ ...f, categoriaNombre: e.target.value }))}
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 >
                   <option value="Tecnología">Tecnología</option>
@@ -540,12 +467,12 @@ export default function ProductosPage() {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                  Marca
+                  Proveedor
                 </label>
                 <input
                   type="text"
-                  value={form.marca}
-                  onChange={e => setForm(f => ({ ...f, marca: e.target.value }))}
+                  value={form.proveedorNombre}
+                  onChange={e => setForm(f => ({ ...f, proveedorNombre: e.target.value }))}
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 />
               </div>

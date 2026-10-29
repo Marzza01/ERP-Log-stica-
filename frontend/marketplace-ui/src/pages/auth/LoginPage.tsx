@@ -7,10 +7,11 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { ApiError } from '../../api/client';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('admin@logimkt.com');
-  const [password, setPassword] = useState('admin1234');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,11 +22,41 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
+
     try {
       await login(email, password);
+      // Redirigir según el rol o al inicio
+      const stored = localStorage.getItem('erp_usuario');
+      if (stored) {
+        try {
+          const u = JSON.parse(stored);
+          if (u.rol === 'Comprador') {
+            navigate('/checkout');
+            return;
+          }
+        } catch { /* ignore */ }
+      }
       navigate('/dashboard');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error de autenticación');
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          setError('Correo electrónico o contraseña incorrectos.');
+        } else if (err.status === 429) {
+          setError('Demasiados intentos fallidos. Has alcanzado el límite de seguridad. Espera un minuto antes de intentar de nuevo.');
+        } else if (err.status === 0) {
+          setError('No es posible conectar con el servidor de autenticación. Verifica tu conexión de red.');
+        } else {
+          setError(err.message || 'Error en la autenticación.');
+        }
+      } else if (err instanceof Error) {
+        if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+          setError('No es posible conectar con el servidor de autenticación. Verifica tu conexión de red.');
+        } else {
+          setError(err.message);
+        }
+      } else {
+        setError('Error inesperado durante el inicio de sesión.');
+      }
     } finally {
       setLoading(false);
     }
@@ -59,7 +90,7 @@ export default function LoginPage() {
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="admin@logimkt.com"
+              placeholder="nombre@ejemplo.com"
               required
               autoComplete="email"
             />
@@ -98,10 +129,6 @@ export default function LoginPage() {
             {loading ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Ingresando...</> : 'Ingresar al sistema'}
           </button>
         </form>
-
-        <div style={{ marginTop: 20, padding: '14px', background: 'var(--bg-surface)', borderRadius: 'var(--radius-md)', fontSize: 11, color: 'var(--text-muted)', borderLeft: '3px solid var(--accent)' }}>
-          <strong style={{ color: 'var(--accent)' }}>Modo desarrollo:</strong> Cualquier email + contraseña de 4+ caracteres es válido si la API no está disponible.
-        </div>
       </div>
 
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>

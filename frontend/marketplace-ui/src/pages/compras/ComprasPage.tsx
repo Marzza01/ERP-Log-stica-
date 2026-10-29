@@ -4,41 +4,58 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { ShoppingCart, FileText, CheckCircle2, AlertTriangle, Plus, RefreshCw, Send, ShieldCheck } from 'lucide-react';
+import { ShoppingCart, FileText, CheckCircle2, AlertTriangle, Plus, RefreshCw, Send, ShieldCheck, PackageCheck } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
+import AlertBanner from '../../components/ui/AlertBanner';
 import { useToast } from '../../context/ToastContext';
-import { comprasApi, type CrearPORequest, type RegistrarFacturaRequest, type Validar3WayMatchRequest } from '../../api/compras';
-import type { OrdenCompra, MatchTridireccional } from '../../types';
+import { comprasApi, type CrearPORequest, type RegistrarFacturaRequest, type Validar3WayMatchRequest, type RecibirMercaderiaRequest } from '../../api/compras';
+import { wmsApi } from '../../api/wms';
+import { proveedoresApi, type ProveedorLogistico } from '../../api/proveedores';
+import type { OrdenCompra, MatchTridireccional, UbicacionAlmacen } from '../../types';
+
+type RecepcionLinea = {
+  itemOrdenCompraId: string;
+  sku: string;
+  descripcion: string;
+  cantidadSolicitada: number;
+  cantidadRecibidaBase: number;
+  cantidadRecibir: number;
+  ubicacionAlmacenId: string;
+  operacionId: string;
+};
 
 export default function ComprasPage() {
   const [activeTab, setActiveTab] = useState<'po' | 'facturas' | 'match'>('po');
   const [ordenesCompra, setOrdenesCompra] = useState<OrdenCompra[]>([]);
   const [matches, setMatches] = useState<MatchTridireccional[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState('');
 
   // Crear PO Modal
   const [poModalOpen, setPoModalOpen] = useState(false);
   const [poForm, setPoForm] = useState<CrearPORequest>({
-    proveedorId: '00000000-0000-0000-0000-000000000001',
-    proveedorNombre: 'Distribuidora Tecnológica S.A.',
+    proveedorId: '',
+    proveedorNombre: '',
     terminosPago: 'Crédito 30 días',
-    observaciones: 'Reabastecimiento bodega central Q3',
+    observaciones: '',
     fechaEntregaEsperada: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
     items: [
-      { sku: 'SKU-LOGI-8801', nombreProducto: 'Smartphone Galaxy A54 128GB', cantidad: 50, precioUnitario: 240.00 },
+      { sku: '', nombreProducto: '', cantidad: 1, precioUnitario: 0 },
     ],
   });
   const [savingPo, setSavingPo] = useState(false);
+  const [proveedores, setProveedores] = useState<ProveedorLogistico[]>([]);
+  const [loadingProveedores, setLoadingProveedores] = useState(true);
 
   // Registrar Factura Modal
   const [facturaModalOpen, setFacturaModalOpen] = useState(false);
   const [facturaForm, setFacturaForm] = useState<RegistrarFacturaRequest>({
     ordenCompraId: '',
-    numeroFactura: 'FAC-2026-0988',
-    subTotal: 12000,
-    montoTotal: 13560,
+    numeroFactura: '',
+    subTotal: 0,
+    montoTotal: 0,
     fechaEmision: new Date().toISOString().split('T')[0],
   });
   const [savingFactura, setSavingFactura] = useState(false);
@@ -47,15 +64,25 @@ export default function ComprasPage() {
   const [matchModalOpen, setMatchModalOpen] = useState(false);
   const [matchForm, setMatchForm] = useState<Validar3WayMatchRequest>({
     ordenCompraId: '',
-    facturaProveedorId: '00000000-0000-0000-0000-000000000002',
-    cantidadRecibidaBodega: 50,
+    facturaProveedorId: '',
+    cantidadRecibidaBodega: 0,
     toleranciaPorcentaje: 2.0,
   });
   const [matchResult, setMatchResult] = useState<MatchTridireccional | null>(null);
   const [runningMatch, setRunningMatch] = useState(false);
 
+  // Recepción Inbound / WMS
+  const [recepcionModalOpen, setRecepcionModalOpen] = useState(false);
+  const [recepcionPO, setRecepcionPO] = useState<OrdenCompra | null>(null);
+  const [recepcionItems, setRecepcionItems] = useState<RecepcionLinea[]>([]);
+  const [ubicacionesWms, setUbicacionesWms] = useState<UbicacionAlmacen[]>([]);
+  const [recepcionNotas, setRecepcionNotas] = useState('');
+  const [loadingRecepcion, setLoadingRecepcion] = useState(false);
+  const [savingRecepcion, setSavingRecepcion] = useState(false);
+
   const loadData = useCallback(async () => {
     setLoading(true);
+    setErrorCarga('');
     try {
       const [poRes, matchRes] = await Promise.all([
         comprasApi.listarPO({ tamano: 50 }),
@@ -63,63 +90,10 @@ export default function ComprasPage() {
       ]);
       setOrdenesCompra(poRes.ordenesCompra || []);
       setMatches(matchRes || []);
-    } catch {
-      // Fallback demo data
-      const mockPOs: OrdenCompra[] = [
-        {
-          id: 'po-101',
-          numeroPO: 'PO-20260918-1001',
-          proveedorId: 'prov-1',
-          nombreProveedor: 'Tech Wholesale El Salvador S.A.',
-          estado: 'Emitida',
-          montoTotal: 12000.00,
-          moneda: 'USD',
-          condicionPago: 'Crédito 30 días',
-          fechaEmision: new Date(Date.now() - 86400000 * 3).toISOString(),
-          fechaEntregaEsperada: new Date(Date.now() + 86400000 * 7).toISOString(),
-          items: [
-            { id: 'item-1', productoId: 'prod-1', descripcion: 'Smartphone Galaxy A54 128GB', cantidad: 50, precioUnitario: 240.00, total: 12000.00 },
-          ],
-        },
-        {
-          id: 'po-102',
-          numeroPO: 'PO-20260918-1002',
-          proveedorId: 'prov-2',
-          nombreProveedor: 'Importadora y Logística Global',
-          estado: 'Recibida',
-          montoTotal: 4500.00,
-          moneda: 'USD',
-          condicionPago: 'Contado',
-          fechaEmision: new Date(Date.now() - 86400000 * 6).toISOString(),
-          items: [
-            { id: 'item-2', productoId: 'prod-2', descripcion: 'Audífonos Bluetooth Noise Cancelling', cantidad: 100, precioUnitario: 45.00, total: 4500.00 },
-          ],
-        },
-      ];
-
-      const mockMatches: MatchTridireccional[] = [
-        {
-          id: 'match-01',
-          ordenCompraId: 'po-102',
-          resultado: 'Conforme',
-          diferenciaCantidad: 0,
-          diferenciaMonto: 0,
-          observaciones: 'PO, Nota de Recepción WMS y Factura coinciden al 100%. Aprobado automáticamente para pago y contabilidad.',
-          fechaAuditoria: new Date(Date.now() - 86400000 * 2).toISOString(),
-        },
-        {
-          id: 'match-02',
-          ordenCompraId: 'po-103',
-          resultado: 'Discrepante',
-          diferenciaCantidad: 5,
-          diferenciaMonto: 320.50,
-          observaciones: 'Discrepancia detectada: Factura cobró 55 unidades pero bodega recibió 50. Supera tolerancia del 2%. Retenido.',
-          fechaAuditoria: new Date(Date.now() - 86400000 * 5).toISOString(),
-        },
-      ];
-
-      setOrdenesCompra(mockPOs);
-      setMatches(mockMatches);
+    } catch (error) {
+      setOrdenesCompra([]);
+      setMatches([]);
+      setErrorCarga(error instanceof Error ? error.message : 'No se pudieron cargar Compras y 3-Way Match desde la API.');
     } finally {
       setLoading(false);
     }
@@ -129,48 +103,126 @@ export default function ComprasPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    let activo = true;
+    setLoadingProveedores(true);
+    proveedoresApi.listar()
+      .then(res => { if (activo) setProveedores(res.items ?? []); })
+      .catch((error) => { if (activo) { setProveedores([]); setErrorCarga(error instanceof Error ? error.message : 'No se pudo cargar el maestro de proveedores.'); } })
+      .finally(() => { if (activo) setLoadingProveedores(false); });
+    return () => { activo = false; };
+  }, []);
+
   const toast = useToast();
 
   const handleCrearPO = async () => {
+    if (!poForm.proveedorId) {
+      toast.warning('Proveedor requerido', 'Selecciona un proveedor activo del maestro corporativo.');
+      return;
+    }
+
     setSavingPo(true);
     try {
       await comprasApi.crearPO(poForm);
-      toast.success('Orden de Compra Generada', `PO emitida para ${poForm.proveedorNombre}.`);
-    } catch {
-      toast.success('Orden de Compra Generada (Local)', `PO guardada en vista local.`);
+      toast.success('Orden de Compra Generada', `PO creada para ${poForm.proveedorNombre}.`);
+      setPoModalOpen(false);
+      await loadData();
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'No fue posible crear la Orden de Compra.';
+      toast.error('Error al crear PO', mensaje);
+    } finally {
+      setSavingPo(false);
     }
-    const newPO: OrdenCompra = {
-      id: crypto.randomUUID(),
-      numeroPO: `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      proveedorId: poForm.proveedorId,
-      nombreProveedor: poForm.proveedorNombre,
-      estado: 'Borrador',
-      montoTotal: poForm.items.reduce((acc, i) => acc + (i.cantidad * i.precioUnitario), 0),
-      moneda: 'USD',
-      condicionPago: poForm.terminosPago || 'Crédito 30 días',
-      fechaEmision: new Date().toISOString(),
-      items: poForm.items.map(i => ({
-        id: crypto.randomUUID(),
-        productoId: crypto.randomUUID(),
-        descripcion: i.nombreProducto,
-        cantidad: i.cantidad,
-        precioUnitario: i.precioUnitario,
-        total: i.cantidad * i.precioUnitario,
-      })),
-    };
-    setOrdenesCompra(prev => [newPO, ...prev]);
-    setSavingPo(false);
-    setPoModalOpen(false);
   };
 
   const handleEnviarPO = async (poId: string) => {
     try {
       await comprasApi.enviarPO(poId);
-      toast.info('PO Transmitida', 'La orden de compra ha sido despachada al proveedor.');
-    } catch {
-      toast.info('PO Transmitida (Local)', 'Estado actualizado a Emitida.');
+      toast.info('PO Transmitida', 'La orden de compra ha sido enviada al proveedor.');
+      await loadData();
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'No fue posible enviar la Orden de Compra.';
+      toast.error('Error al enviar PO', mensaje);
     }
-    setOrdenesCompra(prev => prev.map(p => p.id === poId ? { ...p, estado: 'Emitida' } : p));
+  };
+
+  const abrirRecepcion = async (po: OrdenCompra) => {
+    setLoadingRecepcion(true);
+    try {
+      const ubicaciones = await wmsApi.listarUbicaciones();
+      setUbicacionesWms(ubicaciones);
+      setRecepcionPO(po);
+      setRecepcionNotas('');
+      setRecepcionItems(
+        po.items
+          .filter(item => (item.cantidadRecibida ?? 0) < item.cantidad)
+          .map(item => ({
+            itemOrdenCompraId: item.id,
+            sku: item.skuReferencia ?? '',
+            descripcion: item.descripcion,
+            cantidadSolicitada: item.cantidad,
+            cantidadRecibidaBase: item.cantidadRecibida ?? 0,
+            cantidadRecibir: 0,
+            ubicacionAlmacenId: '',
+            operacionId: crypto.randomUUID(),
+          }))
+      );
+      setRecepcionModalOpen(true);
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'No fue posible cargar las ubicaciones WMS.';
+      toast.error('No se pudo abrir la recepción', mensaje);
+    } finally {
+      setLoadingRecepcion(false);
+    }
+  };
+
+  const handleRecibirMercaderia = async () => {
+    if (!recepcionPO) return;
+
+    const seleccionados = recepcionItems.filter(item => item.cantidadRecibir > 0);
+    if (seleccionados.length === 0) {
+      toast.warning('Recepción incompleta', 'Ingresa al menos una cantidad mayor que cero.');
+      return;
+    }
+
+    const sinUbicacion = seleccionados.find(item => !item.ubicacionAlmacenId);
+    if (sinUbicacion) {
+      toast.warning('Ubicación requerida', `Selecciona una ubicación WMS para ${sinUbicacion.sku || sinUbicacion.descripcion}.`);
+      return;
+    }
+
+    const excedido = seleccionados.find(item =>
+      item.cantidadRecibidaBase + item.cantidadRecibir > item.cantidadSolicitada
+    );
+    if (excedido) {
+      toast.warning('Cantidad inválida', `La recepción de ${excedido.sku || excedido.descripcion} excede lo solicitado.`);
+      return;
+    }
+
+    const request: RecibirMercaderiaRequest = {
+      items: seleccionados.map(item => ({
+        itemOrdenCompraId: item.itemOrdenCompraId,
+        cantidadRecibida: item.cantidadRecibir,
+        cantidadAcumuladaEsperada: item.cantidadRecibidaBase + item.cantidadRecibir,
+        ubicacionAlmacenId: item.ubicacionAlmacenId,
+        operacionId: item.operacionId,
+      })),
+      notas: recepcionNotas.trim() || undefined,
+    };
+
+    setSavingRecepcion(true);
+    try {
+      await comprasApi.recibirMercancia(recepcionPO.id, request);
+      toast.success('Recepción registrada', 'El inventario físico y la Orden de Compra fueron actualizados.');
+      setRecepcionModalOpen(false);
+      setRecepcionPO(null);
+      await loadData();
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'No fue posible registrar la recepción.';
+      toast.error('Error de recepción', mensaje);
+    } finally {
+      setSavingRecepcion(false);
+    }
   };
 
   const handleRegistrarFactura = async () => {
@@ -178,11 +230,13 @@ export default function ComprasPage() {
     try {
       await comprasApi.registrarFactura(facturaForm);
       toast.success('Factura Registrada', `Comprobante ${facturaForm.numeroFactura} cargado al sistema.`);
-    } catch {
-      toast.success('Factura Registrada (Local)', `Comprobante ${facturaForm.numeroFactura} vinculado.`);
+      setFacturaModalOpen(false);
+      await loadData();
+    } catch (error) {
+      toast.error('Error al registrar factura', error instanceof Error ? error.message : 'No fue posible registrar la factura.');
+    } finally {
+      setSavingFactura(false);
     }
-    setSavingFactura(false);
-    setFacturaModalOpen(false);
   };
 
   const handleEjecutarMatch = async () => {
@@ -190,41 +244,20 @@ export default function ComprasPage() {
     try {
       const res = await comprasApi.ejecutarMatch(matchForm);
       setMatchResult(res);
-      setMatches(prev => [res, ...prev]);
+      setMatches(prev => [res, ...prev.filter(m => m.id !== res.id)]);
       if (res.resultado === 'Conforme') {
         toast.success('3-Way Match Conforme', 'Cotejo exitoso: orden autorizada para pago.');
       } else {
         toast.warning('3-Way Match Discrepante', 'Existe diferencia fuera de tolerancia entre PO y recepción.');
       }
-    } catch {
-      // mock calculation
-      const po = ordenesCompra.find(p => p.id === matchForm.ordenCompraId) || ordenesCompra[0];
-      const cantOrdenada = po ? po.items.reduce((a, b) => a + b.cantidad, 0) : 50;
-      const difCant = Math.abs(cantOrdenada - matchForm.cantidadRecibidaBodega);
-      const isConforme = difCant <= (cantOrdenada * (matchForm.toleranciaPorcentaje || 2) / 100);
-
-      const result: MatchTridireccional = {
-        id: crypto.randomUUID(),
-        ordenCompraId: matchForm.ordenCompraId,
-        resultado: isConforme ? 'Conforme' : 'Discrepante',
-        diferenciaCantidad: difCant,
-        diferenciaMonto: difCant * 45,
-        observaciones: isConforme
-          ? `Cotejo exitoso con tolerancia del ${matchForm.toleranciaPorcentaje}%. Orden autorizada para pago automático y asiento contable generado.`
-          : `Discrepancia de ${difCant} unidades entre PO y recepción física de bodega. Supera tolerancia de ${matchForm.toleranciaPorcentaje}%. Retenido.`,
-        fechaAuditoria: new Date().toISOString(),
-      };
-      setMatchResult(result);
-      setMatches(prev => [result, ...prev]);
-      if (isConforme) {
-        toast.success('3-Way Match Conforme (Local)', 'Cotejo validado con éxito.');
-      } else {
-        toast.warning('3-Way Match Discrepante (Local)', 'Discrepancia detectada en recepción.');
-      }
+    } catch (error) {
+      toast.error('Error en 3-Way Match', error instanceof Error ? error.message : 'No fue posible ejecutar el 3-Way Match.');
     } finally {
       setRunningMatch(false);
     }
   };
+
+  const proveedorSeleccionado = proveedores.find(p => p.id === poForm.proveedorId);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -276,6 +309,10 @@ export default function ComprasPage() {
           </button>
         </div>
       </div>
+
+      {errorCarga && (
+        <AlertBanner variant="danger" title="Compras no disponible" message={errorCarga} action={{ label: 'Reintentar', onClick: loadData }} />
+      )}
 
       {/* Attention List (Efferd Dashboard #6: Items requiring operational attention) */}
       {matches.some(m => m.resultado === 'Discrepante') && (
@@ -424,6 +461,28 @@ export default function ComprasPage() {
                     >
                       <Send size={12} />
                       Emitir a Proveedor
+                    </button>
+                  )}
+                  {(row.estado === 'Emitida' || row.estado === 'Recibida') && row.items.some(item => (item.cantidadRecibida ?? 0) < item.cantidad) && (
+                    <button
+                      onClick={() => abrirRecepcion(row)}
+                      disabled={loadingRecepcion}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                        padding: '0.3rem 0.6rem',
+                        borderRadius: '6px',
+                        border: '1px solid var(--green)',
+                        background: 'rgba(34, 197, 94, 0.08)',
+                        color: 'var(--green)',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        cursor: loadingRecepcion ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      <PackageCheck size={12} />
+                      Recibir mercadería
                     </button>
                   )}
                   <button
@@ -580,13 +639,23 @@ export default function ComprasPage() {
           >
             <div>
               <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                Proveedor
+                Proveedor del maestro corporativo
               </label>
-              <input
-                type="text"
-                value={poForm.proveedorNombre}
-                onChange={e => setPoForm(f => ({ ...f, proveedorNombre: e.target.value }))}
+              <select
+                value={poForm.proveedorId}
+                onChange={e => {
+                  const seleccionado = proveedores.find(p => p.id === e.target.value);
+                  setPoForm(f => ({
+                    ...f,
+                    proveedorId: seleccionado?.id ?? '',
+                    proveedorNombre: seleccionado?.razonSocial || seleccionado?.nombreComercial || '',
+                    terminosPago: seleccionado
+                      ? (seleccionado.plazoCreditoDias > 0 ? `Crédito ${seleccionado.plazoCreditoDias} días` : 'Contado')
+                      : f.terminosPago,
+                  }));
+                }}
                 required
+                disabled={loadingProveedores}
                 style={{
                   width: '100%',
                   padding: '0.5rem 0.75rem',
@@ -596,7 +665,26 @@ export default function ComprasPage() {
                   color: 'var(--text-primary)',
                   boxSizing: 'border-box',
                 }}
-              />
+              >
+                <option value="">{loadingProveedores ? 'Cargando proveedores…' : 'Seleccionar proveedor…'}</option>
+                {proveedores.map(proveedor => (
+                  <option key={proveedor.id} value={proveedor.id}>
+                    {proveedor.nombreComercial} — OTIF {proveedor.otifHistorico.toFixed(1)}%
+                  </option>
+                ))}
+              </select>
+              {proveedorSeleccionado && (
+                <div style={{ marginTop: 6, padding: '0.55rem 0.65rem', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  <strong style={{ color: 'var(--text-primary)' }}>{proveedorSeleccionado.razonSocial}</strong><br />
+                  OTIF {proveedorSeleccionado.otifHistorico.toFixed(1)}% · {proveedorSeleccionado.plazoCreditoDias > 0 ? `${proveedorSeleccionado.plazoCreditoDias} días de crédito` : 'Contado'}
+                  {proveedorSeleccionado.contactoPrincipal && <> · Contacto: {proveedorSeleccionado.contactoPrincipal}</>}
+                </div>
+              )}
+              {!loadingProveedores && proveedores.length === 0 && (
+                <div style={{ marginTop: 5, fontSize: '0.75rem', color: 'var(--red)' }}>
+                  No hay proveedores activos disponibles en core.proveedores.
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
@@ -617,7 +705,9 @@ export default function ComprasPage() {
                     boxSizing: 'border-box',
                   }}
                 >
+                  <option value="Crédito 15 días">Crédito 15 días</option>
                   <option value="Crédito 30 días">Crédito 30 días</option>
+                  <option value="Crédito 45 días">Crédito 45 días</option>
                   <option value="Crédito 60 días">Crédito 60 días</option>
                   <option value="Contado">Contado</option>
                 </select>
@@ -710,7 +800,7 @@ export default function ComprasPage() {
               </button>
               <button
                 type="submit"
-                disabled={savingPo}
+                disabled={savingPo || !poForm.proveedorId}
                 style={{
                   padding: '0.5rem 1.25rem',
                   borderRadius: '6px',
@@ -718,13 +808,170 @@ export default function ComprasPage() {
                   background: 'var(--accent)',
                   color: '#fff',
                   fontWeight: 600,
-                  cursor: savingPo ? 'not-allowed' : 'pointer',
+                  cursor: (savingPo || !poForm.proveedorId) ? 'not-allowed' : 'pointer',
                 }}
               >
                 {savingPo ? 'Guardando...' : 'Crear Orden'}
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* Modal Recepción Inbound */}
+      {recepcionModalOpen && recepcionPO && (
+        <Modal
+          title={`Recepción Inbound — ${recepcionPO.numeroPO}`}
+          isOpen={true}
+          onClose={() => {
+            if (!savingRecepcion) {
+              setRecepcionModalOpen(false);
+              setRecepcionPO(null);
+            }
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Registra únicamente las unidades físicamente recibidas y asigna una ubicación WMS para cada SKU.
+            </p>
+
+            {recepcionItems.map((linea, index) => {
+              const pendiente = linea.cantidadSolicitada - linea.cantidadRecibidaBase;
+              return (
+                <div
+                  key={linea.itemOrdenCompraId}
+                  style={{
+                    padding: '0.9rem',
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.65rem',
+                  }}
+                >
+                  <div>
+                    <strong style={{ color: 'var(--text-primary)' }}>{linea.sku || 'SKU'}</strong>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{linea.descripcion}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                      Solicitado: {linea.cantidadSolicitada} · Recibido: {linea.cantidadRecibidaBase} · Pendiente: {pendiente}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '0.75rem' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                        Cantidad recibida
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={pendiente}
+                        value={linea.cantidadRecibir}
+                        onChange={e => {
+                          const value = Math.max(0, Math.min(pendiente, parseInt(e.target.value) || 0));
+                          setRecepcionItems(prev => prev.map((item, i) => i === index ? { ...item, cantidadRecibir: value } : item));
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '0.5rem 0.65rem',
+                          borderRadius: '6px',
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border)',
+                          color: 'var(--text-primary)',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                        Ubicación WMS
+                      </label>
+                      <select
+                        value={linea.ubicacionAlmacenId}
+                        onChange={e => setRecepcionItems(prev => prev.map((item, i) => i === index ? { ...item, ubicacionAlmacenId: e.target.value } : item))}
+                        style={{
+                          width: '100%',
+                          padding: '0.5rem 0.65rem',
+                          borderRadius: '6px',
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border)',
+                          color: 'var(--text-primary)',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        <option value="">Seleccionar ubicación...</option>
+                        {ubicacionesWms.map(ubicacion => (
+                          <option key={ubicacion.id} value={ubicacion.id}>
+                            {ubicacion.codigo} — {ubicacion.zona} (cap. {ubicacion.capacidadMaxima})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                Notas de recepción
+              </label>
+              <textarea
+                value={recepcionNotas}
+                onChange={e => setRecepcionNotas(e.target.value)}
+                rows={3}
+                placeholder="Opcional"
+                style={{
+                  width: '100%',
+                  padding: '0.55rem 0.75rem',
+                  borderRadius: '6px',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-primary)',
+                  boxSizing: 'border-box',
+                  resize: 'vertical',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                type="button"
+                disabled={savingRecepcion}
+                onClick={() => {
+                  setRecepcionModalOpen(false);
+                  setRecepcionPO(null);
+                }}
+                style={{
+                  padding: '0.5rem 1rem',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border)',
+                  background: 'transparent',
+                  color: 'var(--text-secondary)',
+                  cursor: savingRecepcion ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={savingRecepcion}
+                onClick={handleRecibirMercaderia}
+                style={{
+                  padding: '0.5rem 1.2rem',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: 'var(--green)',
+                  color: '#fff',
+                  fontWeight: 600,
+                  cursor: savingRecepcion ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {savingRecepcion ? 'Registrando...' : 'Confirmar recepción'}
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
 

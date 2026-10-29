@@ -39,13 +39,13 @@ public class StockServiceMockTests
     }
 
     [Fact]
-    public async Task ConfirmarDespachoAsync_DebeCompletarSinExcepcion()
+    public async Task ConfirmarReservaAsync_DebeCompletarSinConsumirReserva()
     {
         // Arrange
         var reserva = await _sut.ReservarStockAsync(Guid.NewGuid(), 1, Guid.NewGuid());
 
         // Act
-        var act = async () => await _sut.ConfirmarDespachoAsync(reserva.ReservaId);
+        var act = async () => await _sut.ConfirmarReservaAsync(reserva.ReservaId);
 
         // Assert
         await act.Should().NotThrowAsync();

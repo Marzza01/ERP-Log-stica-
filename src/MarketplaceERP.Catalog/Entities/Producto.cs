@@ -3,6 +3,9 @@
  * Todos los derechos reservados © 2026
  */
 
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
+
 namespace MarketplaceERP.Catalog.Entities;
 
 /// <summary>
@@ -86,8 +89,31 @@ public class Producto
     public DateTime? FechaPublicacion { get; set; }
 
     // Navegación dentro del esquema catalog
-    public StockFisico? Stock { get; set; }
+    // Un producto puede tener varios saldos, uno por ubicación WMS.
+    [JsonIgnore]
+    public ICollection<StockFisico> Stocks { get; set; } = new List<StockFisico>();
+
+    /// <summary>
+    /// Compatibilidad temporal con el contrato frontend previo a Fase 4A.
+    /// Devuelve el primer saldo cargado. No representa el total multiubicación.
+    /// Los endpoints operativos migrarán a DTOs agregados en las siguientes fases.
+    /// </summary>
+    [NotMapped]
+    public StockFisico? Stock
+    {
+        get => Stocks.FirstOrDefault();
+        set
+        {
+            Stocks.Clear();
+            if (value is not null)
+            {
+                Stocks.Add(value);
+            }
+        }
+    }
+
     public ICollection<ReservaStock> Reservas { get; set; } = new List<ReservaStock>();
     public ICollection<DevolucionRMA> Devoluciones { get; set; } = new List<DevolucionRMA>();
     public ICollection<MovimientoMWIP> MovimientosMWIP { get; set; } = new List<MovimientoMWIP>();
+    public ICollection<MovimientoInventario> MovimientosInventario { get; set; } = new List<MovimientoInventario>();
 }

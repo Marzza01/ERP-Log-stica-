@@ -3,20 +3,27 @@
  * Todos los derechos reservados © 2026
  */
 
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
+using MarketplaceERP.Core.Data;
+using MarketplaceERP.Core.Entities;
 using MarketplaceERP.Shared.Settings;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 
 namespace MarketplaceERP.API.Controllers;
 
 /// <summary>
-/// Request de login compatible con Username o Email.
+/// Request de login solo por Email.
 /// </summary>
-public record LoginRequest(string? Username, string? Password, string? Email = null);
+public record LoginRequest(string? Email, string? Password, string? Username = null);
 
 /// <summary>
 /// Response de login exitoso con soporte de campos duales para frontend.
@@ -25,83 +32,103 @@ public record LoginResponse(string Token, string Role, DateTime ExpiresAt, strin
 
 /// <summary>
 /// Controlador de autenticación JWT.
-/// POST /api/auth/login → genera un JWT firmado con la clave de appsettings.json
+/// POST /api/auth/login → valida contra core.usuarios mediante PasswordHasher y retorna JWT firmado.
 /// </summary>
 [ApiController]
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
-    /// <summary>
-    /// Usuarios de prueba en memoria para desarrollo.
-    /// </summary>
-    private static readonly Dictionary<string, (string Hash, string Role, string Nombre)> _usuarios = new()
-    {
-        ["admin"]             = ("admin1234", "Admin", "Administrador"),
-        ["admin123"]          = ("admin123",  "Admin", "Administrador"),
-        ["admin@logimkt.com"] = ("admin1234", "Admin", "Gerson Melgar (Admin)"),
-        ["vendedor1"]         = ("pass",      "Vendedor", "Vendedor Principal"),
-        ["comprador1"]        = ("pass",      "Comprador", "Comprador Demo"),
-    };
-
+    private readonly CoreDbContext _coreDb;
     private readonly JwtSettings _jwtSettings;
     private readonly ILogger<AuthController> _logger;
+    private readonly PasswordHasher<Usuario> _passwordHasher;
+    private static readonly Usuario _dummyUsuario = new() { Email = "dummy@security.internal" };
+    private static readonly string _dummyHash = new PasswordHasher<Usuario>().HashPassword(_dummyUsuario, "DummySecurityHashValue2026!");
 
     public AuthController(
+        CoreDbContext coreDb,
         IOptions<JwtSettings> jwtOptions,
         ILogger<AuthController> logger)
     {
+        _coreDb = coreDb;
         _jwtSettings = jwtOptions.Value;
         _logger = logger;
+        _passwordHasher = new PasswordHasher<Usuario>();
     }
 
     /// <summary>
-    /// Autentica un usuario y retorna un JWT Bearer token.
+    /// Autentica un usuario solo por Email normalizado en minúsculas y retorna un JWT Bearer token.
+    /// Rate limit aplicado: 5 intentos por minuto por IP (retorna 429).
+    /// Prevención de timing attack: si el usuario no existe, se ejecuta VerifyHashedPassword contra un dummy hash.
+    /// Registro en logs: se usa email enmascarado para evitar fugar inputs sensibles.
     /// </summary>
-    /// <param name="request">Credenciales del usuario.</param>
-    /// <returns>Token JWT con el rol del usuario.</returns>
+    [AllowAnonymous]
+    [EnableRateLimiting("LoginLimiter")]
     [HttpPost("login")]
     [ProducesResponseType(typeof(LoginResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public IActionResult Login([FromBody] LoginRequest request)
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
-        var loginId = !string.IsNullOrWhiteSpace(request.Username)
-            ? request.Username
-            : request.Email;
+        var rawEmail = !string.IsNullOrWhiteSpace(request.Email)
+            ? request.Email
+            : request.Username;
 
-        if (string.IsNullOrWhiteSpace(loginId) || string.IsNullOrWhiteSpace(request.Password))
-            return BadRequest(new { mensaje = "Usuario/correo y contraseña son obligatorios." });
+        if (string.IsNullOrWhiteSpace(rawEmail) || string.IsNullOrWhiteSpace(request.Password))
+            return BadRequest(new { mensaje = "El correo electrónico y la contraseña son obligatorios." });
 
-        if (!_usuarios.TryGetValue(loginId.ToLower().Trim(), out var userData) ||
-            userData.Hash != request.Password)
+        var normalizedEmail = rawEmail.Trim().ToLowerInvariant();
+        var maskedEmail = MaskEmail(normalizedEmail);
+
+        // Buscar usuario estrictamente por Email normalizado en minúsculas
+        var usuario = await _coreDb.Usuarios
+            .FirstOrDefaultAsync(u => u.Email == normalizedEmail, cancellationToken);
+
+        if (usuario is null || !usuario.Activo)
         {
-            _logger.LogWarning("Intento de login fallido para: {LoginId}", loginId);
+            // Ejecutar dummy check para mitigar timing attack (tiempos constantes)
+            _passwordHasher.VerifyHashedPassword(_dummyUsuario, _dummyHash, request.Password);
+            _logger.LogWarning("Intento de login fallido para cuenta: {MaskedEmail}", maskedEmail);
             return Unauthorized(new { mensaje = "Credenciales inválidas." });
         }
 
-        var token = GenerarToken(loginId, userData.Role);
+        var verificationResult = _passwordHasher.VerifyHashedPassword(usuario, usuario.PasswordHash, request.Password);
+        if (verificationResult == PasswordVerificationResult.Failed)
+        {
+            _logger.LogWarning("Intento de login fallido para cuenta: {MaskedEmail}", maskedEmail);
+            return Unauthorized(new { mensaje = "Credenciales inválidas." });
+        }
+
+        var token = GenerarToken(usuario);
         var expiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpirationMinutes);
 
-        _logger.LogInformation(
-            "Login exitoso. Usuario={LoginId}, Rol={Role}", loginId, userData.Role);
+        _logger.LogInformation("Login exitoso. Usuario={UsuarioId}, Rol={Role}", usuario.Id, usuario.Rol);
 
-        return Ok(new LoginResponse(token, userData.Role, expiresAt, userData.Nombre, userData.Role));
+        return Ok(new LoginResponse(token, usuario.Rol, expiresAt, usuario.Nombre, usuario.Rol));
     }
 
-    private string GenerarToken(string username, string role)
+    private string GenerarToken(Usuario usuario)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-        var claims = new[]
+        var claims = new List<Claim>
         {
-            new Claim(JwtRegisteredClaimNames.Sub, username),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new Claim(ClaimTypes.Name, username),
-            new Claim(ClaimTypes.Role, role),
-            new Claim(JwtRegisteredClaimNames.Iat,
+            new(JwtRegisteredClaimNames.Sub, usuario.Id.ToString()),
+            new(ClaimTypes.NameIdentifier, usuario.Id.ToString()),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(ClaimTypes.Name, usuario.Email),
+            new(ClaimTypes.Role, usuario.Rol),
+            new(JwtRegisteredClaimNames.Iat,
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
                 ClaimValueTypes.Integer64)
         };
+
+        if (usuario.VendedorId.HasValue && usuario.Rol.Equals("Vendedor", StringComparison.OrdinalIgnoreCase))
+        {
+            claims.Add(new Claim("VendedorId", usuario.VendedorId.Value.ToString()));
+        }
 
         var token = new JwtSecurityToken(
             issuer: _jwtSettings.Issuer,
@@ -111,5 +138,18 @@ public class AuthController : ControllerBase
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    private static string MaskEmail(string email)
+    {
+        var parts = email.Split('@');
+        if (parts.Length != 2 || string.IsNullOrEmpty(parts[0]))
+        {
+            return "***@***";
+        }
+        var name = parts[0];
+        var domain = parts[1];
+        var maskedName = name.Length <= 2 ? name[0] + "***" : name[..2] + new string('*', Math.Max(1, name.Length - 2));
+        return $"{maskedName}@{domain}";
     }
 }

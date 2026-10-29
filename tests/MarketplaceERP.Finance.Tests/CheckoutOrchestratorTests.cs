@@ -50,7 +50,7 @@ public class CheckoutOrchestratorTests
         mockComision.Setup(c => c.CalcularComisionAsync(It.IsAny<Guid>(), It.IsAny<decimal>()))
             .ReturnsAsync(10m); // 10% de comisión sobre 100
 
-        mockStock.Setup(s => s.ConfirmarDespachoAsync(reservaId))
+        mockStock.Setup(s => s.ConfirmarReservaAsync(reservaId))
             .Returns(Task.CompletedTask);
 
         using var dbContext = CrearDbContextEnMemoria();
@@ -83,6 +83,10 @@ public class CheckoutOrchestratorTests
         split.Should().NotBeNull();
         split!.MontoVendedor.Should().Be(90m);
         split.MontoMarketplace.Should().Be(10m);
+
+        // El checkout solo confirma la reserva; no representa un despacho físico.
+        mockStock.Verify(s => s.ConfirmarReservaAsync(reservaId), Times.Once);
+        mockStock.Verify(s => s.LiberarStockAsync(It.IsAny<Guid>()), Times.Never);
     }
 
     [Fact]

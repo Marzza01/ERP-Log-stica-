@@ -9,8 +9,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Permite que el proyecto de tests acceda a clases internas (ej: StockServiceMock) -->
+    <!-- Permite que los proyectos de tests validen las implementaciones internas de Catalog. -->
     <InternalsVisibleTo Include="MarketplaceERP.Catalog.Tests" />
+    <InternalsVisibleTo Include="MarketplaceERP.Finance.Tests" />
   </ItemGroup>
 
 

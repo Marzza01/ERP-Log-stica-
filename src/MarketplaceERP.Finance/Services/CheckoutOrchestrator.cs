@@ -9,6 +9,7 @@ using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Shared.DTOs;
 using MarketplaceERP.Shared.Exceptions;
 using Microsoft.Extensions.Logging;
+using Microsoft.EntityFrameworkCore;
 
 namespace MarketplaceERP.Finance.Services;
 
@@ -41,13 +42,13 @@ public record CheckoutResult(
 ///
 /// Flujo Saga:
 /// 1. ReservarStock   → Falla: lanza StockInsuficienteException (sin compensación)
-/// 2. ProcesarPago    → Falla: LiberarStock (compensación) + lanza PagoFallidoException
+/// 2. ProcesarPago    → Rechazo confirmado: liberar reserva; resultado incierto: conservarla.
 /// 3. CalcularComision
 /// 4. Guardar SplitPago (90% vendedor / 10% marketplace)
-/// 5. ConfirmarDespacho
+/// 5. ConfirmarReserva
 /// 6. Retornar CheckoutResult
 /// </summary>
-internal sealed class CheckoutOrchestrator
+public sealed class CheckoutOrchestrator
 {
     private readonly IStockService _stockService;
     private readonly ICommissionService _commissionService;
@@ -82,6 +83,12 @@ internal sealed class CheckoutOrchestrator
             "Iniciando Checkout Saga. OrdenId={OrdenId}, Monto={Monto:C} {Moneda}",
             command.OrdenId, command.MontoTotal, command.Moneda);
 
+        // No reintentar cobros de una misma orden aunque invoquen directamente
+        // al orquestador: consultar primero la huella durable.
+        if (await _dbContext.IntentosPago.AnyAsync(i => i.OrdenId == command.OrdenId))
+            throw new PagoResultadoInciertoException(command.OrdenId,
+                "Existe un intento de pago previo; consultar su estado antes de otro cobro.");
+
         // ── PASO 1: Reservar Stock ────────────────────────────────────────────
         // Si falla: no había nada que revertir → lanzar directamente
         _logger.LogDebug("Saga Paso 1: ReservarStock. ProductoId={ProductoId}", command.ProductoId);
@@ -104,6 +111,54 @@ internal sealed class CheckoutOrchestrator
         var reservaId = reservaResult.ReservaId;
         _logger.LogDebug("Saga Paso 1 OK. ReservaId={ReservaId}", reservaId);
 
+        // El registro es obligatorio ANTES de invocar a la pasarela. Si falla
+        // la escritura, no se envía cobro y se libera la reserva recién creada.
+        var intento = new IntentoPago
+        {
+            Id = Guid.NewGuid(),
+            OrdenId = command.OrdenId,
+            ReservaId = reservaId,
+            ReferenciaOperacion = $"PAY-{command.OrdenId:N}",
+            Monto = command.MontoTotal,
+            Moneda = command.Moneda,
+            Estado = EstadoIntentoPago.Preparado
+        };
+        try
+        {
+            _dbContext.IntentosPago.Add(intento);
+            await _dbContext.SaveChangesAsync();
+            intento.Estado = EstadoIntentoPago.Enviado;
+            intento.ActualizadoUtc = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "No fue posible registrar intento de pago para OrdenId={OrdenId}", command.OrdenId);
+            try { await _stockService.LiberarStockAsync(reservaId); }
+            catch (Exception liberarEx)
+            {
+                _logger.LogError(liberarEx, "No fue posible liberar reserva al fallar registro del intento. OrdenId={OrdenId}", command.OrdenId);
+            }
+            throw new PagoResultadoInciertoException(command.OrdenId,
+                "El intento no pudo registrarse correctamente; es necesario revisar la reserva antes de continuar.", ex);
+        }
+
+        // Carrera segura con expiración administrativa I3: si la orden se
+        // canceló mientras se preparaba la reserva o el intento durable, nunca
+        // llamar al proveedor. La expiración toma FOR UPDATE en finance.ordenes
+        // y la inserción de intentos toma KEY SHARE por su FK; ambas se serializan.
+        var estadoActual = await _dbContext.Ordenes.AsNoTracking()
+            .Where(o => o.Id == command.OrdenId)
+            .Select(o => (EstadoOrden?)o.Estado)
+            .SingleOrDefaultAsync();
+        if (estadoActual == EstadoOrden.Cancelada)
+        {
+            await CambiarEstadoAsync(intento, EstadoIntentoPago.Rechazado);
+            await _stockService.LiberarStockAsync(reservaId);
+            throw new PagoFallidoException(command.OrdenId,
+                "La orden fue cancelada antes del envío a la pasarela.");
+        }
+
         // ── PASO 2: Procesar Pago ─────────────────────────────────────────────
         // Si falla: LiberarStock (compensación) → loggear → lanzar PagoFallidoException
         _logger.LogDebug("Saga Paso 2: ProcesarPago. OrdenId={OrdenId}", command.OrdenId);
@@ -112,7 +167,8 @@ internal sealed class CheckoutOrchestrator
             OrdenId: command.OrdenId,
             CompradorId: command.CompradorId,
             MontoTotal: command.MontoTotal,
-            Moneda: command.Moneda);
+            Moneda: command.Moneda,
+            ClaveIdempotencia: intento.ReferenciaOperacion);
 
         PagoResult pagoResult;
         try
@@ -121,13 +177,18 @@ internal sealed class CheckoutOrchestrator
         }
         catch (Exception ex)
         {
-            // Error inesperado en la pasarela → compensar reserva
+            // Una excepción de red NO equivale a un rechazo. Es posible que la
+            // pasarela haya cobrado y perdido la respuesta. Conservar la reserva
+            // hasta consultar el resultado; liberarla podría causar sobreventa.
             _logger.LogError(ex,
-                "Saga Paso 2 EXCEPCIÓN: Error inesperado en pasarela de pagos. Liberando reserva {ReservaId}.",
-                reservaId);
+                "Saga Paso 2 INCIERTO: orden {OrdenId}, reserva {ReservaId}. No liberar sin conciliación.",
+                command.OrdenId, reservaId);
 
-            await _stockService.LiberarStockAsync(reservaId);
-            throw new PagoFallidoException(command.OrdenId, ex.Message);
+            await MarcarInciertoSinOcultarErrorAsync(intento, EstadoIntentoPago.Incierto);
+            throw new PagoResultadoInciertoException(
+                command.OrdenId,
+                "La pasarela no confirmó el resultado del pago; requiere conciliación.",
+                ex);
         }
 
         if (!pagoResult.Exitoso)
@@ -136,6 +197,15 @@ internal sealed class CheckoutOrchestrator
                 "Saga Paso 2 FALLIDO: Pago rechazado. OrdenId={OrdenId}, Error={Error}. Compensando stock ReservaId={ReservaId}.",
                 command.OrdenId, pagoResult.MensajeError, reservaId);
 
+            // Documentar rechazo confirmado antes de liberar inventario.
+            // Si falla DB no se libera: el registro queda Enviado para investigar.
+            try { await CambiarEstadoAsync(intento, EstadoIntentoPago.Rechazado); }
+            catch (Exception ex)
+            {
+                throw new PagoResultadoInciertoException(command.OrdenId,
+                    "No se pudo persistir el rechazo; requiere revisión antes de liberar la reserva.", ex);
+            }
+
             // COMPENSACIÓN: liberar el stock reservado
             await _stockService.LiberarStockAsync(reservaId);
 
@@ -143,64 +213,125 @@ internal sealed class CheckoutOrchestrator
             throw new PagoFallidoException(command.OrdenId, pagoResult.MensajeError);
         }
 
+        if (string.IsNullOrWhiteSpace(pagoResult.TransaccionId))
+        {
+            _logger.LogError(
+                "Saga Paso 2 INCIERTO: la pasarela informó éxito sin TransaccionId. OrdenId={OrdenId}",
+                command.OrdenId);
+            await MarcarInciertoSinOcultarErrorAsync(intento, EstadoIntentoPago.Incierto);
+            throw new PagoResultadoInciertoException(
+                command.OrdenId,
+                "El pago podría estar aprobado, pero no existe identificador de transacción para conciliar.");
+        }
+
+        // Antes de ejecutar comisión o confirmar inventario, guardar el
+        // identificador de transacción devuelto. Una caída posterior podrá
+        // reconstruir el estado a partir de finance.intentos_pago.
+        intento.TransaccionId = pagoResult.TransaccionId;
+        try { await CambiarEstadoAsync(intento, EstadoIntentoPago.Aprobado); }
+        catch (Exception ex)
+        {
+            throw new PagoResultadoInciertoException(command.OrdenId,
+                "Pago aparentemente aprobado pero sin confirmación durable; requiere conciliación.", ex);
+        }
+
         _logger.LogDebug(
             "Saga Paso 2 OK. TransaccionId={TransaccionId}", pagoResult.TransaccionId);
 
-        // ── PASO 3: Calcular Comisión ─────────────────────────────────────────
-        _logger.LogDebug("Saga Paso 3: CalcularComision. VendedorId={VendedorId}", command.VendedorId);
-
-        var montoComision = await _commissionService.CalcularComisionAsync(
-            command.VendedorId,
-            command.MontoTotal);
-
-        var montoVendedor = Math.Round(command.MontoTotal - montoComision, 2);
-        var montoMarketplace = Math.Round(montoComision, 2);
-        var porcentajeVendedor = command.MontoTotal > 0
-            ? Math.Round((montoVendedor / command.MontoTotal) * 100, 2)
-            : 90m;
-        var porcentajeMarketplace = 100m - porcentajeVendedor;
-
-        _logger.LogDebug(
-            "Saga Paso 3 OK. MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
-            montoVendedor, montoMarketplace);
-
-        // ── PASO 4: Guardar SplitPago en DB ──────────────────────────────────
-        _logger.LogDebug("Saga Paso 4: Guardando SplitPago en DB.");
-
-        var splitPago = new SplitPago
+        // El pago ya pudo haberse efectuado. Cualquier excepción posterior es
+        // INCIERTA: no liberar stock ni reintentar el cobro de forma automática.
+        try
         {
-            Id = Guid.NewGuid(),
-            OrdenId = command.OrdenId,
-            MontoTotal = command.MontoTotal,
-            PorcentajeVendedor = porcentajeVendedor,
-            MontoVendedor = montoVendedor,
-            PorcentajeMarketplace = porcentajeMarketplace,
-            MontoMarketplace = montoMarketplace,
-            TransaccionId = pagoResult.TransaccionId!,
-            FechaProcesado = DateTime.UtcNow
-        };
+            // ── PASO 3: Calcular Comisión ─────────────────────────────────────────
+            _logger.LogDebug("Saga Paso 3: CalcularComision. VendedorId={VendedorId}", command.VendedorId);
 
-        _dbContext.SplitsPago.Add(splitPago);
+            var montoComision = await _commissionService.CalcularComisionAsync(
+                command.VendedorId,
+                command.MontoTotal);
+
+            var montoVendedor = Math.Round(command.MontoTotal - montoComision, 2);
+            var montoMarketplace = Math.Round(montoComision, 2);
+            var porcentajeVendedor = command.MontoTotal > 0
+                ? Math.Round((montoVendedor / command.MontoTotal) * 100, 2)
+                : 90m;
+            var porcentajeMarketplace = 100m - porcentajeVendedor;
+
+            _logger.LogDebug(
+                "Saga Paso 3 OK. MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
+                montoVendedor, montoMarketplace);
+
+            // ── PASO 4: Guardar SplitPago en DB ──────────────────────────────────
+            _logger.LogDebug("Saga Paso 4: Guardando SplitPago en DB.");
+
+            var splitPago = new SplitPago
+            {
+                Id = Guid.NewGuid(),
+                OrdenId = command.OrdenId,
+                MontoTotal = command.MontoTotal,
+                PorcentajeVendedor = porcentajeVendedor,
+                MontoVendedor = montoVendedor,
+                PorcentajeMarketplace = porcentajeMarketplace,
+                MontoMarketplace = montoMarketplace,
+                TransaccionId = pagoResult.TransaccionId!,
+                FechaProcesado = DateTime.UtcNow
+            };
+
+            _dbContext.SplitsPago.Add(splitPago);
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogDebug("Saga Paso 4 OK. SplitPagoId={SplitPagoId}", splitPago.Id);
+
+            // ── PASO 5: Confirmar Reserva ─────────────────────────────────────────
+            _logger.LogDebug("Saga Paso 5: ConfirmarReserva. ReservaId={ReservaId}", reservaId);
+
+            await _stockService.ConfirmarReservaAsync(reservaId);
+
+            _logger.LogInformation(
+                "Checkout Saga COMPLETADO. OrdenId={OrdenId}, TransaccionId={TransaccionId}, " +
+                "MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
+                command.OrdenId, pagoResult.TransaccionId, montoVendedor, montoMarketplace);
+
+            await CambiarEstadoAsync(intento, EstadoIntentoPago.Completado);
+
+            // ── PASO 6: Retornar resultado exitoso ────────────────────────────────
+            return new CheckoutResult(
+                OrdenId: command.OrdenId,
+                TransaccionId: pagoResult.TransaccionId!,
+                MontoVendedor: montoVendedor,
+                MontoMarketplace: montoMarketplace
+            );
+        }
+        catch (Exception ex)
+        {
+            // No dar la compra por cancelada si el pago se efectuó. El próximo
+            // bloque incorporará un registro durable y reembolso idempotente.
+            _logger.LogError(ex,
+                "Saga POST-COBRO INCIERTA: OrdenId={OrdenId}, TransaccionId={TransaccionId}. Requiere conciliación.",
+                command.OrdenId, pagoResult.TransaccionId);
+            await MarcarInciertoSinOcultarErrorAsync(intento, EstadoIntentoPago.RequiereConciliacion);
+            throw new PagoResultadoInciertoException(
+                command.OrdenId,
+                "El pago fue aceptado, pero el Checkout no pudo completarse; requiere conciliación.",
+                ex);
+        }
+    }
+
+    private async Task CambiarEstadoAsync(IntentoPago intento, EstadoIntentoPago estado)
+    {
+        intento.Estado = estado;
+        intento.ActualizadoUtc = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync();
+    }
 
-        _logger.LogDebug("Saga Paso 4 OK. SplitPagoId={SplitPagoId}", splitPago.Id);
-
-        // ── PASO 5: Confirmar Despacho ────────────────────────────────────────
-        _logger.LogDebug("Saga Paso 5: ConfirmarDespacho. ReservaId={ReservaId}", reservaId);
-
-        await _stockService.ConfirmarDespachoAsync(reservaId);
-
-        _logger.LogInformation(
-            "Checkout Saga COMPLETADO. OrdenId={OrdenId}, TransaccionId={TransaccionId}, " +
-            "MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
-            command.OrdenId, pagoResult.TransaccionId, montoVendedor, montoMarketplace);
-
-        // ── PASO 6: Retornar resultado exitoso ────────────────────────────────
-        return new CheckoutResult(
-            OrdenId: command.OrdenId,
-            TransaccionId: pagoResult.TransaccionId!,
-            MontoVendedor: montoVendedor,
-            MontoMarketplace: montoMarketplace
-        );
+    private async Task MarcarInciertoSinOcultarErrorAsync(IntentoPago intento, EstadoIntentoPago estado)
+    {
+        try { await CambiarEstadoAsync(intento, estado); }
+        catch (Exception persistenciaEx)
+        {
+            // El último estado durable (Enviado/Aprobado) conserva la señal de
+            // incertidumbre. NO reintentar el cobro ni liberar la reserva.
+            _logger.LogError(persistenciaEx,
+                "No se pudo actualizar el intento de pago incierto. OrdenId={OrdenId}", intento.OrdenId);
+        }
     }
 }

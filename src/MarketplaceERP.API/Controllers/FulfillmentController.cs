@@ -8,6 +8,7 @@ using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace MarketplaceERP.API.Controllers;
@@ -17,6 +18,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Conecta el WMS (Célula A) con el OMS (Célula B).
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin,Vendedor")]
 [Route("api/fulfillment")]
 [Produces("application/json")]
 public class FulfillmentController : ControllerBase
@@ -146,26 +148,38 @@ public class FulfillmentController : ControllerBase
     [HttpPost("paquetes/{paqueteId:guid}/despachar")]
     public async Task<IActionResult> DespacharPaquete(Guid paqueteId, CancellationToken cancellationToken)
     {
-        var paquete = await _fulfillmentService.DespacharPaqueteAsync(paqueteId, cancellationToken);
-        if (paquete is null)
-            return NotFound(new { mensaje = "Paquete no encontrado." });
-
-        var orden = await _financeDb.Ordenes.FirstOrDefaultAsync(o => o.Id == paquete.OrdenId, cancellationToken);
-        if (orden != null)
+        try
         {
-            orden.Estado = EstadoOrden.Enviada;
-            orden.FechaEnvio = DateTime.UtcNow;
-            await _financeDb.SaveChangesAsync(cancellationToken);
+            var paquete = await _fulfillmentService.DespacharPaqueteAsync(paqueteId, cancellationToken);
+            if (paquete is null)
+                return NotFound(new { mensaje = "Paquete no encontrado." });
+
+            var orden = await _financeDb.Ordenes.FirstOrDefaultAsync(o => o.Id == paquete.OrdenId, cancellationToken);
+            if (orden != null && orden.Estado != EstadoOrden.Enviada)
+            {
+                orden.Estado = EstadoOrden.Enviada;
+                orden.FechaEnvio ??= DateTime.UtcNow;
+                await _financeDb.SaveChangesAsync(cancellationToken);
+            }
+
+            return Ok(new
+            {
+                mensaje = "Paquete despachado con éxito.",
+                paquete.NumeroGuia,
+                paquete.Transportista,
+                paquete.FechaDespacho,
+                EstadoPacking = paquete.Estado.ToString(),
+                EstadoOrden = orden?.Estado.ToString()
+            });
         }
-
-        return Ok(new
+        catch (InvalidOperationException ex)
         {
-            mensaje = "Paquete despachado con éxito.",
-            paquete.NumeroGuia,
-            paquete.Transportista,
-            paquete.FechaDespacho,
-            EstadoOrden = orden?.Estado.ToString()
-        });
+            return Conflict(new
+            {
+                mensaje = ex.Message,
+                codigo = "DESPACHO_INVALIDO"
+            });
+        }
     }
 
     /// <summary>

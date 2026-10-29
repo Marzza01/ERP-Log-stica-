@@ -49,7 +49,7 @@ public class CatalogLogisticsTests
         result.Exitosos.Should().Be(2);
         result.Errores.Should().Be(0);
 
-        var producto = await dbContext.Productos.Include(p => p.Stock).FirstOrDefaultAsync(p => p.Sku == "ELC-0001");
+        var producto = await dbContext.Productos.Include(p => p.Stocks).FirstOrDefaultAsync(p => p.Sku == "ELC-0001");
         producto.Should().NotBeNull();
         producto!.Nombre.Should().Be("Smartphone Pro 128GB");
         producto.CategoriaNombre.Should().Be("Electrónica y Tecnología");
@@ -89,7 +89,8 @@ public class CatalogLogisticsTests
         dbContext.UbicacionesAlmacen.AddRange(u1, u2);
         await dbContext.SaveChangesAsync();
 
-        var wmsService = new WmsService(dbContext, NullLogger<WmsService>.Instance);
+        var inventoryService = new InventoryService(dbContext, NullLogger<InventoryService>.Instance);
+        var wmsService = new WmsService(dbContext, inventoryService, NullLogger<WmsService>.Instance);
 
         // Act
         var resumen = await wmsService.ObtenerMapaBodegaAsync();
@@ -104,7 +105,7 @@ public class CatalogLogisticsTests
     }
 
     [Fact]
-    public async Task WmsService_ReubicarStock_ActualizaUbicacionCorrectamente()
+    public async Task WmsService_ReubicarStock_TransfiereSaldoCompletoCorrectamente()
     {
         // Arrange
         using var dbContext = CreateInMemoryDbContext();
@@ -140,16 +141,25 @@ public class CatalogLogisticsTests
         dbContext.StockFisico.Add(stock);
         await dbContext.SaveChangesAsync();
 
-        var wmsService = new WmsService(dbContext, NullLogger<WmsService>.Instance);
+        var inventoryService = new InventoryService(dbContext, NullLogger<InventoryService>.Instance);
+        var wmsService = new WmsService(dbContext, inventoryService, NullLogger<WmsService>.Instance);
 
         // Act
         var result = await wmsService.ReubicarStockAsync(stock.Id, uDestino.Id);
 
         // Assert
         result.Should().BeTrue();
-        var stockActualizado = await dbContext.StockFisico.FindAsync(stock.Id);
-        stockActualizado!.UbicacionAlmacenId.Should().Be(uDestino.Id);
-        stockActualizado.UbicacionCodigo.Should().Be(uDestino.Codigo);
+        var stockOrigenActualizado = await dbContext.StockFisico.FindAsync(stock.Id);
+        stockOrigenActualizado!.UbicacionAlmacenId.Should().Be(uOrigen.Id);
+        stockOrigenActualizado.CantidadTotal.Should().Be(0);
+
+        var stockDestino = await dbContext.StockFisico
+            .SingleAsync(s => s.ProductoId == stock.ProductoId && s.UbicacionAlmacenId == uDestino.Id);
+        stockDestino.CantidadTotal.Should().Be(30);
+        stockDestino.UbicacionCodigo.Should().Be(uDestino.Codigo);
+
+        var origenActualizado = await dbContext.UbicacionesAlmacen.FindAsync(uOrigen.Id);
+        origenActualizado!.EstaOcupada.Should().BeFalse();
 
         var destinoActualizado = await dbContext.UbicacionesAlmacen.FindAsync(uDestino.Id);
         destinoActualizado!.EstaOcupada.Should().BeTrue();
@@ -160,6 +170,18 @@ public class CatalogLogisticsTests
     {
         // Arrange
         using var dbContext = CreateInMemoryDbContext();
+        var ubicacion = new UbicacionAlmacen
+        {
+            Id = Guid.NewGuid(),
+            Codigo = "PAS-RMA-RCK-01-NIV-01-POS-01",
+            Pasillo = "RMA",
+            Rack = "01",
+            Nivel = 1,
+            Posicion = "01",
+            CapacidadMaxima = 100,
+            EstaOcupada = true,
+            Zona = "RMA"
+        };
         var producto = new Producto
         {
             Id = Guid.NewGuid(),
@@ -169,13 +191,18 @@ public class CatalogLogisticsTests
             {
                 Id = Guid.NewGuid(),
                 CantidadTotal = 50,
-                CantidadReservada = 0
+                CantidadReservada = 0,
+                CantidadBloqueada = 0,
+                UbicacionAlmacenId = ubicacion.Id,
+                UbicacionCodigo = ubicacion.Codigo
             }
         };
+        dbContext.UbicacionesAlmacen.Add(ubicacion);
         dbContext.Productos.Add(producto);
         await dbContext.SaveChangesAsync();
 
-        var rmaService = new RmaService(dbContext, NullLogger<RmaService>.Instance);
+        var inventoryService = new InventoryService(dbContext, NullLogger<InventoryService>.Instance);
+        var rmaService = new RmaService(dbContext, inventoryService, NullLogger<RmaService>.Instance);
 
         var rma = await rmaService.RegistrarSolicitudRmaAsync(new RegistrarRmaRequest(
             OrdenId: Guid.NewGuid(),
@@ -188,7 +215,9 @@ public class CatalogLogisticsTests
         var dictamen = new DictaminarRmaRequest(
             Clasificacion: ClasificacionRMA.ReStock,
             Inspector: "Técnico Juan Pérez",
-            DictamenTecnico: "Sellado intacto, producto operativo al 100%."
+            DictamenTecnico: "Sellado intacto, producto operativo al 100%.",
+            UbicacionDestinoId: ubicacion.Id,
+            OperacionId: Guid.NewGuid()
         );
         var rmaDictaminado = await rmaService.InspeccionarDevolucionAsync(rma.Id, dictamen);
 
@@ -197,7 +226,7 @@ public class CatalogLogisticsTests
         rmaDictaminado!.Clasificacion.Should().Be(ClasificacionRMA.ReStock);
         rmaDictaminado.Estado.Should().Be(EstadoRMA.Completado);
 
-        var prodActualizado = await dbContext.Productos.Include(p => p.Stock).FirstOrDefaultAsync(p => p.Id == producto.Id);
+        var prodActualizado = await dbContext.Productos.Include(p => p.Stocks).FirstOrDefaultAsync(p => p.Id == producto.Id);
         prodActualizado!.Stock!.CantidadTotal.Should().Be(53); // 50 + 3 reingresadas
     }
 
@@ -221,7 +250,8 @@ public class CatalogLogisticsTests
         dbContext.Productos.Add(producto);
         await dbContext.SaveChangesAsync();
 
-        var rmaService = new RmaService(dbContext, NullLogger<RmaService>.Instance);
+        var inventoryService = new InventoryService(dbContext, NullLogger<InventoryService>.Instance);
+        var rmaService = new RmaService(dbContext, inventoryService, NullLogger<RmaService>.Instance);
 
         var rma = await rmaService.RegistrarSolicitudRmaAsync(new RegistrarRmaRequest(
             OrdenId: Guid.NewGuid(),
@@ -242,7 +272,7 @@ public class CatalogLogisticsTests
         rmaDictaminado.Should().NotBeNull();
         rmaDictaminado!.Clasificacion.Should().Be(ClasificacionRMA.MermaScrap);
 
-        var prodActualizado = await dbContext.Productos.Include(p => p.Stock).FirstOrDefaultAsync(p => p.Id == producto.Id);
+        var prodActualizado = await dbContext.Productos.Include(p => p.Stocks).FirstOrDefaultAsync(p => p.Id == producto.Id);
         prodActualizado!.Stock!.CantidadTotal.Should().Be(20); // No se incrementa
     }
 
@@ -308,10 +338,68 @@ public class CatalogLogisticsTests
         });
 
         // Verificar que todos tienen stock físico y código de ubicación WMS
-        var sinStock = await dbContext.Productos.Where(p => p.Stock == null).CountAsync();
+        var sinStock = await dbContext.Productos.Where(p => !p.Stocks.Any()).CountAsync();
         sinStock.Should().Be(0);
 
         var ubicacionesGeneradas = await dbContext.UbicacionesAlmacen.CountAsync();
         ubicacionesGeneradas.Should().BeGreaterThan(0);
     }
+    [Fact]
+    public void StockFisico_CantidadDisponible_RestaReservadoYBloqueado()
+    {
+        var stock = new StockFisico
+        {
+            CantidadTotal = 20,
+            CantidadReservada = 6,
+            CantidadBloqueada = 3,
+            PuntoReorden = 10
+        };
+
+        stock.CantidadDisponible.Should().Be(11);
+        stock.EsBajoMinimo.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Producto_PermiteMultiplesSaldosPorUbicacion()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var productoId = Guid.NewGuid();
+        var producto = new Producto
+        {
+            Id = productoId,
+            Sku = "MULTI-001",
+            Nombre = "Producto multiubicación",
+            Stocks = new List<StockFisico>
+            {
+                new() { Id = Guid.NewGuid(), ProductoId = productoId, CantidadTotal = 10, UbicacionCodigo = "PAS-A-RCK-01-NIV-01-POS-01" },
+                new() { Id = Guid.NewGuid(), ProductoId = productoId, CantidadTotal = 6, UbicacionCodigo = "PAS-B-RCK-01-NIV-01-POS-01" }
+            }
+        };
+
+        dbContext.Productos.Add(producto);
+        await dbContext.SaveChangesAsync();
+
+        var recuperado = await dbContext.Productos
+            .Include(p => p.Stocks)
+            .SingleAsync(p => p.Id == productoId);
+
+        recuperado.Stocks.Should().HaveCount(2);
+        recuperado.Stocks.Sum(s => s.CantidadTotal).Should().Be(16);
+    }
+
+    [Fact]
+    public void ReservaStock_CantidadPendiente_SoportaResolucionMixta()
+    {
+        var reserva = new ReservaStock
+        {
+            CantidadOriginal = 6,
+            CantidadLiberada = 2,
+            CantidadConsumida = 4,
+            Estado = EstadoReserva.Finalizada
+        };
+
+        reserva.CantidadPendiente.Should().Be(0);
+        reserva.Estado.Should().Be(EstadoReserva.Finalizada);
+    }
+
 }

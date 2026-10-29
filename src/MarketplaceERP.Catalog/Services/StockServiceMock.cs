@@ -10,9 +10,9 @@ using Microsoft.Extensions.Logging;
 namespace MarketplaceERP.Catalog.Services;
 
 /// <summary>
-/// Mock del servicio de stock para el arranque inicial del proyecto.
-/// Simula operaciones de reserva, confirmación y liberación de stock en memoria.
-/// REEMPLAZAR por StockService real cuando Equipo 2 implemente la lógica de negocio.
+/// Mock legado del servicio de stock, conservado únicamente para pruebas aisladas.
+/// La aplicación registra StockService real mediante DI.
+/// Simula reserva, confirmación y liberación respetando la semántica actual:
 /// </summary>
 internal sealed class StockServiceMock : IStockService
 {
@@ -50,13 +50,29 @@ internal sealed class StockServiceMock : IStockService
     }
 
     /// <inheritdoc />
-    public Task ConfirmarDespachoAsync(Guid reservaId)
+    public Task ConfirmarReservaAsync(Guid reservaId)
     {
-        _logger.LogInformation("[MOCK] ConfirmarDespacho: ReservaId={ReservaId}", reservaId);
+        _logger.LogInformation("[MOCK] ConfirmarReserva: ReservaId={ReservaId}", reservaId);
+
+        // Confirmar NO consume ni libera la reserva; permanece comprometida
+        // hasta que Fulfillment la consuma o una compensación la libere.
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task ConsumirReservasOrdenAsync(Guid ordenId)
+    {
+        _logger.LogInformation("[MOCK] ConsumirReservasOrden: OrdenId={OrdenId}", ordenId);
 
         lock (_lock)
         {
-            _reservasActivas.Remove(reservaId);
+            var ids = _reservasActivas
+                .Where(kv => kv.Value.OrdenId == ordenId)
+                .Select(kv => kv.Key)
+                .ToList();
+
+            foreach (var id in ids)
+                _reservasActivas.Remove(id);
         }
 
         return Task.CompletedTask;

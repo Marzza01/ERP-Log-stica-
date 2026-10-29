@@ -6,9 +6,9 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, ShoppingCart, Warehouse, Truck,
+  LayoutDashboard, ShoppingCart, Warehouse, Truck, CreditCard,
   RotateCcw, ShoppingBag, BookOpen, Wallet,
-  Package, ChevronLeft, ChevronRight, LogOut, X,
+  Package, ChevronLeft, ChevronRight, LogOut, X, RefreshCw, Building2, ClipboardCheck, ClipboardList, BellRing, LockKeyhole,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -17,10 +17,7 @@ interface NavItem {
   icon: React.ReactNode;
   label: string;
   shortLabel?: string;
-  badge?: {
-    count: number | string;
-    variant: 'danger' | 'warning' | 'info';
-  };
+  allowedRoles: string[];
 }
 
 interface NavGroup {
@@ -30,15 +27,21 @@ interface NavGroup {
 
 const navGroups: NavGroup[] = [
   {
+    label: 'Marketplace',
+    items: [
+      { to: '/checkout', icon: <CreditCard size={16} />, label: 'Comprar', shortLabel: 'Comprar', allowedRoles: ['Comprador'] },
+    ],
+  },
+  {
     label: 'Principal',
     items: [
-      { to: '/dashboard', icon: <LayoutDashboard size={16} />, label: 'Dashboard',     shortLabel: 'Dashboard' },
+      { to: '/dashboard', icon: <LayoutDashboard size={16} />, label: 'Dashboard',     shortLabel: 'Dashboard', allowedRoles: ['Admin'] },
       {
         to: '/ordenes',
         icon: <ShoppingCart size={16} />,
         label: 'Órdenes',
         shortLabel: 'Órdenes',
-        badge: { count: '3', variant: 'warning' },
+        allowedRoles: ['Admin', 'Vendedor'],
       },
     ],
   },
@@ -50,37 +53,79 @@ const navGroups: NavGroup[] = [
         icon: <Warehouse size={16} />,
         label: 'WMS / Bodega',
         shortLabel: 'Bodega',
-        badge: { count: '1', variant: 'danger' },
+        allowedRoles: ['Admin', 'Vendedor'],
       },
-      { to: '/fulfillment', icon: <Truck size={16} />,        label: 'Fulfillment',    shortLabel: 'Fulfillment' },
+      {
+        to: '/reabastecimiento',
+        icon: <RefreshCw size={16} />,
+        label: 'Reabastecimiento',
+        shortLabel: 'Reabast.',
+        allowedRoles: ['Admin', 'Vendedor'],
+      },
+      {
+        to: '/proveedores',
+        icon: <Building2 size={16} />,
+        label: 'Proveedores',
+        shortLabel: 'Proveed.',
+        allowedRoles: ['Admin'],
+      },
+      {
+        to: '/ajustes',
+        icon: <ClipboardCheck size={16} />,
+        label: 'Ajustes de inventario',
+        shortLabel: 'Ajustes',
+        allowedRoles: ['Admin'],
+      },
+      {
+        to: '/conteos',
+        icon: <ClipboardList size={16} />,
+        label: 'Conteos cíclicos',
+        shortLabel: 'Conteos',
+        allowedRoles: ['Admin', 'Vendedor'],
+      },
+      {
+        to: '/alertas-inventario',
+        icon: <BellRing size={16} />,
+        label: 'Alertas de inventario',
+        shortLabel: 'Alertas',
+        allowedRoles: ['Admin', 'Vendedor'],
+      },
+      {
+        to: '/bloqueos-inventario',
+        icon: <LockKeyhole size={16} />,
+        label: 'Bloqueos de inventario',
+        shortLabel: 'Bloqueos',
+        allowedRoles: ['Admin', 'Vendedor'],
+      },
+      { to: '/fulfillment', icon: <Truck size={16} />,        label: 'Fulfillment',    shortLabel: 'Fulfillment', allowedRoles: ['Admin', 'Vendedor'] },
       {
         to: '/rma',
         icon: <RotateCcw size={16} />,
         label: 'Devoluciones',
         shortLabel: 'Devoluciones',
-        badge: { count: '2', variant: 'warning' },
+        allowedRoles: ['Admin', 'Vendedor'],
       },
       {
         to: '/compras',
         icon: <ShoppingBag size={16} />,
         label: 'Compras',
         shortLabel: 'Compras',
-        badge: { count: '3', variant: 'info' },
+        allowedRoles: ['Admin'],
       },
     ],
   },
   {
     label: 'Finanzas',
     items: [
-      { to: '/contabilidad',  icon: <BookOpen size={16} />, label: 'Contabilidad',   shortLabel: 'Contabilidad' },
+      { to: '/contabilidad',  icon: <BookOpen size={16} />, label: 'Contabilidad',   shortLabel: 'Contabilidad', allowedRoles: ['Admin'] },
       {
         to: '/liquidaciones',
         icon: <Wallet size={16} />,
         label: 'Liquidaciones',
         shortLabel: 'Pagos',
-        badge: { count: '2', variant: 'warning' },
+        allowedRoles: ['Admin', 'Vendedor'],
       },
-      { to: '/productos',     icon: <Package size={16} />,  label: 'Productos',      shortLabel: 'Productos' },
+      { to: '/productos',     icon: <Package size={16} />,  label: 'Productos',      shortLabel: 'Productos', allowedRoles: ['Admin', 'Vendedor'] },
     ],
   },
 ];
@@ -94,6 +139,15 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const { logout, usuario } = useAuth();
   useLocation(); // trigger re-render on route change for active state
+
+  const userRole = usuario?.rol || '';
+
+  const visibleGroups: NavGroup[] = navGroups
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => item.allowedRoles.includes(userRole)),
+    }))
+    .filter(group => group.items.length > 0);
 
   return (
     <>
@@ -123,7 +177,7 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
 
         {/* Nav */}
         <nav className="sidebar-nav">
-          {navGroups.map((group) => (
+          {visibleGroups.map((group) => (
             <div key={group.label}>
               <div className="sidebar-section-label">{group.label}</div>
               {group.items.map((item) => (
@@ -132,16 +186,12 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                   to={item.to}
                   className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
                   title={collapsed ? item.label : undefined}
+                  onClick={onClose}
                 >
                   <span className="nav-icon">{item.icon}</span>
                   <span className="nav-label nav-label-full">{item.label}</span>
                   {item.shortLabel && (
                     <span className="nav-label nav-label-short">{item.shortLabel}</span>
-                  )}
-                  {item.badge && !collapsed && (
-                    <span className={`nav-badge-pill nav-badge-${item.badge.variant}`}>
-                      {item.badge.count}
-                    </span>
                   )}
                 </NavLink>
               ))}

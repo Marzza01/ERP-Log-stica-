@@ -12,5 +12,6 @@ public record PagoRequest(
     Guid OrdenId,
     Guid CompradorId,
     decimal MontoTotal,
-    string Moneda
+    string Moneda,
+    string? ClaveIdempotencia = null
 );
