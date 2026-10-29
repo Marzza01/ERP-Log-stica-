@@ -11,6 +11,7 @@ import { alertasApi, type AlertaInventario } from '../../api/alertas';
 
 const routeTitles: Record<string, { label: string; sub: string }> = {
   '/dashboard': { label: 'Dashboard KPIs', sub: 'Indicadores de desempeño logístico' },
+  '/checkout': { label: 'Comprar en LOGIMKT', sub: 'Catálogo y seguimiento de pedidos' },
   '/ordenes': { label: 'Órdenes (OMS)', sub: 'Gestión de ciclo de vida de órdenes' },
   '/wms': { label: 'WMS — Bodega', sub: 'Warehouse Management System' },
   '/reabastecimiento': { label: 'Reabastecimiento', sub: 'Necesidades operativas de inventario' },
@@ -120,7 +121,7 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
           </div>
         )}
 
-        <div style={{ position: 'relative' }} ref={notifRef}>
+        {puedeVerAlertasInventario && <div style={{ position: 'relative' }} ref={notifRef}>
           <button
             className={`icon-btn ${showNotifications ? 'active' : ''}`}
             onClick={() => setShowNotifications(prev => !prev)}
@@ -199,7 +200,7 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
               </div>
             </div>
           )}
-        </div>
+        </div>}
 
         <div className="avatar" title={usuario?.nombre}>
           {usuario?.nombre?.charAt(0)?.toUpperCase() ?? 'U'}

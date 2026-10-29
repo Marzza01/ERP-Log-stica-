@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, ShoppingCart, Warehouse, Truck,
+  LayoutDashboard, ShoppingCart, Warehouse, Truck, CreditCard,
   RotateCcw, ShoppingBag, BookOpen, Wallet,
   Package, ChevronLeft, ChevronRight, LogOut, X, RefreshCw, Building2, ClipboardCheck, ClipboardList, BellRing, LockKeyhole,
 } from 'lucide-react';
@@ -26,6 +26,12 @@ interface NavGroup {
 }
 
 const navGroups: NavGroup[] = [
+  {
+    label: 'Marketplace',
+    items: [
+      { to: '/checkout', icon: <CreditCard size={16} />, label: 'Comprar', shortLabel: 'Comprar', allowedRoles: ['Comprador'] },
+    ],
+  },
   {
     label: 'Principal',
     items: [

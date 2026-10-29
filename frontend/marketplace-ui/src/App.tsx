@@ -13,6 +13,7 @@ import LoginPage from './pages/auth/LoginPage';
 import SinAccesoPage from './pages/auth/SinAccesoPage';
 
 const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage'));
+const CheckoutCompradorPage = lazy(() => import('./pages/checkout/CheckoutCompradorPage'));
 const OrdenesPage = lazy(() => import('./pages/ordenes/OrdenesPage'));
 const WmsPage = lazy(() => import('./pages/wms/WmsPage'));
 const FulfillmentPage = lazy(() => import('./pages/fulfillment/FulfillmentPage'));
@@ -64,7 +65,7 @@ function HomeRedirect() {
   }
 
   if (usuario?.rol === 'Comprador') {
-    return <Navigate to="/sin-acceso" replace />;
+    return <Navigate to="/checkout" replace />;
   }
 
   if (usuario?.rol === 'Vendedor') {
@@ -109,6 +110,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }>
           <Route index element={<HomeRedirect />} />
+          <Route path="checkout" element={<RoleRouteGuard allowedRoles={['Comprador']}><CheckoutCompradorPage /></RoleRouteGuard>} />
           <Route path="dashboard" element={<RoleRouteGuard allowedRoles={['Admin']}><DashboardPage /></RoleRouteGuard>} />
           <Route path="ordenes" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><OrdenesPage /></RoleRouteGuard>} />
           <Route path="wms" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><WmsPage /></RoleRouteGuard>} />
