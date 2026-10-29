@@ -20,6 +20,7 @@ public class FinanceDbContext : DbContext
     public DbSet<Orden> Ordenes => Set<Orden>();
     public DbSet<ItemOrden> ItemsOrden => Set<ItemOrden>();
     public DbSet<SplitPago> SplitsPago => Set<SplitPago>();
+    public DbSet<IntentoPago> IntentosPago => Set<IntentoPago>();
     public DbSet<Liquidacion> Liquidaciones => Set<Liquidacion>();
 
     // Procurement / Compras
@@ -101,6 +102,26 @@ public class FinanceDbContext : DbContext
                   .WithMany(o => o.Items)
                   .HasForeignKey(i => i.OrdenId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Intento de pago, registro durable previo a la pasarela ─────────
+        modelBuilder.Entity<IntentoPago>(entity =>
+        {
+            entity.ToTable("intentos_pago");
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.Id).ValueGeneratedNever();
+            entity.Property(i => i.ReferenciaOperacion).HasMaxLength(80).IsRequired();
+            entity.Property(i => i.Monto).HasPrecision(18, 2).IsRequired();
+            entity.Property(i => i.Moneda).HasMaxLength(3).IsRequired();
+            entity.Property(i => i.Estado).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(i => i.TransaccionId).HasMaxLength(200);
+            entity.Property(i => i.CreadoUtc).IsRequired();
+            entity.Property(i => i.ActualizadoUtc).IsRequired();
+            entity.HasIndex(i => i.OrdenId).IsUnique();
+            entity.HasIndex(i => i.ReferenciaOperacion).IsUnique();
+            entity.HasIndex(i => i.Estado);
+            entity.HasOne<Orden>().WithMany().HasForeignKey(i => i.OrdenId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // ── SplitPago ─────────────────────────────────────────────────────────
