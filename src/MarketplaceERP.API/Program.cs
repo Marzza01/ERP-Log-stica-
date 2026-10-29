@@ -145,7 +145,7 @@ builder.Services.AddCors(options =>
 // ── Módulos (Equipos 1, 2 y 3) ───────────────────────────────────────────────
 builder.Services.AddCoreServices(builder.Configuration);
 builder.Services.AddCatalogServices(builder.Configuration);
-builder.Services.AddFinanceServices(builder.Configuration);
+builder.Services.AddFinanceServices(builder.Configuration, builder.Environment.IsDevelopment());
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
