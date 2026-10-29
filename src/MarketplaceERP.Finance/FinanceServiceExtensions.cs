@@ -50,6 +50,12 @@ public static class FinanceServiceExtensions
         // ── Checkout ─────────────────────────────────────────────────────────
         services.AddScoped<CheckoutOrchestrator>();
 
+        // ── Recuperación administrada, bloqueada por defecto en HTTP ──────────
+        // No se registra IPaymentRecoveryGateway: no existe proveedor de
+        // recuperación real ni simulador habilitado automáticamente.
+        services.AddScoped<EvaluadorConciliacionPago>(sp => ActivatorUtilities.CreateInstance<EvaluadorConciliacionPago>(sp));
+        services.AddScoped<RecuperacionFinancieraService>(sp => ActivatorUtilities.CreateInstance<RecuperacionFinancieraService>(sp));
+
         // ── Procurement / 3-Way Match ─────────────────────────────────────────
         services.AddScoped<ITresWayMatchingService, TresWayMatchingService>();
 
