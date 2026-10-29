@@ -25,6 +25,8 @@ public sealed class IntentoPago
     public string Moneda { get; set; } = "USD";
     public EstadoIntentoPago Estado { get; set; } = EstadoIntentoPago.Preparado;
     public string? TransaccionId { get; set; }
+    /// <summary>Reserva real del catálogo; permite completar compensación sin volver a reservar.</summary>
+    public Guid? ReservaId { get; set; }
     public DateTime CreadoUtc { get; set; } = DateTime.UtcNow;
     public DateTime ActualizadoUtc { get; set; } = DateTime.UtcNow;
 }

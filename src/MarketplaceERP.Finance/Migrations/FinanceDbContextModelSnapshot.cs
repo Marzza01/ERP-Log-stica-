@@ -23,6 +23,41 @@ namespace MarketplaceERP.Finance.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.ConciliacionPago", b =>
+                {
+                    b.Property<Guid>("Id").HasColumnType("uuid");
+                    b.Property<DateTime>("ConsultadoUtc").HasColumnType("timestamp with time zone");
+                    b.Property<string>("Decision").IsRequired().HasMaxLength(80).HasColumnType("character varying(80)");
+                    b.Property<Guid>("IntentoPagoId").HasColumnType("uuid");
+                    b.Property<Guid>("OrdenId").HasColumnType("uuid");
+                    b.Property<string>("TransaccionId").HasMaxLength(200).HasColumnType("character varying(200)");
+                    b.HasKey("Id");
+                    b.HasIndex("IntentoPagoId");
+                    b.HasIndex("OrdenId", "ConsultadoUtc");
+                    b.ToTable("conciliaciones_pago", "finance");
+                });
+
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.ReembolsoPago", b =>
+                {
+                    b.Property<Guid>("Id").HasColumnType("uuid");
+                    b.Property<DateTime>("ActualizadoUtc").HasColumnType("timestamp with time zone");
+                    b.Property<string>("ClaveIdempotencia").IsRequired().HasMaxLength(80).HasColumnType("character varying(80)");
+                    b.Property<DateTime>("CreadoUtc").HasColumnType("timestamp with time zone");
+                    b.Property<string>("Estado").IsRequired().HasMaxLength(32).HasColumnType("character varying(32)");
+                    b.Property<decimal>("Monto").HasPrecision(18, 2).HasColumnType("numeric(18,2)");
+                    b.Property<string>("Moneda").IsRequired().HasMaxLength(3).HasColumnType("character varying(3)");
+                    b.Property<Guid>("OrdenId").HasColumnType("uuid");
+                    b.Property<string>("ReembolsoProveedorId").HasMaxLength(200).HasColumnType("character varying(200)");
+                    b.Property<Guid>("ReservaId").HasColumnType("uuid");
+                    b.Property<string>("TransaccionId").IsRequired().HasMaxLength(200).HasColumnType("character varying(200)");
+                    b.Property<Guid>("Version").IsConcurrencyToken().HasColumnType("uuid");
+                    b.HasKey("Id");
+                    b.HasIndex("ClaveIdempotencia").IsUnique();
+                    b.HasIndex("Estado");
+                    b.HasIndex("OrdenId").IsUnique();
+                    b.ToTable("reembolsos_pago", "finance");
+                });
+
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.FacturaProveedor", b =>
                 {
                     b.Property<Guid>("Id")
@@ -107,6 +142,8 @@ namespace MarketplaceERP.Finance.Migrations
 
                     b.Property<Guid>("OrdenId")
                         .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ReservaId").HasColumnType("uuid");
 
                     b.Property<string>("ReferenciaOperacion")
                         .IsRequired()
@@ -715,6 +752,24 @@ namespace MarketplaceERP.Finance.Migrations
                         .IsUnique();
 
                     b.ToTable("splits_pago", "finance");
+                });
+
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.ConciliacionPago", b =>
+                {
+                    b.HasOne("MarketplaceERP.Finance.Entities.IntentoPago", null)
+                        .WithMany()
+                        .HasForeignKey("IntentoPagoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.ReembolsoPago", b =>
+                {
+                    b.HasOne("MarketplaceERP.Finance.Entities.Orden", null)
+                        .WithMany()
+                        .HasForeignKey("OrdenId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.FacturaProveedor", b =>

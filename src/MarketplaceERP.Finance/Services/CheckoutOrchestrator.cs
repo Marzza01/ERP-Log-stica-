@@ -117,6 +117,7 @@ public sealed class CheckoutOrchestrator
         {
             Id = Guid.NewGuid(),
             OrdenId = command.OrdenId,
+            ReservaId = reservaId,
             ReferenciaOperacion = $"PAY-{command.OrdenId:N}",
             Monto = command.MontoTotal,
             Moneda = command.Moneda,

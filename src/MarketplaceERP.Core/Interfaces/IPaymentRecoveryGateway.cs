@@ -12,6 +12,10 @@ public interface IPaymentRecoveryGateway
     Task<ConsultaPagoResult> ConsultarEstadoAsync(
         string referenciaOperacion, CancellationToken cancellationToken = default);
 
+    /// <summary>Consultar reembolso usando la misma clave, sin iniciarlo otra vez.</summary>
+    Task<ReembolsoPagoResult> ConsultarReembolsoAsync(
+        string claveIdempotencia, CancellationToken cancellationToken = default);
+
     Task<ReembolsoPagoResult> ReembolsarAsync(
         ReembolsoPagoRequest request, CancellationToken cancellationToken = default);
 }
