@@ -199,20 +199,35 @@ public class CheckoutController : ControllerBase
             _logger.LogWarning(ex, "Checkout sin stock. OrdenId={OrdenId}", ordenId);
             return Conflict(new { mensaje = "No existe stock disponible suficiente.", tipo = "StockInsuficiente" });
         }
-        catch (PagoFallidoException ex)
+        catch (PagoResultadoInciertoException ex)
         {
-            // El orquestador actual usa la misma excepción para rechazo y error incierto
-            // de la pasarela. NO afirmar cancelación: el cobro podría estar en curso.
-            _logger.LogWarning(ex, "Resultado de pago no confirmado. OrdenId={OrdenId}", ordenId);
+            // No cancelar, liberar ni reintentar: el cargo podría existir.
+            // La clave de idempotencia conserva esta orden para su conciliación.
+            _logger.LogError(ex, "Checkout pendiente de conciliación. OrdenId={OrdenId}", ordenId);
             return Conflict(new
             {
-                mensaje = "No fue posible confirmar el pago. Se requiere conciliación antes de reintentar.",
+                mensaje = "No fue posible confirmar el resultado del pago. Se requiere conciliación antes de reintentar.",
                 tipo = "PagoPendienteConciliacion",
                 ordenId
             });
         }
-        // Errores inesperados, especialmente DESPUÉS de cobrar, no se marcan como
-        // 'Cancelada' sin conciliación. I2B implementará recuperación/refund.
+        catch (PagoFallidoException ex)
+        {
+            // Rechazo explícito de la pasarela: el orquestador ya liberó la
+            // reserva. No debe confundirse con una respuesta incierta.
+            orden.Estado = EstadoOrden.Cancelada;
+            orden.FechaCancelacion = DateTime.UtcNow;
+            await _financeDb.SaveChangesAsync();
+            _logger.LogWarning(ex, "Pago rechazado explícitamente. OrdenId={OrdenId}", ordenId);
+            return Conflict(new
+            {
+                mensaje = "El pago fue rechazado; la orden quedó cancelada.",
+                tipo = "PagoRechazado",
+                ordenId
+            });
+        }
+        // Fallos no clasificados siguen sin marcarse como cancelados.
+        // I2B2B añadirá conciliación persistente y reembolso verificable.
     }
 
     private IActionResult RespuestaRepetida(Orden anterior, string hash)

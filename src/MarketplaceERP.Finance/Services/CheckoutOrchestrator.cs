@@ -41,7 +41,7 @@ public record CheckoutResult(
 ///
 /// Flujo Saga:
 /// 1. ReservarStock   → Falla: lanza StockInsuficienteException (sin compensación)
-/// 2. ProcesarPago    → Falla: LiberarStock (compensación) + lanza PagoFallidoException
+/// 2. ProcesarPago    → Rechazo confirmado: liberar reserva; resultado incierto: conservarla.
 /// 3. CalcularComision
 /// 4. Guardar SplitPago (90% vendedor / 10% marketplace)
 /// 5. ConfirmarReserva
@@ -121,13 +121,17 @@ public sealed class CheckoutOrchestrator
         }
         catch (Exception ex)
         {
-            // Error inesperado en la pasarela → compensar reserva
+            // Una excepción de red NO equivale a un rechazo. Es posible que la
+            // pasarela haya cobrado y perdido la respuesta. Conservar la reserva
+            // hasta consultar el resultado; liberarla podría causar sobreventa.
             _logger.LogError(ex,
-                "Saga Paso 2 EXCEPCIÓN: Error inesperado en pasarela de pagos. Liberando reserva {ReservaId}.",
-                reservaId);
+                "Saga Paso 2 INCIERTO: orden {OrdenId}, reserva {ReservaId}. No liberar sin conciliación.",
+                command.OrdenId, reservaId);
 
-            await _stockService.LiberarStockAsync(reservaId);
-            throw new PagoFallidoException(command.OrdenId, ex.Message);
+            throw new PagoResultadoInciertoException(
+                command.OrdenId,
+                "La pasarela no confirmó el resultado del pago; requiere conciliación.",
+                ex);
         }
 
         if (!pagoResult.Exitoso)
@@ -143,64 +147,91 @@ public sealed class CheckoutOrchestrator
             throw new PagoFallidoException(command.OrdenId, pagoResult.MensajeError);
         }
 
+        if (string.IsNullOrWhiteSpace(pagoResult.TransaccionId))
+        {
+            _logger.LogError(
+                "Saga Paso 2 INCIERTO: la pasarela informó éxito sin TransaccionId. OrdenId={OrdenId}",
+                command.OrdenId);
+            throw new PagoResultadoInciertoException(
+                command.OrdenId,
+                "El pago podría estar aprobado, pero no existe identificador de transacción para conciliar.");
+        }
+
         _logger.LogDebug(
             "Saga Paso 2 OK. TransaccionId={TransaccionId}", pagoResult.TransaccionId);
 
-        // ── PASO 3: Calcular Comisión ─────────────────────────────────────────
-        _logger.LogDebug("Saga Paso 3: CalcularComision. VendedorId={VendedorId}", command.VendedorId);
-
-        var montoComision = await _commissionService.CalcularComisionAsync(
-            command.VendedorId,
-            command.MontoTotal);
-
-        var montoVendedor = Math.Round(command.MontoTotal - montoComision, 2);
-        var montoMarketplace = Math.Round(montoComision, 2);
-        var porcentajeVendedor = command.MontoTotal > 0
-            ? Math.Round((montoVendedor / command.MontoTotal) * 100, 2)
-            : 90m;
-        var porcentajeMarketplace = 100m - porcentajeVendedor;
-
-        _logger.LogDebug(
-            "Saga Paso 3 OK. MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
-            montoVendedor, montoMarketplace);
-
-        // ── PASO 4: Guardar SplitPago en DB ──────────────────────────────────
-        _logger.LogDebug("Saga Paso 4: Guardando SplitPago en DB.");
-
-        var splitPago = new SplitPago
+        // El pago ya pudo haberse efectuado. Cualquier excepción posterior es
+        // INCIERTA: no liberar stock ni reintentar el cobro de forma automática.
+        try
         {
-            Id = Guid.NewGuid(),
-            OrdenId = command.OrdenId,
-            MontoTotal = command.MontoTotal,
-            PorcentajeVendedor = porcentajeVendedor,
-            MontoVendedor = montoVendedor,
-            PorcentajeMarketplace = porcentajeMarketplace,
-            MontoMarketplace = montoMarketplace,
-            TransaccionId = pagoResult.TransaccionId!,
-            FechaProcesado = DateTime.UtcNow
-        };
+            // ── PASO 3: Calcular Comisión ─────────────────────────────────────────
+            _logger.LogDebug("Saga Paso 3: CalcularComision. VendedorId={VendedorId}", command.VendedorId);
 
-        _dbContext.SplitsPago.Add(splitPago);
-        await _dbContext.SaveChangesAsync();
+            var montoComision = await _commissionService.CalcularComisionAsync(
+                command.VendedorId,
+                command.MontoTotal);
 
-        _logger.LogDebug("Saga Paso 4 OK. SplitPagoId={SplitPagoId}", splitPago.Id);
+            var montoVendedor = Math.Round(command.MontoTotal - montoComision, 2);
+            var montoMarketplace = Math.Round(montoComision, 2);
+            var porcentajeVendedor = command.MontoTotal > 0
+                ? Math.Round((montoVendedor / command.MontoTotal) * 100, 2)
+                : 90m;
+            var porcentajeMarketplace = 100m - porcentajeVendedor;
 
-        // ── PASO 5: Confirmar Reserva ─────────────────────────────────────────
-        _logger.LogDebug("Saga Paso 5: ConfirmarReserva. ReservaId={ReservaId}", reservaId);
+            _logger.LogDebug(
+                "Saga Paso 3 OK. MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
+                montoVendedor, montoMarketplace);
 
-        await _stockService.ConfirmarReservaAsync(reservaId);
+            // ── PASO 4: Guardar SplitPago en DB ──────────────────────────────────
+            _logger.LogDebug("Saga Paso 4: Guardando SplitPago en DB.");
 
-        _logger.LogInformation(
-            "Checkout Saga COMPLETADO. OrdenId={OrdenId}, TransaccionId={TransaccionId}, " +
-            "MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
-            command.OrdenId, pagoResult.TransaccionId, montoVendedor, montoMarketplace);
+            var splitPago = new SplitPago
+            {
+                Id = Guid.NewGuid(),
+                OrdenId = command.OrdenId,
+                MontoTotal = command.MontoTotal,
+                PorcentajeVendedor = porcentajeVendedor,
+                MontoVendedor = montoVendedor,
+                PorcentajeMarketplace = porcentajeMarketplace,
+                MontoMarketplace = montoMarketplace,
+                TransaccionId = pagoResult.TransaccionId!,
+                FechaProcesado = DateTime.UtcNow
+            };
 
-        // ── PASO 6: Retornar resultado exitoso ────────────────────────────────
-        return new CheckoutResult(
-            OrdenId: command.OrdenId,
-            TransaccionId: pagoResult.TransaccionId!,
-            MontoVendedor: montoVendedor,
-            MontoMarketplace: montoMarketplace
-        );
+            _dbContext.SplitsPago.Add(splitPago);
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogDebug("Saga Paso 4 OK. SplitPagoId={SplitPagoId}", splitPago.Id);
+
+            // ── PASO 5: Confirmar Reserva ─────────────────────────────────────────
+            _logger.LogDebug("Saga Paso 5: ConfirmarReserva. ReservaId={ReservaId}", reservaId);
+
+            await _stockService.ConfirmarReservaAsync(reservaId);
+
+            _logger.LogInformation(
+                "Checkout Saga COMPLETADO. OrdenId={OrdenId}, TransaccionId={TransaccionId}, " +
+                "MontoVendedor={MontoVendedor:C}, MontoMarketplace={MontoMarketplace:C}",
+                command.OrdenId, pagoResult.TransaccionId, montoVendedor, montoMarketplace);
+
+            // ── PASO 6: Retornar resultado exitoso ────────────────────────────────
+            return new CheckoutResult(
+                OrdenId: command.OrdenId,
+                TransaccionId: pagoResult.TransaccionId!,
+                MontoVendedor: montoVendedor,
+                MontoMarketplace: montoMarketplace
+            );
+        }
+        catch (Exception ex)
+        {
+            // No dar la compra por cancelada si el pago se efectuó. El próximo
+            // bloque incorporará un registro durable y reembolso idempotente.
+            _logger.LogError(ex,
+                "Saga POST-COBRO INCIERTA: OrdenId={OrdenId}, TransaccionId={TransaccionId}. Requiere conciliación.",
+                command.OrdenId, pagoResult.TransaccionId);
+            throw new PagoResultadoInciertoException(
+                command.OrdenId,
+                "El pago fue aceptado, pero el Checkout no pudo completarse; requiere conciliación.",
+                ex);
+        }
     }
 }
