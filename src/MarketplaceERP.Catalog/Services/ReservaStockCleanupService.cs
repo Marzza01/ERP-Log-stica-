@@ -63,7 +63,7 @@ public class ReservaStockCleanupService : BackgroundService
     }
 
     /// <summary>
-    /// Busca y libera reservas expiradas en estado Pendiente.
+    /// Busca y libera reservas expiradas en estado Pendiente, y reconcilia reservas huérfanas de órdenes Canceladas.
     /// </summary>
     public async Task<int> PurgarReservasExpiradasAsync(CancellationToken cancellationToken = default)
     {
@@ -155,6 +155,58 @@ public class ReservaStockCleanupService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error al procesar reserva expirada {ReservaId}.", reserva.Id);
+            }
+        }
+
+        // Reconciliación ventana post-commit: si la orden fue Cancelada en Finance pero LiberarStockAsync falló o el proceso murió
+        if (dbContext.Database.IsRelational())
+        {
+            try
+            {
+                var reservasVivasDeOrdenes = await dbContext.ReservasStock
+                    .Where(r => r.OrdenId != Guid.Empty && (r.Estado == EstadoReserva.Comprometida || r.Estado == EstadoReserva.Pendiente))
+                    .ToListAsync(cancellationToken);
+
+                foreach (var res in reservasVivasDeOrdenes)
+                {
+                    try
+                    {
+                        await using var checkCancelCmd = dbContext.Database.GetDbConnection().CreateCommand();
+                        checkCancelCmd.CommandText = @"
+                            SELECT ""Estado"" 
+                            FROM finance.ordenes 
+                            WHERE ""Id"" = @ordenId 
+                            LIMIT 1;";
+                        var p = checkCancelCmd.CreateParameter();
+                        p.ParameterName = "@ordenId";
+                        p.Value = res.OrdenId;
+                        checkCancelCmd.Parameters.Add(p);
+
+                        if (checkCancelCmd.Connection!.State != System.Data.ConnectionState.Open)
+                            await checkCancelCmd.Connection.OpenAsync(cancellationToken);
+
+                        var estadoObj = await checkCancelCmd.ExecuteScalarAsync(cancellationToken);
+                        if (estadoObj != null)
+                        {
+                            string estadoStr = estadoObj.ToString() ?? string.Empty;
+                            if (string.Equals(estadoStr, "Cancelada", StringComparison.OrdinalIgnoreCase) ||
+                                (int.TryParse(estadoStr, out var num) && num == 5)) // EstadoOrden.Cancelada = 5
+                            {
+                                _logger.LogInformation("Reconciliador: Liberando reserva huérfana {ReservaId} de orden {OrdenId} que ya fue Cancelada.", res.Id, res.OrdenId);
+                                await stockService.LiberarStockAsync(res.Id);
+                                liberadas++;
+                            }
+                        }
+                    }
+                    catch (Exception exRes)
+                    {
+                        _logger.LogWarning(exRes, "Error al verificar cancelación de orden para reserva {ReservaId}.", res.Id);
+                    }
+                }
+            }
+            catch (Exception exReconcile)
+            {
+                _logger.LogWarning(exReconcile, "Error al reconciliar reservas de órdenes canceladas.");
             }
         }
 

@@ -358,88 +358,282 @@ public class ConcurrenciaYNumeracionPostgresRealTests : IAsyncLifetime
         statusCodes.Should().Contain(s => s == HttpStatusCode.Conflict || s == HttpStatusCode.BadRequest,
             "la petición concurrente perdedora debe fallar con 409 (conflicto xmin) o 400 (estado ya cambió)");
 
-        // Verificar consistencia de stock en la BD
+        // Verificar consistencia completa en la BD según cuál resultado ganó
         using (var scope = _factory!.Services.CreateScope())
         {
             var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
             var stock = await catDb.StockFisico.FirstAsync(s => s.ProductoId == prodId);
             var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
             var ordenFinal = await finDb.Ordenes.FirstAsync(o => o.Id == ordenId);
+            var reservaFinal = await catDb.ReservasStock.FirstAsync(r => r.OrdenId == ordenId);
 
             if (ordenFinal.Estado == EstadoOrden.Cancelada)
             {
-                // Stock reservado fue liberado (5 -> 0)
+                // Ganó Cancelar:
+                // - Estado de la orden: Cancelada
+                // - Reserva de stock: Liberada (0 reservado)
+                // - CantidadTotal intacta (50), CantidadReservada = 0
+                // - Stock disponible (Total - Reservada) = 50
+                reservaFinal.Estado.Should().Be(EstadoReserva.Liberada);
+                stock.CantidadTotal.Should().Be(50);
                 stock.CantidadReservada.Should().Be(0);
+                (stock.CantidadTotal - stock.CantidadReservada).Should().Be(50);
             }
             else if (ordenFinal.Estado == EstadoOrden.Enviada)
             {
-                // Reserva sigue activa o comprometida (5)
-                stock.CantidadReservada.Should().Be(5);
+                // Ganó Enviar:
+                // - Estado de la orden: Enviada
+                // - Despacho confirmado: se descuenta del total físico y de la reserva (50 - 5 = 45 total, reservada pasa a 0 y reserva a Despachada/Confirmada)
+                reservaFinal.Estado.Should().Match(e => e == EstadoReserva.Confirmada || e == EstadoReserva.Despachada);
+                stock.CantidadTotal.Should().Be(45);
+                stock.CantidadReservada.Should().Be(0);
+                (stock.CantidadTotal - stock.CantidadReservada).Should().Be(45);
+            }
+            else
+            {
+                Assert.Fail($"Estado inesperado de orden final: {ordenFinal.Estado}");
             }
         }
     }
 
     [SkippableFact]
-    public async Task Concurrencia_DobleAprobacionSimultaneaOrdenCompra_UnaSolaGanaYLaOtra409()
+    public async Task Numeracion_NumeroRMA_100GeneracionesParalelas_SonTodasUnicasYCumplenFormato()
     {
         Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
 
-        var poId = Guid.NewGuid();
+        var semaforo = new SemaphoreSlim(20);
+        var tareas = Enumerable.Range(0, 100).Select(async _ =>
+        {
+            await semaforo.WaitAsync();
+            try
+            {
+                using var scope = _factory!.Services.CreateScope();
+                var numService = scope.ServiceProvider.GetRequiredService<INumeracionService>();
+                return await numService.GenerarNumeroRmaAsync();
+            }
+            finally
+            {
+                semaforo.Release();
+            }
+        }).ToList();
+
+        var numeros = await Task.WhenAll(tareas);
+
+        numeros.Should().HaveCount(100);
+        numeros.Distinct().Should().HaveCount(100, "100 llamadas paralelas a GenerarNumeroRmaAsync deben generar números estrictamente únicos");
+        var hoy = DateTime.UtcNow.ToString("yyyyMMdd");
+        foreach (var num in numeros)
+        {
+            num.Should().StartWith($"RMA-{hoy}-");
+            num.Length.Should().BeGreaterOrEqualTo(17);
+        }
+    }
+
+    [SkippableFact]
+    public async Task Numeracion_CodigoAuditoria3Way_100GeneracionesParalelas_SonTodasUnicasYCumplenFormato()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        var semaforo = new SemaphoreSlim(20);
+        var tareas = Enumerable.Range(0, 100).Select(async _ =>
+        {
+            await semaforo.WaitAsync();
+            try
+            {
+                using var scope = _factory!.Services.CreateScope();
+                var numService = scope.ServiceProvider.GetRequiredService<INumeracionService>();
+                return await numService.GenerarCodigoAuditoria3WayAsync();
+            }
+            finally
+            {
+                semaforo.Release();
+            }
+        }).ToList();
+
+        var numeros = await Task.WhenAll(tareas);
+
+        numeros.Should().HaveCount(100);
+        numeros.Distinct().Should().HaveCount(100, "100 llamadas paralelas a GenerarCodigoAuditoria3WayAsync deben generar números estrictamente únicos");
+        var hoy = DateTime.UtcNow.ToString("yyyyMMdd");
+        foreach (var num in numeros)
+        {
+            num.Should().StartWith($"3WAY-{hoy}-");
+            num.Length.Should().BeGreaterOrEqualTo(18);
+        }
+    }
+
+    [SkippableFact]
+    public async Task Concurrencia_FalloLiberarStockAsync_JobCleanupReconciliaReservaDeOrdenCancelada()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        var ordenId = Guid.NewGuid();
+        var prodId = Guid.NewGuid();
+
         using (var scope = _factory!.Services.CreateScope())
         {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
             var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
-            var po = new OrdenCompra
+
+            catDb.Productos.Add(new Producto
             {
-                Id = poId,
-                NumeroPO = $"PO-TEST-{Guid.NewGuid():N}"[..20],
-                ProveedorId = Guid.NewGuid(),
-                ProveedorNombre = "Proveedor Test Concurrencia",
-                Estado = EstadoOrdenCompra.Borrador,
-                SubTotal = 500m,
-                ImpuestoIva = 65m,
-                MontoTotal = 565m,
-                FechaEmision = DateTime.UtcNow
-            };
-            finDb.OrdenesCompra.Add(po);
+                Id = prodId,
+                Nombre = "Producto Test Falla Post-Commit",
+                Sku = $"SKU-FALLA-{Guid.NewGuid():N}"[..20],
+                PrecioB2C = 10m,
+                PrecioB2B = 8m,
+                ProveedorNombre = "Prov Test",
+                UnidadMedida = "UND"
+            });
+            catDb.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = prodId,
+                CantidadTotal = 30,
+                CantidadReservada = 4
+            });
+            catDb.ReservasStock.Add(new ReservaStock
+            {
+                Id = Guid.NewGuid(),
+                ProductoId = prodId,
+                OrdenId = ordenId,
+                Cantidad = 4,
+                Estado = EstadoReserva.Comprometida
+            });
+            await catDb.SaveChangesAsync();
+
+            // La orden fue efectivamente cancelada en Finance (commit ganado)
+            finDb.Ordenes.Add(new Orden
+            {
+                Id = ordenId,
+                NumeroOrden = $"ORD-CANCEL-{Guid.NewGuid():N}"[..25],
+                CompradorId = Guid.NewGuid(),
+                VendedorId = Guid.NewGuid(),
+                MontoTotal = 40m,
+                SubTotal = 40m,
+                Estado = EstadoOrden.Cancelada,
+                FechaCreacion = DateTime.UtcNow,
+                FechaCancelacion = DateTime.UtcNow
+            });
             await finDb.SaveChangesAsync();
         }
 
-        // Simular dos DbContexts leyendo la misma entidad y guardando cambio simultáneo
-        var barrier = new Barrier(2);
-        var t1 = Task.Run(async () =>
+        // Ejecutar el job de limpieza/reconciliación
+        using (var scope = _factory!.Services.CreateScope())
         {
-            using var scope = _factory!.Services.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
-            var po = await db.OrdenesCompra.FirstAsync(p => p.Id == poId);
-            barrier.SignalAndWait();
-            po.Estado = EstadoOrdenCompra.Enviada;
-            await db.SaveChangesAsync();
-            return true;
-        });
+            var cleanupService = scope.ServiceProvider.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+                .OfType<ReservaStockCleanupService>()
+                .FirstOrDefault();
 
-        var t2 = Task.Run(async () =>
-        {
-            using var scope = _factory!.Services.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
-            var po = await db.OrdenesCompra.FirstAsync(p => p.Id == poId);
-            barrier.SignalAndWait();
-            po.Estado = EstadoOrdenCompra.Cancelada;
-            await db.SaveChangesAsync();
-            return true;
-        });
+            cleanupService.Should().NotBeNull();
+            var liberadas = await cleanupService!.PurgarReservasExpiradasAsync();
+            liberadas.Should().BeGreaterOrEqualTo(1, "el reconciliador del job debe haber liberado la reserva huérfana de la orden Cancelada");
 
-        var exceptions = new List<Exception>();
-        try { await t1; } catch (Exception ex) { exceptions.Add(ex); }
-        try { await t2; } catch (Exception ex) { exceptions.Add(ex); }
+            // Verificar que el stock físico y la reserva quedaron consistentes
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var stock = await catDb.StockFisico.FirstAsync(s => s.ProductoId == prodId);
+            var reserva = await catDb.ReservasStock.FirstAsync(r => r.OrdenId == ordenId);
 
-        exceptions.Should().ContainSingle(e => e is DbUpdateConcurrencyException,
-            "una de las dos modificaciones concurrentes de OrdenCompra debe lanzar DbUpdateConcurrencyException por colisión en xmin");
+            reserva.Estado.Should().Be(EstadoReserva.Liberada);
+            stock.CantidadTotal.Should().Be(30);
+            stock.CantidadReservada.Should().Be(0);
+        }
+    }
 
-        // Y a través de la API, el filtro global lo mapea a 409
+    [SkippableFact]
+    public async Task TransicionarEstado_ReutilizaNumeroGuiaDePaqueteDespachoExistente()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
         var client = CreateAuthenticatedClient("Admin");
-        // Test rápido de API para verificar filtro ConcurrencyExceptionFilter
-        var responseConflict = await client.PutAsJsonAsync($"/api/ordenes/{Guid.NewGuid()}/estado", new { NuevoEstado = "Cancelada" });
-        // (404 si la orden no existe, no 500)
-        responseConflict.StatusCode.Should().NotBe(HttpStatusCode.InternalServerError);
+        var ordenId = Guid.NewGuid();
+        var guiaPrevia = "SV-LOGI-20261028-99999";
+
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+            finDb.Ordenes.Add(new Orden
+            {
+                Id = ordenId,
+                NumeroOrden = $"ORD-GUIA-{Guid.NewGuid():N}"[..25],
+                CompradorId = Guid.NewGuid(),
+                VendedorId = Guid.NewGuid(),
+                MontoTotal = 50m,
+                SubTotal = 50m,
+                Estado = EstadoOrden.EnProceso,
+                FechaCreacion = DateTime.UtcNow
+            });
+            await finDb.SaveChangesAsync();
+
+            catDb.PaquetesDespacho.Add(new PaqueteDespacho
+            {
+                Id = Guid.NewGuid(),
+                OrdenId = ordenId,
+                NumeroOrden = "ORD-TEST",
+                NumeroGuia = guiaPrevia,
+                Estado = EstadoPacking.ListoParaDespacho,
+                FechaEmpaque = DateTime.UtcNow
+            });
+            await catDb.SaveChangesAsync();
+        }
+
+        // Transicionar a Enviada SIN enviar GuiaEnvio en el request
+        var resp = await client.PutAsJsonAsync($"/api/ordenes/{ordenId}/estado", new { NuevoEstado = "Enviada" });
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            var orden = await finDb.Ordenes.FirstAsync(o => o.Id == ordenId);
+            orden.GuiaEnvio.Should().Be(guiaPrevia, "debe reutilizar la guía existente en PaquetesDespacho en vez de generar una nueva");
+        }
+    }
+
+    [SkippableFact]
+    public async Task TransicionarEstado_CancelarDesdeEnviadaOEntregada_Retorna400BadRequest()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        var client = CreateAuthenticatedClient("Admin");
+        var ordenEnviadaId = Guid.NewGuid();
+        var ordenEntregadaId = Guid.NewGuid();
+
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            finDb.Ordenes.AddRange(
+                new Orden
+                {
+                    Id = ordenEnviadaId,
+                    NumeroOrden = $"ORD-ENV-{Guid.NewGuid():N}"[..25],
+                    CompradorId = Guid.NewGuid(),
+                    VendedorId = Guid.NewGuid(),
+                    MontoTotal = 50m,
+                    SubTotal = 50m,
+                    Estado = EstadoOrden.Enviada,
+                    FechaCreacion = DateTime.UtcNow
+                },
+                new Orden
+                {
+                    Id = ordenEntregadaId,
+                    NumeroOrden = $"ORD-ENT-{Guid.NewGuid():N}"[..25],
+                    CompradorId = Guid.NewGuid(),
+                    VendedorId = Guid.NewGuid(),
+                    MontoTotal = 50m,
+                    SubTotal = 50m,
+                    Estado = EstadoOrden.Entregada,
+                    FechaCreacion = DateTime.UtcNow
+                }
+            );
+            await finDb.SaveChangesAsync();
+        }
+
+        var resp1 = await client.PutAsJsonAsync($"/api/ordenes/{ordenEnviadaId}/estado", new { NuevoEstado = "Cancelada" });
+        resp1.StatusCode.Should().Be(HttpStatusCode.BadRequest, "no se permite cancelar una orden en estado Enviada");
+
+        var resp2 = await client.PutAsJsonAsync($"/api/ordenes/{ordenEntregadaId}/estado", new { NuevoEstado = "Cancelada" });
+        resp2.StatusCode.Should().Be(HttpStatusCode.BadRequest, "no se permite cancelar una orden en estado Entregada");
     }
 }

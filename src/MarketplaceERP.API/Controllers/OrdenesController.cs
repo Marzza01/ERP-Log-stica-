@@ -248,7 +248,21 @@ public class OrdenesController : ControllerBase
                 break;
             case EstadoOrden.Enviada:
                 orden.FechaEnvio = DateTime.UtcNow;
-                orden.GuiaEnvio = req.GuiaEnvio ?? await _numeracionService.GenerarNumeroGuiaAsync(cancellationToken);
+                if (!string.IsNullOrWhiteSpace(req.GuiaEnvio))
+                {
+                    orden.GuiaEnvio = req.GuiaEnvio;
+                }
+                else
+                {
+                    // Si ya existe un PaqueteDespacho con NumeroGuia para esta orden, reutilizarlo
+                    var paqueteExistente = await _catalogDb.PaquetesDespacho
+                        .Where(p => p.OrdenId == orden.Id && !string.IsNullOrWhiteSpace(p.NumeroGuia))
+                        .OrderByDescending(p => p.FechaEmpaque)
+                        .FirstOrDefaultAsync(cancellationToken);
+
+                    orden.GuiaEnvio = paqueteExistente?.NumeroGuia 
+                        ?? await _numeracionService.GenerarNumeroGuiaAsync(cancellationToken);
+                }
                 break;
             case EstadoOrden.Entregada:
                 orden.FechaEntregaReal = DateTime.UtcNow;
@@ -274,6 +288,20 @@ public class OrdenesController : ControllerBase
             {
                 _logger.LogInformation("Liberando reserva {ReservaId} por cancelación de orden {OrdenId}.", res.Id, orden.Id);
                 await _stockService.LiberarStockAsync(res.Id);
+            }
+        }
+        else if (nuevoEstado == EstadoOrden.Enviada)
+        {
+            // Confirmar despacho y descontar inventario físico de las reservas asociadas
+            var reservasDespacho = await _catalogDb.ReservasStock
+                .Where(r => r.OrdenId == orden.Id && (r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Comprometida
+                                                   || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Pendiente))
+                .ToListAsync(cancellationToken);
+
+            foreach (var res in reservasDespacho)
+            {
+                _logger.LogInformation("Confirmando despacho y descontando stock de reserva {ReservaId} para orden {OrdenId}.", res.Id, orden.Id);
+                await _stockService.ConfirmarDespachoAsync(res.Id);
             }
         }
 
