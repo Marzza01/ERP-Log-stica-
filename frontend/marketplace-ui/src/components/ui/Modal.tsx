@@ -3,7 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
-import React, { useEffect, useId, useRef } from 'react';
+import React, { useEffect } from 'react';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -14,45 +14,18 @@ interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   size?: 'sm' | 'md' | 'lg';
+  className?: string;
 }
 
-export default function Modal({ title, open, isOpen, onClose, children, footer, size = 'md' }: ModalProps) {
+export default function Modal({ title, open, isOpen, onClose, children, footer, size = 'md', className }: ModalProps) {
   const isModalOpen = open ?? isOpen ?? false;
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const onCloseRef = useRef(onClose);
-  const titleId = useId();
-
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
 
   useEffect(() => {
     if (!isModalOpen) return;
-
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    const frame = window.requestAnimationFrame(() => {
-      const firstFocusable = dialogRef.current?.querySelector<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-      );
-      (firstFocusable ?? dialogRef.current)?.focus();
-    });
-
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCloseRef.current();
-    };
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener('keydown', handler);
-      document.body.style.overflow = previousOverflow;
-      previousFocusRef.current?.focus();
-    };
-  }, [isModalOpen]);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isModalOpen, onClose]);
 
   if (!isModalOpen) return null;
 
@@ -60,18 +33,10 @@ export default function Modal({ title, open, isOpen, onClose, children, footer, 
 
   return (
     <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div
-        ref={dialogRef}
-        className="modal"
-        style={{ maxWidth: maxW }}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-      >
+      <div className={`modal ${className ?? ''}`} style={{ maxWidth: maxW }}>
         <div className="modal-header">
-          <span className="modal-title" id={titleId}>{title}</span>
-          <button className="icon-btn" onClick={onClose} style={{ border: 'none' }} aria-label={`Cerrar ${title}`}>
+          <span className="modal-title">{title}</span>
+          <button className="icon-btn" onClick={onClose} style={{ border: 'none' }}>
             <X size={14} />
           </button>
         </div>

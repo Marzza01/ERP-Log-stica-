@@ -13,6 +13,7 @@ import {
   STAT_CARDS_CONFIG,
   type StatCardKey,
 } from '../../constants/kpiDetails';
+import { ZoneBarChart, CompositionChart, type CompositionItem } from './kpi-charts';
 
 export type SelectedKpiItem =
   | { type: 'kpi'; kpi: Kpi }
@@ -37,9 +38,9 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
 
   const res = data?.resumenEjecutivo;
   const periodo = data?.periodo;
-  const totalOrdenes = res?.totalOrdenes ?? 0;
-  const ordenesEntregadas = res?.ordenesEntregadas ?? 0;
-  const ordenesCanceladas = res?.ordenesCanceladas ?? 0;
+  const totalOrdenes = Math.max(0, res?.totalOrdenes ?? 0);
+  const ordenesEntregadas = Math.max(0, res?.ordenesEntregadas ?? 0);
+  const ordenesCanceladas = Math.max(0, res?.ordenesCanceladas ?? 0);
   const ordenesEnCurso = Math.max(0, totalOrdenes - ordenesEntregadas - ordenesCanceladas);
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -90,6 +91,124 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
     }
 
     const recomendacion = config.recomendaciones[currentKpi.semaforo] ?? '';
+
+    // Renderizado del componente visual específico para este KPI (Gráficos A y B)
+    const renderKpiVisuals = () => {
+      let compositionComponent: React.ReactNode = null;
+
+      switch (currentKpi.numero) {
+        case 1: { // Fill Rate → Composición: Entregadas / Canceladas / En curso
+          const compItems: CompositionItem[] = [
+            { nombre: 'Entregadas', valor: ordenesEntregadas, color: 'var(--green)' },
+            { nombre: 'En curso', valor: ordenesEnCurso, color: 'var(--blue)' },
+            { nombre: 'Canceladas', valor: ordenesCanceladas, color: 'var(--red)' },
+          ];
+          compositionComponent = (
+            <CompositionChart
+              tipo="donut"
+              datos={compItems}
+              centroTitulo={totalOrdenes > 0 ? `${((ordenesEntregadas / totalOrdenes) * 100).toFixed(1)}%` : '0%'}
+              centroSubtitulo="Fill Rate"
+            />
+          );
+          break;
+        }
+
+        case 3: { // Tasa Cancelación → Canceladas vs Resto de órdenes
+          const restoOrdenes = Math.max(0, totalOrdenes - ordenesCanceladas);
+          const compItems: CompositionItem[] = [
+            { nombre: 'Canceladas', valor: ordenesCanceladas, color: 'var(--red)' },
+            { nombre: 'Resto de órdenes', valor: restoOrdenes, color: 'var(--blue)' },
+          ];
+          compositionComponent = (
+            <CompositionChart
+              tipo="donut"
+              datos={compItems}
+              centroTitulo={totalOrdenes > 0 ? `${((ordenesCanceladas / totalOrdenes) * 100).toFixed(1)}%` : '0%'}
+              centroSubtitulo="Cancelación"
+            />
+          );
+          break;
+        }
+
+        case 6: { // Tasa Devolución RMA → RMAs vs Entregadas sin devolución
+          const totalRmas = Math.max(0, res?.totalRmasPeriodo ?? 0);
+          const entregadasSinRma = Math.max(0, ordenesEntregadas - totalRmas);
+          const compItems: CompositionItem[] = [
+            { nombre: 'Solicitudes RMA', valor: totalRmas, color: 'var(--red)' },
+            { nombre: 'Entregadas sin RMA', valor: entregadasSinRma, color: 'var(--green)' },
+          ];
+          compositionComponent = (
+            <CompositionChart
+              tipo="donut"
+              datos={compItems}
+              centroTitulo={ordenesEntregadas > 0 ? `${((totalRmas / ordenesEntregadas) * 100).toFixed(1)}%` : '0%'}
+              centroSubtitulo="Tasa RMA"
+            />
+          );
+          break;
+        }
+
+        case 7: { // Precisión 3-Way Match → Conformes vs Con discrepancias (derivado)
+          const auditadas = Math.max(0, res?.totalMatches3Way ?? 0);
+          const conformes = auditadas > 0 ? Math.round((currentKpi.valor / 100) * auditadas) : 0;
+          const discrepancias = Math.max(0, auditadas - conformes);
+          const compItems: CompositionItem[] = [
+            { nombre: 'Conformes', valor: conformes, color: 'var(--green)', badge: 'estimado' },
+            { nombre: 'Con discrepancias', valor: discrepancias, color: 'var(--yellow)', badge: 'estimado' },
+          ];
+          compositionComponent = (
+            <CompositionChart
+              tipo="donut"
+              datos={compItems}
+              centroTitulo={`${currentKpi.valor.toLocaleString('es-SV', { maximumFractionDigits: 1 })}%`}
+              centroSubtitulo="Conformes"
+            />
+          );
+          break;
+        }
+
+        case 8: { // Margen Comisión → de cada $100 vendidos: Comisión retenida vs Resto
+          const comisionValor = Math.max(0, currentKpi.valor);
+          const restoValor = Math.max(0, 100 - comisionValor);
+          const compItems: CompositionItem[] = [
+            { nombre: 'Comisión retenida', valor: comisionValor, color: 'var(--green)', badge: 'referencial' },
+            { nombre: 'Resto para vendedores', valor: restoValor, color: 'var(--blue)', badge: 'referencial' },
+          ];
+          compositionComponent = (
+            <CompositionChart
+              tipo="donut"
+              datos={compItems}
+              centroTitulo={`${currentKpi.valor.toLocaleString('es-SV', { maximumFractionDigits: 1 })}%`}
+              centroSubtitulo="Comisión"
+            />
+          );
+          break;
+        }
+
+        default:
+          // OTIF (2), Tiempo Ciclo Pedido (4), Rotación de Inventario (5) -> Solo gráfico A
+          break;
+      }
+
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Gráfico A: Valor vs Meta con franjas semafóricas */}
+          <ZoneBarChart
+            valor={currentKpi.valor}
+            meta={currentKpi.meta}
+            unidad={currentKpi.unidad}
+            sentido={config.sentido}
+            umbrales={config.umbrales}
+            color={color}
+            titulo={config.titulo}
+          />
+
+          {/* Gráfico B: Donut de composición con datos reales */}
+          {compositionComponent}
+        </div>
+      );
+    };
 
     // Render de datos del período específicos por KPI
     const renderRelatedData = () => {
@@ -264,6 +383,12 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
             />
           </div>
 
+          {/* Sección VISUALIZACIÓN */}
+          <div className="kpi-detail-section">
+            <span className="kpi-detail-section-title">Visualización</span>
+            {renderKpiVisuals()}
+          </div>
+
           {/* Qué mide */}
           <div className="kpi-detail-section">
             <span className="kpi-detail-section-title">¿Qué mide este indicador?</span>
@@ -332,7 +457,7 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
 
   const tasaEntrega = totalOrdenes > 0 ? ((ordenesEntregadas / totalOrdenes) * 100).toFixed(1) : '0.0';
   const tasaCancel = totalOrdenes > 0 ? ((ordenesCanceladas / totalOrdenes) * 100).toFixed(1) : '0.0';
-  const comisionMonto = res?.totalComisionGenerada ?? 0;
+  const comisionMonto = Math.max(0, res?.totalComisionGenerada ?? 0);
   // Valores derivados estimados de comisión
   const ventasEstimadasBase = comisionMonto > 0 ? comisionMonto / 0.10 : 0;
   const porcionVendedoresEstimada = ventasEstimadasBase * 0.90;
@@ -354,6 +479,21 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
                   {tasaEntrega}% tasa de entrega
                 </span>
               </div>
+            </div>
+
+            {/* Sección Visualización */}
+            <div className="kpi-detail-section">
+              <span className="kpi-detail-section-title">Visualización</span>
+              <CompositionChart
+                tipo="donut"
+                datos={[
+                  { nombre: 'Entregadas', valor: ordenesEntregadas, color: 'var(--green)' },
+                  { nombre: 'En curso', valor: ordenesEnCurso, color: 'var(--blue)' },
+                  { nombre: 'Canceladas', valor: ordenesCanceladas, color: 'var(--red)' },
+                ]}
+                centroTitulo={totalOrdenes.toLocaleString('es-SV')}
+                centroSubtitulo="Órdenes"
+              />
             </div>
 
             <div className="kpi-detail-section">
@@ -387,7 +527,8 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
           </>
         );
 
-      case 'ordenes_entregadas':
+      case 'ordenes_entregadas': {
+        const pendientesYCanceladas = Math.max(0, totalOrdenes - ordenesEntregadas);
         return (
           <>
             <div className="kpi-detail-hero">
@@ -402,6 +543,20 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
                   {tasaEntrega}% del total
                 </span>
               </div>
+            </div>
+
+            {/* Sección Visualización */}
+            <div className="kpi-detail-section">
+              <span className="kpi-detail-section-title">Visualización</span>
+              <CompositionChart
+                tipo="donut"
+                datos={[
+                  { nombre: 'Entregadas', valor: ordenesEntregadas, color: 'var(--green)' },
+                  { nombre: 'Pendientes y Canceladas', valor: pendientesYCanceladas, color: 'var(--yellow)' },
+                ]}
+                centroTitulo={`${tasaEntrega}%`}
+                centroSubtitulo="Entregadas"
+              />
             </div>
 
             <div className="kpi-detail-section">
@@ -430,9 +585,11 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
             </div>
           </>
         );
+      }
 
       case 'canceladas': {
         const cancelOk = Number(tasaCancel) <= 5.0;
+        const resto = Math.max(0, totalOrdenes - ordenesCanceladas);
         return (
           <>
             <div className="kpi-detail-hero">
@@ -447,6 +604,21 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
                   {tasaCancel}% del total
                 </span>
               </div>
+            </div>
+
+            {/* Sección Visualización */}
+            <div className="kpi-detail-section">
+              <span className="kpi-detail-section-title">Visualización</span>
+              <CompositionChart
+                tipo="donut"
+                datos={[
+                  { nombre: 'Canceladas', valor: ordenesCanceladas, color: 'var(--red)' },
+                  { nombre: 'Resto de órdenes', valor: resto, color: 'var(--blue)' },
+                ]}
+                centroTitulo={`${tasaCancel}%`}
+                centroSubtitulo="Canceladas"
+                textoReferenciaMeta="Meta institucional: ≤ 5.0% de cancelaciones"
+              />
             </div>
 
             <div className="kpi-detail-section">
@@ -494,6 +666,20 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
                   Tarifa pactada: 10%
                 </span>
               </div>
+            </div>
+
+            {/* Sección Visualización */}
+            <div className="kpi-detail-section">
+              <span className="kpi-detail-section-title">Visualización</span>
+              <CompositionChart
+                tipo="stacked-bar"
+                esMontoDinero={true}
+                datos={[
+                  { nombre: 'Marketplace (10%)', valor: comisionMonto, color: 'var(--green)', badge: 'estimado', esMontoDinero: true },
+                  { nombre: 'Vendedores (90%)', valor: porcionVendedoresEstimada, color: 'var(--blue)', badge: 'estimado', esMontoDinero: true },
+                ]}
+                textoReferenciaMeta="Split proyectado de ingresos transaccionales (10% / 90%)"
+              />
             </div>
 
             <div className="kpi-detail-section">

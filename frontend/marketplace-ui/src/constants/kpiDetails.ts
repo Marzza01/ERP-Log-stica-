@@ -12,6 +12,7 @@ export interface ThresholdConfig {
 export interface KpiConfig {
   numero: number;
   titulo: string;
+  descripcionCorta?: string;
   queMide: string;
   formula: string;
   sentido: 'mayor' | 'menor'; // mayor es mejor vs menor es mejor
@@ -31,6 +32,7 @@ export interface StatCardConfig {
   key: StatCardKey;
   titulo: string;
   subtitulo: string;
+  descripcionCorta?: string;
   queMide: string;
   modulo: {
     nombre: string;
@@ -45,6 +47,7 @@ export const KPI_DETAILS_CONFIG: Record<number, KpiConfig> = {
   1: {
     numero: 1,
     titulo: 'Fill Rate',
+    descripcionCorta: 'Órdenes completas entregadas',
     queMide: 'Porcentaje de órdenes de clientes que son completadas y entregadas exitosamente respecto al total de órdenes generadas.',
     formula: '(Órdenes Entregadas / Total Órdenes) × 100',
     sentido: 'mayor',
@@ -65,6 +68,7 @@ export const KPI_DETAILS_CONFIG: Record<number, KpiConfig> = {
   2: {
     numero: 2,
     titulo: 'OTIF (On-Time In-Full)',
+    descripcionCorta: 'Entregas a tiempo y completas',
     queMide: 'Porcentaje de pedidos entregados puntualmente (dentro de la fecha estimada) y con el 100% de los ítems requeridos.',
     formula: '(Órdenes a Tiempo y Completas / Total Órdenes con Fecha Estimada) × 100',
     sentido: 'mayor',
@@ -85,6 +89,7 @@ export const KPI_DETAILS_CONFIG: Record<number, KpiConfig> = {
   3: {
     numero: 3,
     titulo: 'Tasa de Cancelación',
+    descripcionCorta: 'Órdenes canceladas',
     queMide: 'Proporción de pedidos cancelados (por falta de stock, rechazo de pago o anulación del cliente) sobre el total recibido.',
     formula: '(Órdenes Canceladas / Total Órdenes) × 100',
     sentido: 'menor',
@@ -105,6 +110,7 @@ export const KPI_DETAILS_CONFIG: Record<number, KpiConfig> = {
   4: {
     numero: 4,
     titulo: 'Tiempo Ciclo Pedido',
+    descripcionCorta: 'Horas del pedido a la entrega',
     queMide: 'Tiempo promedio transcurrido en horas desde que la orden entra al sistema hasta su entrega efectiva al comprador.',
     formula: 'Promedio(FechaEntregaReal - FechaCreacion) en horas',
     sentido: 'menor',
@@ -125,6 +131,7 @@ export const KPI_DETAILS_CONFIG: Record<number, KpiConfig> = {
   5: {
     numero: 5,
     titulo: 'Rotación de Inventario',
+    descripcionCorta: 'Veces que rota el stock',
     queMide: 'Número de veces que el inventario disponible en almacén se vende y renueva a lo largo del período evaluado.',
     formula: 'Ventas Totales ($) / Valor Total de Inventario Físico ($)',
     sentido: 'mayor',
@@ -145,6 +152,7 @@ export const KPI_DETAILS_CONFIG: Record<number, KpiConfig> = {
   6: {
     numero: 6,
     titulo: 'Tasa de Devolución RMA',
+    descripcionCorta: 'Órdenes con devolución',
     queMide: 'Porcentaje de órdenes entregadas que generan una solicitud de devolución o reclamo de garantía (RMA).',
     formula: '(Total Solicitudes RMA / Órdenes Entregadas) × 100',
     sentido: 'menor',
@@ -165,6 +173,7 @@ export const KPI_DETAILS_CONFIG: Record<number, KpiConfig> = {
   7: {
     numero: 7,
     titulo: 'Precisión 3-Way Match',
+    descripcionCorta: 'Documentos conciliados',
     queMide: 'Porcentaje de auditorías tridireccionales conformes entre Orden de Compra, Factura de Proveedor y Recepción en Bodega.',
     formula: '(Matches Conformes / Total Matches Auditados) × 100',
     sentido: 'mayor',
@@ -185,6 +194,7 @@ export const KPI_DETAILS_CONFIG: Record<number, KpiConfig> = {
   8: {
     numero: 8,
     titulo: 'Margen Comisión Marketplace',
+    descripcionCorta: 'Comisión sobre ventas',
     queMide: 'Porcentaje promedio de comisión retenido por el marketplace sobre las ventas brutas de los vendedores asociados.',
     formula: '(Comisión Total Marketplace / Ventas Totales Brutas) × 100',
     sentido: 'mayor',
@@ -212,6 +222,7 @@ export const STAT_CARDS_CONFIG: Record<StatCardKey, StatCardConfig> = {
     key: 'total_ordenes',
     titulo: 'Total de Órdenes Recibidas',
     subtitulo: 'Volumen consolidado de demanda',
+    descripcionCorta: 'Volumen total del período',
     queMide: 'Registra la totalidad de pedidos generados en la plataforma dentro del período seleccionado, incluyendo órdenes completadas, en curso y canceladas.',
     modulo: { nombre: 'Órdenes', ruta: '/ordenes' },
   },
@@ -219,6 +230,7 @@ export const STAT_CARDS_CONFIG: Record<StatCardKey, StatCardConfig> = {
     key: 'ordenes_entregadas',
     titulo: 'Órdenes Entregadas con Éxito',
     subtitulo: 'Cumplimiento efectivo de despacho',
+    descripcionCorta: 'Completadas con éxito',
     queMide: 'Contabiliza los pedidos que finalizaron su ciclo de vida con entrega comprobada al comprador, determinando la tasa de cumplimiento del negocio.',
     modulo: { nombre: 'Órdenes', ruta: '/ordenes' },
   },
@@ -226,6 +238,7 @@ export const STAT_CARDS_CONFIG: Record<StatCardKey, StatCardConfig> = {
     key: 'canceladas',
     titulo: 'Órdenes Canceladas',
     subtitulo: 'Incidencias y pedidos anulados',
+    descripcionCorta: 'Requieren atención',
     queMide: 'Pedidos interrumpidos por falta de inventario, problemas de pago o solicitud del cliente. Su volumen impacta directamente en el Fill Rate y satisfacción.',
     modulo: { nombre: 'Órdenes', ruta: '/ordenes' },
   },
@@ -233,7 +246,69 @@ export const STAT_CARDS_CONFIG: Record<StatCardKey, StatCardConfig> = {
     key: 'comision_generada',
     titulo: 'Comisión Generada por Marketplace',
     subtitulo: 'Monetización e intermediación comercial',
+    descripcionCorta: 'Ingreso del marketplace',
     queMide: 'Ingreso acumulado por el marketplace derivado de la comisión porcentual (10%) aplicada a las ventas brutas de los vendedores de la plataforma.',
     modulo: { nombre: 'Liquidaciones', ruta: '/liquidaciones' },
   },
 };
+
+/* ─── Tipos y constantes unificadas para visibilidad del Dashboard ─── */
+
+/** Clave única para cada tarjeta del Dashboard (4 stat + 8 kpi) */
+export type KpiCardKey = `kpi_${number}`;
+export type DashboardCardKey = StatCardKey | KpiCardKey;
+
+/** Las 4 claves de resumen ejecutivo, en orden de renderizado */
+export const STAT_CARD_KEYS: StatCardKey[] = [
+  'total_ordenes',
+  'ordenes_entregadas',
+  'canceladas',
+  'comision_generada',
+];
+
+/** Las 8 claves KPI, derivadas de KPI_DETAILS_CONFIG */
+export const KPI_CARD_KEYS: KpiCardKey[] = Object.keys(KPI_DETAILS_CONFIG)
+  .map(n => `kpi_${n}` as KpiCardKey);
+
+/** Todas las 12 claves del Dashboard */
+export const ALL_DASHBOARD_CARD_KEYS: DashboardCardKey[] = [
+  ...STAT_CARD_KEYS,
+  ...KPI_CARD_KEYS,
+];
+
+/** Mapa clave → etiqueta legible (single source of truth para nombres) */
+export const CARD_LABELS_MAP: Record<DashboardCardKey, string> = {
+  ...Object.fromEntries(
+    STAT_CARD_KEYS.map(k => [k, STAT_CARDS_CONFIG[k].titulo])
+  ),
+  ...Object.fromEntries(
+    Object.entries(KPI_DETAILS_CONFIG).map(([n, cfg]) => [`kpi_${n}`, cfg.titulo])
+  ),
+} as Record<DashboardCardKey, string>;
+
+/** Mapa clave → nombre corto (coherente con las tarjetas del Dashboard) */
+export const CARD_SHORT_NAMES_MAP: Record<DashboardCardKey, string> = {
+  total_ordenes: 'Total Órdenes',
+  ordenes_entregadas: 'Órdenes Entregadas',
+  canceladas: 'Canceladas',
+  comision_generada: 'Comisión Generada',
+  kpi_1: 'Fill Rate',
+  kpi_2: 'OTIF (On-Time In-Full)',
+  kpi_3: 'Tasa de Cancelación',
+  kpi_4: 'Tiempo Ciclo Pedido',
+  kpi_5: 'Rotación de Inventario',
+  kpi_6: 'Tasa de Devolución RMA',
+  kpi_7: 'Precisión 3-Way Match',
+  kpi_8: 'Margen Comisión',
+};
+
+/** Mapa clave → descripción corta para el selector modal */
+export const CARD_DESCRIPTIONS_MAP: Record<DashboardCardKey, string> = {
+  total_ordenes: STAT_CARDS_CONFIG.total_ordenes.descripcionCorta ?? 'Volumen total del período',
+  ordenes_entregadas: STAT_CARDS_CONFIG.ordenes_entregadas.descripcionCorta ?? 'Completadas con éxito',
+  canceladas: STAT_CARDS_CONFIG.canceladas.descripcionCorta ?? 'Requieren atención',
+  comision_generada: STAT_CARDS_CONFIG.comision_generada.descripcionCorta ?? 'Ingreso del marketplace',
+  ...Object.fromEntries(
+    Object.entries(KPI_DETAILS_CONFIG).map(([n, cfg]) => [`kpi_${n}`, cfg.descripcionCorta ?? cfg.titulo])
+  ),
+} as Record<DashboardCardKey, string>;
