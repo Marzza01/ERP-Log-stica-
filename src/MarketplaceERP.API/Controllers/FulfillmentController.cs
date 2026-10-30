@@ -3,6 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
+using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Data;
@@ -25,11 +26,19 @@ public class FulfillmentController : ControllerBase
 {
     private readonly IFulfillmentService _fulfillmentService;
     private readonly FinanceDbContext _financeDb;
+    private readonly CatalogDbContext _catalogDb;
+    private readonly MarketplaceERP.Core.Interfaces.IStockService _stockService;
 
-    public FulfillmentController(IFulfillmentService fulfillmentService, FinanceDbContext financeDb)
+    public FulfillmentController(
+        IFulfillmentService fulfillmentService,
+        FinanceDbContext financeDb,
+        CatalogDbContext catalogDb,
+        MarketplaceERP.Core.Interfaces.IStockService stockService)
     {
         _fulfillmentService = fulfillmentService;
         _financeDb = financeDb;
+        _catalogDb = catalogDb;
+        _stockService = stockService;
     }
 
     /// <summary>
@@ -158,6 +167,16 @@ public class FulfillmentController : ControllerBase
             orden.Estado = EstadoOrden.Enviada;
             orden.FechaEnvio = DateTime.UtcNow;
             await _financeDb.SaveChangesAsync(cancellationToken);
+
+            // Confirmar despacho y descontar inventario físico de las reservas asociadas
+            var reservasDespacho = await _catalogDb.ReservasStock
+                .Where(r => r.OrdenId == orden.Id && r.Estado == EstadoReserva.Comprometida)
+                .ToListAsync(cancellationToken);
+
+            foreach (var res in reservasDespacho)
+            {
+                await _stockService.ConfirmarDespachoAsync(res.Id);
+            }
         }
 
         return Ok(new

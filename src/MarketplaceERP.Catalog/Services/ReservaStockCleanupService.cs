@@ -196,6 +196,14 @@ public class ReservaStockCleanupService : BackgroundService
                                 await stockService.LiberarStockAsync(res.Id);
                                 liberadas++;
                             }
+                            else if ((string.Equals(estadoStr, "Enviada", StringComparison.OrdinalIgnoreCase) ||
+                                      string.Equals(estadoStr, "Entregada", StringComparison.OrdinalIgnoreCase) ||
+                                      (int.TryParse(estadoStr, out var numEnv) && (numEnv == 3 || numEnv == 4))) // Enviada=3, Entregada=4
+                                     && res.Estado == EstadoReserva.Comprometida)
+                            {
+                                _logger.LogInformation("Reconciliador: Confirmando despacho para reserva {ReservaId} de orden {OrdenId} en estado {Estado}.", res.Id, res.OrdenId, estadoStr);
+                                await stockService.ConfirmarDespachoAsync(res.Id);
+                            }
                         }
                     }
                     catch (Exception exRes)

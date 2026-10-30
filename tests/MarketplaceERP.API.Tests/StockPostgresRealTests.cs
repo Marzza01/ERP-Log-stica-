@@ -595,4 +595,176 @@ public class StockPostgresRealTests : IAsyncLifetime
             stockDb.CantidadDisponible.Should().Be(10);
         }
     }
+
+    [SkippableFact]
+    public async Task TestJ_Reconciliador_OrdenEnviadaConReservaComprometida_JobLaConfirmaYDescuentaStockUnaSolaVez()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        var (productoId, _) = await CrearProductoConStockAsync(cantidadTotal: 50);
+        var ordenId = Guid.NewGuid();
+        var reservaId = Guid.NewGuid();
+
+        // 1. Crear orden Enviada en finance y reserva en estado Comprometida en catalog
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+            finDb.Ordenes.Add(new Orden
+            {
+                Id = ordenId,
+                NumeroOrden = $"ORD-TEST-{Guid.NewGuid():N}"[..20],
+                CompradorId = Guid.NewGuid(),
+                MontoTotal = 100m,
+                SubTotal = 95m,
+                CostoEnvio = 5m,
+                Estado = EstadoOrden.Enviada,
+                FechaCreacion = DateTime.UtcNow,
+                FechaEnvio = DateTime.UtcNow
+            });
+            await finDb.SaveChangesAsync();
+
+            catDb.ReservasStock.Add(new ReservaStock
+            {
+                Id = reservaId,
+                ProductoId = productoId,
+                OrdenId = ordenId,
+                Cantidad = 5,
+                Estado = EstadoReserva.Comprometida,
+                FechaReserva = DateTime.UtcNow.AddMinutes(-10),
+                FechaExpiracion = null
+            });
+
+            var stock = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stock.CantidadReservada = 5;
+            await catDb.SaveChangesAsync();
+        }
+
+        // 2. Ejecutar reconciliador del job de limpieza
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var cleanup = scope.ServiceProvider.GetServices<IHostedService>().OfType<ReservaStockCleanupService>().FirstOrDefault()
+                ?? new ReservaStockCleanupService(scope.ServiceProvider, scope.ServiceProvider.GetRequiredService<IConfiguration>(), Moq.Mock.Of<Microsoft.Extensions.Logging.ILogger<ReservaStockCleanupService>>());
+
+            await cleanup.PurgarReservasExpiradasAsync();
+        }
+
+        // 3. Verificar que la reserva pasó a Confirmada y el stock fue descontado una sola vez
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var reserva = await catDb.ReservasStock.FirstAsync(r => r.Id == reservaId);
+            reserva.Estado.Should().Be(EstadoReserva.Confirmada);
+
+            var stock = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stock.CantidadTotal.Should().Be(45);
+            stock.CantidadReservada.Should().Be(0);
+            stock.CantidadDisponible.Should().Be(45);
+        }
+
+        // 4. Ejecutar el reconciliador una segunda vez: idempotencia comprobada (no vuelve a descontar)
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var cleanup = scope.ServiceProvider.GetServices<IHostedService>().OfType<ReservaStockCleanupService>().FirstOrDefault()
+                ?? new ReservaStockCleanupService(scope.ServiceProvider, scope.ServiceProvider.GetRequiredService<IConfiguration>(), Moq.Mock.Of<Microsoft.Extensions.Logging.ILogger<ReservaStockCleanupService>>());
+
+            await cleanup.PurgarReservasExpiradasAsync();
+
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var stock = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stock.CantidadTotal.Should().Be(45);
+            stock.CantidadReservada.Should().Be(0);
+        }
+    }
+
+    [SkippableFact]
+    public async Task TestK_DespachoPorFulfillmentYTransicionEnviada_DescuentaStockUnaSolaVez()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(RawConnStr), "TEST_PG_CONNECTION no configurada");
+
+        var (productoId, _) = await CrearProductoConStockAsync(cantidadTotal: 30);
+        var ordenId = Guid.NewGuid();
+        var reservaId = Guid.NewGuid();
+        var paqueteId = Guid.NewGuid();
+
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var finDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+            finDb.Ordenes.Add(new Orden
+            {
+                Id = ordenId,
+                NumeroOrden = $"ORD-DESP-{Guid.NewGuid():N}"[..20],
+                CompradorId = Guid.NewGuid(),
+                MontoTotal = 100m,
+                SubTotal = 95m,
+                CostoEnvio = 5m,
+                Estado = EstadoOrden.EnProceso,
+                FechaCreacion = DateTime.UtcNow
+            });
+            await finDb.SaveChangesAsync();
+
+            catDb.ReservasStock.Add(new ReservaStock
+            {
+                Id = reservaId,
+                ProductoId = productoId,
+                OrdenId = ordenId,
+                Cantidad = 4,
+                Estado = EstadoReserva.Comprometida,
+                FechaReserva = DateTime.UtcNow
+            });
+
+            catDb.PaquetesDespacho.Add(new PaqueteDespacho
+            {
+                Id = paqueteId,
+                OrdenId = ordenId,
+                NumeroOrden = "ORD-DESP",
+                NumeroGuia = "SV-LOGI-TEST-001",
+                Transportista = "LOGIMKT Express",
+                Estado = EstadoPacking.ListoParaDespacho,
+                DepartamentoDestino = "San Salvador",
+                MunicipioDestino = "San Salvador",
+                DireccionEntrega = "Calle 1",
+                ContactoReceptor = "Juan",
+                TelefonoReceptor = "7888-8888"
+            });
+
+            var stock = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            stock.CantidadReservada = 4;
+            await catDb.SaveChangesAsync();
+        }
+
+        var customFactory = new CustomWebApplicationFactory();
+        var tokenAdmin = customFactory.GenerateToken("Admin", Guid.NewGuid().ToString());
+
+        var client = _factory!.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenAdmin);
+
+        // 1. Invocar dispatch por FulfillmentController
+        var respFulfillment = await client.PostAsync($"/api/fulfillment/paquetes/{paqueteId}/despachar", null);
+        respFulfillment.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // 2. Invocar transición directa a Enviada (por ejemplo concurrente o llamada a StockService.ConfirmarDespacho)
+        // Como la orden ya avanzó a Enviada por el despacho, invocamos ConfirmarDespachoAsync directamente sobre la reserva
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var stockService = scope.ServiceProvider.GetRequiredService<IStockService>();
+            await stockService.ConfirmarDespachoAsync(reservaId);
+        }
+
+        // 3. Validar stock final: descontado exactamente una sola vez (30 - 4 = 26, no 22)
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var catDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var stock = await catDb.StockFisico.FirstAsync(s => s.ProductoId == productoId);
+            var reserva = await catDb.ReservasStock.FirstAsync(r => r.Id == reservaId);
+
+            reserva.Estado.Should().Be(EstadoReserva.Confirmada);
+            stock.CantidadTotal.Should().Be(26, "el stock total solo debe haberse descontado una vez");
+            stock.CantidadReservada.Should().Be(0);
+            stock.CantidadDisponible.Should().Be(26);
+        }
+    }
 }

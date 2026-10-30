@@ -188,8 +188,16 @@ public class StockService : IStockService
             return;
         }
 
+        // Idempotencia: si ya fue Confirmada o Despachada, no hacer nada
         if (reserva.Estado == EstadoReserva.Confirmada || reserva.Estado == EstadoReserva.Despachada)
         {
+            return;
+        }
+
+        // Solo actúa sobre una reserva Comprometida
+        if (reserva.Estado != EstadoReserva.Comprometida)
+        {
+            _logger.LogWarning("ConfirmarDespacho: ReservaId={ReservaId} en estado {Estado} no puede ser confirmada para despacho.", reservaId, reserva.Estado);
             return;
         }
 
@@ -199,34 +207,74 @@ public class StockService : IStockService
             bool wasClosed = conn.State != ConnectionState.Open;
             if (wasClosed) await conn.OpenAsync();
 
+            await using var tx = await conn.BeginTransactionAsync();
             try
             {
-                await using var updateCmd = conn.CreateCommand();
-                updateCmd.CommandText = @"
+                // Descontar stock físico sin GREATEST: si dejaría total o reservada negativos, la condición WHERE falla y no actualiza
+                await using var updateStockCmd = conn.CreateCommand();
+                updateStockCmd.Transaction = (System.Data.Common.DbTransaction)tx;
+                updateStockCmd.CommandText = @"
                     UPDATE ""catalog"".""stock_fisico""
-                    SET ""CantidadTotal"" = GREATEST(0, ""CantidadTotal"" - @cant),
-                        ""CantidadReservada"" = GREATEST(0, ""CantidadReservada"" - @cant),
+                    SET ""CantidadTotal"" = ""CantidadTotal"" - @cant,
+                        ""CantidadReservada"" = ""CantidadReservada"" - @cant,
                         ""UltimaActualizacion"" = NOW()
-                    WHERE ""ProductoId"" = @prodId;";
+                    WHERE ""ProductoId"" = @prodId
+                      AND ""CantidadTotal"" >= @cant
+                      AND ""CantidadReservada"" >= @cant;";
 
-                var pCant = updateCmd.CreateParameter();
+                var pCant = updateStockCmd.CreateParameter();
                 pCant.ParameterName = "@cant";
                 pCant.Value = reserva.Cantidad;
-                updateCmd.Parameters.Add(pCant);
+                updateStockCmd.Parameters.Add(pCant);
 
-                var pId = updateCmd.CreateParameter();
+                var pId = updateStockCmd.CreateParameter();
                 pId.ParameterName = "@prodId";
                 pId.Value = reserva.ProductoId;
-                updateCmd.Parameters.Add(pId);
+                updateStockCmd.Parameters.Add(pId);
 
-                await updateCmd.ExecuteNonQueryAsync();
+                int rowsStock = await updateStockCmd.ExecuteNonQueryAsync();
+                if (rowsStock == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"No se pudo confirmar despacho para reserva {reservaId}: el descuento de {reserva.Cantidad} unidades dejaría CantidadTotal o CantidadReservada negativas para el producto {reserva.ProductoId}.");
+                }
 
+                // Actualizar estado de la reserva atómicamente en la misma transacción solo si sigue en Comprometida
+                await using var updateReservaCmd = conn.CreateCommand();
+                updateReservaCmd.Transaction = (System.Data.Common.DbTransaction)tx;
+                updateReservaCmd.CommandText = @"
+                    UPDATE ""catalog"".""reservas_stock""
+                    SET ""Estado"" = 'Confirmada',
+                        ""FechaConfirmacion"" = NOW()
+                    WHERE ""Id"" = @resId
+                      AND ""Estado"" = 'Comprometida';";
+
+                var pResId = updateReservaCmd.CreateParameter();
+                pResId.ParameterName = "@resId";
+                pResId.Value = reserva.Id;
+                updateReservaCmd.Parameters.Add(pResId);
+
+                int rowsRes = await updateReservaCmd.ExecuteNonQueryAsync();
+                if (rowsRes == 0)
+                {
+                    // Otra ejecución concurrente ya confirmó la reserva o cambió su estado: rollback
+                    await tx.RollbackAsync();
+                    return;
+                }
+
+                await tx.CommitAsync();
+
+                // Refrescar el estado de la entidad en memoria
                 reserva.Estado = EstadoReserva.Confirmada;
                 reserva.FechaConfirmacion = DateTime.UtcNow;
-                await _dbContext.SaveChangesAsync();
 
                 _logger.LogInformation("Reserva {ReservaId} confirmada. Stock total y reservado decrementados en {Cantidad}.",
                     reservaId, reserva.Cantidad);
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
             }
             finally
             {
@@ -238,8 +286,14 @@ public class StockService : IStockService
             var stock = await _dbContext.StockFisico.FirstOrDefaultAsync(s => s.ProductoId == reserva.ProductoId);
             if (stock != null)
             {
-                stock.CantidadTotal = Math.Max(0, stock.CantidadTotal - reserva.Cantidad);
-                stock.CantidadReservada = Math.Max(0, stock.CantidadReservada - reserva.Cantidad);
+                if (stock.CantidadTotal < reserva.Cantidad || stock.CantidadReservada < reserva.Cantidad)
+                {
+                    throw new InvalidOperationException(
+                        $"No se pudo confirmar despacho para reserva {reservaId}: el descuento dejaría CantidadTotal o CantidadReservada negativas.");
+                }
+
+                stock.CantidadTotal -= reserva.Cantidad;
+                stock.CantidadReservada -= reserva.Cantidad;
                 stock.UltimaActualizacion = DateTime.UtcNow;
             }
 

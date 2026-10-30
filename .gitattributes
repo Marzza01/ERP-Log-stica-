@@ -1,0 +1,10 @@
+# Auto detect text files and perform LF normalization on checkin
+* text=auto
+
+# Source code and documents: force LF endings
+*.cs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+

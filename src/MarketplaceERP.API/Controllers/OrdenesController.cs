@@ -294,8 +294,7 @@ public class OrdenesController : ControllerBase
         {
             // Confirmar despacho y descontar inventario físico de las reservas asociadas
             var reservasDespacho = await _catalogDb.ReservasStock
-                .Where(r => r.OrdenId == orden.Id && (r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Comprometida
-                                                   || r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Pendiente))
+                .Where(r => r.OrdenId == orden.Id && r.Estado == MarketplaceERP.Catalog.Entities.EstadoReserva.Comprometida)
                 .ToListAsync(cancellationToken);
 
             foreach (var res in reservasDespacho)
