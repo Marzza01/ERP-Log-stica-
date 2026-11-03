@@ -4,6 +4,7 @@
  */
 
 using MarketplaceERP.API.Security;
+using MarketplaceERP.API.Services;
 using System.Threading.RateLimiting;
 using MarketplaceERP.Catalog;
 using MarketplaceERP.Core;
@@ -16,6 +17,18 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+
+MaintenanceCommand command;
+try { command = MaintenanceCommand.Parse(args); }
+catch (ArgumentException)
+{
+    Console.Error.WriteLine("Comando de mantenimiento inválido. No se inició HTTP ni mantenimiento.");
+    Environment.ExitCode = 2;
+    return;
+}
+if (await MaintenanceCommand.RunMaintenanceIfRequestedAsync(command, async () =>
+    { Environment.ExitCode = await MaintenanceRunner.RunAsync(command); }))
+    return;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -201,13 +214,6 @@ app.MapGet("/health/ready", async (
 }).AllowAnonymous();
 
 app.MapControllers();
-
-// ── Secuencia de arranque única, ordenada y asíncrona (StartupInitializer) ────
-await MarketplaceERP.API.Services.StartupInitializer.InicializarAsync(
-    app.Services,
-    app.Configuration,
-    app.Environment,
-    app.Logger);
 
 app.Run();
 

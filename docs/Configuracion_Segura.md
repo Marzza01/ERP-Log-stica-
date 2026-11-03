@@ -107,9 +107,13 @@ variable actualizará automáticamente las credenciales persistidas.
 invoca bootstrap. La configuración de pasarela de main conserva sus rechazos actuales;
 añadir conexión y JWT no certifica el arranque productivo ni habilita pagos reales.
 
-El `StartupInitializer` actual de main todavía puede ejecutar migraciones y seed al
-iniciar la API. Su separación corresponde a U4. Por ello las comprobaciones de U1
-**no ejecutan el host, endpoints de salud, Docker, EF ni conexiones PostgreSQL**.
+U4 separa `StartupInitializer` del camino HTTP. Migraciones, bootstrap Admin y seed
+demo requieren comandos CLI explícitos y confirmación del destino; consulte
+[Arranque y mantenimiento U4](Arranque_Mantenimiento_U4.md). Configurar secretos o
+`Seed:DemoData` no los activa. La operación real de esos comandos sigue pendiente
+de auditoría y autorización; ninguna validación de esta entrega arranca servicios.
+Las comprobaciones originales U1 **no ejecutaron el host, endpoints de salud, Docker,
+EF ni conexiones PostgreSQL**. Production sigue sujeto al bloqueo de pagos de main.
 
 Las pruebas U1 cargan JSON y el proveedor de entorno de .NET con valores sintéticos
 aislados, sin instanciar la API ni un proveedor de base. La revisión de Compose es

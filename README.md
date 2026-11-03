@@ -312,7 +312,7 @@ El script levantará automáticamente la API de .NET (puerto 5000) y la interfaz
 
 ### Inicio Manual por Consola
 
-Antes de ejecutar la API, configure conexión y firma JWT fuera del repositorio siguiendo [Configuración segura](docs/Configuracion_Segura.md). Los archivos versionados no incluyen secretos operativos. El arranque actual de main todavía puede ejecutar inicialización y migraciones; iniciar la API requiere autorización separada.
+Antes de ejecutar la API, configure conexión y firma JWT fuera del repositorio siguiendo [Configuración segura](docs/Configuracion_Segura.md). U4 separa el arranque HTTP de migraciones y seeds mediante [mantenimiento explícito](docs/Arranque_Mantenimiento_U4.md). Iniciar servicios o ejecutar mantenimiento requiere revisión y autorización separadas; el bloqueo productivo de pagos se conserva.
 
 1. **Backend (.NET API):**
    ```bash
