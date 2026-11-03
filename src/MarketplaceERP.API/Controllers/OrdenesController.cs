@@ -17,7 +17,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Requisito: PDF1 R-OMS-01 a R-OMS-08
 /// </summary>
 [ApiController]
-[Authorize(Roles = "Admin,Vendedor")]
+[Authorize(Roles = "Admin")]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class OrdenesController : ControllerBase
@@ -100,6 +100,7 @@ public class OrdenesController : ControllerBase
     // ── POST /api/ordenes ─────────────────────────────────────────────────────
     /// <summary>Crea una nueva orden en estado Pendiente.</summary>
     [HttpPost(Name = "CrearOrden")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Crear([FromBody] CrearOrdenRequest req, CancellationToken cancellationToken)

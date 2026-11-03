@@ -4,6 +4,7 @@
  */
 
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MarketplaceERP.API.Controllers;
@@ -14,6 +15,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Requisito: PDF1 R-CONT-01 a R-CONT-05
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class ContabilidadController : ControllerBase

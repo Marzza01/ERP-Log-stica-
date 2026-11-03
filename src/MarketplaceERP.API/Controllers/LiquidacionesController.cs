@@ -4,6 +4,7 @@
  */
 
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MarketplaceERP.API.Controllers;
@@ -15,6 +16,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Requisito: PDF1 Módulo de Comisiones y Liquidaciones.
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class LiquidacionesController : ControllerBase

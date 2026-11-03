@@ -7,6 +7,7 @@ using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Core.Data;
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,6 +19,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Requisito: PDF1 R-COMP-01 a R-COMP-06
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class ComprasController : ControllerBase

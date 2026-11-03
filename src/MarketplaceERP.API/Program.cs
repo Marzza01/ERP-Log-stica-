@@ -3,7 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
-using System.Text;
+using MarketplaceERP.API.Security;
 using System.Threading.RateLimiting;
 using MarketplaceERP.Catalog;
 using MarketplaceERP.Core;
@@ -12,12 +12,10 @@ using MarketplaceERP.Core.Entities;
 using MarketplaceERP.Finance;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Shared.Settings;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -51,59 +49,7 @@ var jwtSettings = builder.Configuration
     .Get<JwtSettings>()
     ?? throw new InvalidOperationException("La configuración JWT es obligatoria. Verifica appsettings.json o variables de entorno.");
 
-// Validación estricta de Key y Expiration
-var isProduction = builder.Environment.IsProduction();
-if (isProduction)
-{
-    if (string.IsNullOrWhiteSpace(jwtSettings.Key) ||
-        jwtSettings.Key.Length < 32 ||
-        jwtSettings.Key.Contains("CAMBIA", StringComparison.OrdinalIgnoreCase) ||
-        jwtSettings.Key.Contains("DEV_ONLY", StringComparison.OrdinalIgnoreCase))
-    {
-        throw new InvalidOperationException("En Production, Jwt:Key no puede estar vacía, debe tener mínimo 32 caracteres y no puede contener palabras placeholder ('CAMBIA' o 'DEV_ONLY').");
-    }
-}
-else
-{
-    if (string.IsNullOrWhiteSpace(jwtSettings.Key) || jwtSettings.Key.Length < 32)
-    {
-        throw new InvalidOperationException("Jwt:Key debe tener al menos 32 caracteres. Configura appsettings.json o variables de entorno.");
-    }
-}
-
-if (jwtSettings.ExpirationMinutes > 1440)
-{
-    throw new InvalidOperationException("Jwt:ExpirationMinutes no puede superar el límite máximo de 1440 minutos (24 horas).");
-}
-
-// ── Autenticación JWT Bearer ──────────────────────────────────────────────────
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings.Issuer,
-        ValidAudience = jwtSettings.Audience,
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(jwtSettings.Key)),
-        ClockSkew = TimeSpan.Zero
-    };
-});
-
-builder.Services.AddAuthorization(options =>
-{
-    options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .Build();
-});
+builder.Services.AddMarketplaceSecurity(jwtSettings);
 
 // ── Rate Limiting nativo para Login ───────────────────────────────────────────
 builder.Services.AddRateLimiter(options =>

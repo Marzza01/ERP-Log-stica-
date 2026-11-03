@@ -21,7 +21,7 @@ namespace MarketplaceERP.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/reabastecimiento")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class ReabastecimientoController : ControllerBase
 {
     private readonly IReabastecimientoService _reabastecimiento;

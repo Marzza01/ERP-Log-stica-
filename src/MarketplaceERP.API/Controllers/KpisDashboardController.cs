@@ -7,6 +7,7 @@ using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -28,6 +29,7 @@ namespace MarketplaceERP.API.Controllers;
 ///   8. Margen de Comisión Marketplace (10%)
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("api/kpis-dashboard")]
 [Produces("application/json")]
 public class KpisDashboardController : ControllerBase
