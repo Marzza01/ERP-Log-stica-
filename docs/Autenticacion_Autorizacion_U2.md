@@ -1,10 +1,10 @@
-# U2 / U2.1 — Cierre transversal de autorización
+# U2 / U2.1 — Cierre transversal de autorización; actualización U3
 
 Base: `13e864fe5ece4559c498ab311859f402f90083ea`. Integración y respaldo U0: `abac4f34aad02cec20a1e3376c5305a98d5ade82`, con contenido API idéntico. Sin merge, staging ni commit. Este documento sustituye el veredicto previo: las restricciones de rol originales no demostraban aislamiento entre vendedores.
 
 ## Inventario y decisión final
 
-23 controladores, 83 acciones HTTP, 84 combinaciones método/ruta (GetAlertasStock tiene dos alias), más dos rutas de salud en Program. Resultado: **81 rutas de controladores Admin, una pública de login y dos excepciones de Comprador**. Ninguna ruta admite acceso por Vendedor. Todas las acciones privadas rechazan anónimos.
+23 controladores, 83 acciones HTTP, 84 combinaciones método/ruta (GetAlertasStock tiene dos alias), más dos rutas de salud en Program. Resultado: **80 rutas de controladores Admin, una pública de login y tres excepciones de Comprador** (U3 habilita lectura individual de la orden propia). Ninguna ruta admite acceso por Vendedor. Todas las acciones privadas rechazan anónimos.
 
 Se restringen temporalmente a Admin todas las operaciones y listados sobre inventario, WMS, RMA, fulfillment, órdenes, productos (incluido catálogo con stock), vendedores, proveedores y reabastecimiento sin ámbito demostrado. Compras, contabilidad, KPIs, liquidaciones, comisiones, usuarios, recuperación de pagos y expiración de reservas permanecen/requieren Admin. No se añaden excepciones AllowAnonymous. No se usa un ID o nombre enviado por el cliente como prueba de identidad.
 
@@ -14,7 +14,7 @@ La limitación Admin no implementa propiedad ni cambia los cuerpos de acciones. 
 
 Metadatos efectivos combinados con AND; C/A muestran el origen. “Lista/global” indica ausencia de ámbito por propietario, aunque haya filtros operativos. Los filtros operativos no se utilizan como identidad. Las columnas base e integración conservan la comparación previa. Los cuerpos no se ejecutaron.
 
-| Método y ruta | Roles efectivos U2.1 | Origen (C controlador; A acción) | Recurso | ID/nombre del cliente | Lista/global | Propietario demostrado | Política requerida | Base U1b | Integración/respaldo |
+| Método y ruta | Roles efectivos actuales (U3) | Origen (C controlador; A acción) | Recurso | ID/nombre del cliente | Lista/global | Propietario demostrado | Política requerida | Base U1b | Integración/respaldo |
 |---|---|---|---|---|---|---|---|---|---|
 | GET `/api/inventario/ajustes` | Admin | C: Admin; A: — | Ajuste y saldo de stock | No ID/nombre (filtros operativos si admite) | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Autenticado | Ausente |
 | POST `/api/inventario/ajustes` | Admin ∧ Admin | C: Admin; A: Admin | Ajuste y saldo de stock | Sí, cuerpo/archivo; no identidad | No (operación individual/configuración) | No demostrado; Admin es barrera, no propiedad | Admin | Autenticado ∧ Admin,Vendedor | Ausente |
@@ -67,11 +67,11 @@ Metadatos efectivos combinados con AND; C/A muestran el origen. “Lista/global�
 | GET `/api/Liquidaciones/historial` | Admin | C: Admin; A: — | Liquidación/vendedor | Sí, vendedorId del cliente; solo Admin | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Autenticado (fallback) | Autenticado ∧ Admin,Vendedor |
 | GET `/api/Liquidaciones/kpis-vendedores` | Admin | C: Admin; A: — | Liquidación/vendedor | No ID/nombre (filtros operativos si admite) | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Autenticado (fallback) | Autenticado ∧ Admin |
 | GET `/api/Liquidaciones/pendientes` | Admin | C: Admin; A: — | Liquidación/vendedor | No ID/nombre (filtros operativos si admite) | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Autenticado (fallback) | Autenticado ∧ Admin |
-| GET `/api/Ordenes` | Admin | C: Admin; A: — | Orden y métricas | No ID/nombre (filtros operativos si admite) | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Admin,Vendedor | Autenticado ∧ Admin,Vendedor |
-| GET `/api/Ordenes/{id:guid}` | Admin | C: Admin; A: — | Orden y métricas | Sí, ID de ruta | No (operación individual/configuración) | No demostrado; Admin es barrera, no propiedad | Admin | Admin,Vendedor | Autenticado ∧ Admin,Vendedor |
-| POST `/api/Ordenes` | Admin ∧ Admin | C: Admin; A: Admin | Orden y métricas | Sí, cuerpo/archivo; no identidad | No (operación individual/configuración) | No demostrado; Admin es barrera, no propiedad | Admin | Admin,Vendedor | Autenticado ∧ Admin |
-| PUT `/api/Ordenes/{id:guid}/estado` | Admin | C: Admin; A: — | Orden y métricas | Sí, ID de ruta | No (operación individual/configuración) | No demostrado; Admin es barrera, no propiedad | Admin | Admin,Vendedor | Autenticado ∧ Admin,Vendedor |
-| GET `/api/Ordenes/kpis` | Admin | C: Admin; A: — | Orden y métricas | No ID/nombre (filtros operativos si admite) | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Admin,Vendedor | Autenticado ∧ Admin,Vendedor |
+| GET `/api/Ordenes` | Autenticado ∧ Admin | C: Autenticado; A: Admin | Orden y métricas | No ID/nombre (filtros operativos si admite) | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Admin,Vendedor | Autenticado ∧ Admin,Vendedor |
+| GET `/api/Ordenes/{id:guid}` | Autenticado ∧ Admin,Comprador | C: Autenticado; A: Admin,Comprador | Orden y métricas | Sí, ID de ruta | No (operación individual/configuración) | Sí comprador: filtro Id y CompradorId desde NameIdentifier; DTO mínimo | Admin,Comprador | Admin,Vendedor | Autenticado ∧ Admin,Vendedor |
+| POST `/api/Ordenes` | Autenticado ∧ Admin | C: Autenticado; A: Admin | Orden y métricas | Sí, cuerpo/archivo; no identidad | No (operación individual/configuración) | No demostrado; Admin es barrera, no propiedad | Admin | Admin,Vendedor | Autenticado ∧ Admin |
+| PUT `/api/Ordenes/{id:guid}/estado` | Autenticado ∧ Admin | C: Autenticado; A: Admin | Orden y métricas | Sí, ID de ruta | No (operación individual/configuración) | No demostrado; Admin es barrera, no propiedad | Admin | Admin,Vendedor | Autenticado ∧ Admin,Vendedor |
+| GET `/api/Ordenes/kpis` | Autenticado ∧ Admin | C: Autenticado; A: Admin | Orden y métricas | No ID/nombre (filtros operativos si admite) | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Admin,Vendedor | Autenticado ∧ Admin,Vendedor |
 | GET `/api/productos` | Admin | C: Admin; A: — | Producto/stock | No ID/nombre (filtros operativos si admite) | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Autenticado | Autenticado |
 | GET `/api/productos/buscar` | Admin | C: Admin; A: — | Producto/stock | Sí, q/categoría/subcategoría; no identidad | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Autenticado | Autenticado |
 | GET `/api/productos/b2b` | Admin | C: Admin; A: — | Producto/stock | Sí, categoría; no identidad | Sí, listado/agregado sin ámbito vendedor | No demostrado; Admin es barrera, no propiedad | Admin | Autenticado | Autenticado |
@@ -151,3 +151,9 @@ Sin cambios de esquema, servicios, repositorios, modelos, DTO, frontend o lógic
 - `src/MarketplaceERP.API/Security/ApiSecurity.cs`
 - `tests/MarketplaceERP.Finance.Tests/AutorizacionU2Tests.cs`
 - `docs/Autenticacion_Autorizacion_U2.md`
+
+## Actualización U3 — lectura de orden propia
+
+Solo GET /api/Ordenes/{id:guid} cambia de Admin a Admin/Comprador. OrdenesController ahora exige autenticación a nivel de clase y rol explícito en cada acción: las otras cuatro siguen Admin. La consulta del comprador filtra simultáneamente Id y CompradorId derivado de NameIdentifier, antes de cargar Items; devuelve 404 idéntico para orden ajena o inexistente. Identidad ausente, vacía o contradictoria se rechaza. Admin conserva su respuesta original completa; Comprador recibe OrdenCompradorResponse sin SplitPago, transacciones, claves de idempotencia, hash, ni objetos de navegación. No existe edición de propietario. Vendedor permanece bloqueado incluso si VendedorId coincide: los artículos no acreditan pertenencia exclusiva de la orden.
+
+Se actualiza la excepción explícita en la prueba exhaustiva U2. Los 29 casos de middleware siguen pasando; se añaden nueve casos de acción real contra EF InMemory o rechazo antes de consultar (38 casos aislados en total). La compilación API sin restaurar pasó con nueve advertencias preexistentes CS0618 de Catalog y cero errores; el compilador manual de pruebas avisa CS1701 por xUnit en caché. No se ejecutó el runner xUnit completo ni PostgreSQL. Ver [análisis U3](Ordenes_Propiedad_U3.md) para modelo, contratos, alcance y riesgos. Las afirmaciones de validación de U2 anteriores son históricas; U3 añade pruebas locales de propiedad de comprador, sin demostrar integridad de datos históricos ni semántica relacional PostgreSQL.

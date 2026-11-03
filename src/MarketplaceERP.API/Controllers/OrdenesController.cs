@@ -3,6 +3,8 @@
  * Todos los derechos reservados © 2026
  */
 
+using System.Security.Claims;
+using MarketplaceERP.API.Contracts;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -17,7 +19,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Requisito: PDF1 R-OMS-01 a R-OMS-08
 /// </summary>
 [ApiController]
-[Authorize(Roles = "Admin")]
+[Authorize]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class OrdenesController : ControllerBase
@@ -39,6 +41,7 @@ public class OrdenesController : ControllerBase
     // ── GET /api/ordenes ──────────────────────────────────────────────────────
     /// <summary>Lista todas las órdenes con KPIs de tiempo de ciclo.</summary>
     [HttpGet(Name = "ListarOrdenes")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(IEnumerable<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Listar(
         [FromQuery] string? estado = null,
@@ -84,10 +87,40 @@ public class OrdenesController : ControllerBase
 
     // ── GET /api/ordenes/{id} ─────────────────────────────────────────────────
     [HttpGet("{id:guid}", Name = "ObtenerOrden")]
+    [Authorize(Roles = "Admin,Comprador")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Obtener(Guid id, CancellationToken cancellationToken)
     {
+        if (User.Identity?.IsAuthenticated != true) return Unauthorized();
+        var actorClaims = User.FindAll(ClaimTypes.NameIdentifier).Select(c => c.Value).ToArray();
+        if (actorClaims.Length == 0 || actorClaims.Any(value =>
+                !Guid.TryParse(value, out var actorId) || actorId == Guid.Empty) ||
+            actorClaims.Select(Guid.Parse).Distinct().Count() != 1)
+            return Unauthorized();
+
+        if (!User.IsInRole("Admin"))
+        {
+            if (!User.IsInRole("Comprador")) return Forbid();
+            var compradorId = Guid.Parse(actorClaims[0]);
+            // Apply ownership to the database query, before loading items or returning any data.
+            var propia = await _db.Ordenes.AsNoTracking()
+                .Where(o => o.Id == id && o.CompradorId == compradorId)
+                .Include(o => o.Items)
+                .SingleOrDefaultAsync(cancellationToken);
+            // Same response for another buyer's order and a nonexistent order.
+            if (propia is null) return NotFound();
+            return Ok(new OrdenCompradorResponse(
+                propia.Id, propia.NumeroOrden, propia.Estado.ToString(), propia.TipoCliente.ToString(),
+                propia.SubTotal, propia.ImpuestoIva, propia.CostoEnvio, propia.MontoTotal, propia.Moneda,
+                propia.TipoComprobante, propia.NumeroComprobanteFiscal, propia.CondicionPago,
+                propia.Transportista, propia.GuiaEnvio, propia.ZonaEnvio, propia.DireccionEntrega,
+                propia.FechaCreacion, propia.FechaAprobacion, propia.FechaEnvio,
+                propia.FechaEntregaEstimada, propia.FechaEntregaReal, propia.FechaCancelacion,
+                propia.Items.Select(i => new ItemOrdenCompradorResponse(
+                    i.ProductoId, i.SkuReferencia, i.NombreProducto, i.Cantidad, i.PrecioUnitario, i.Subtotal)).ToArray()));
+        }
+
         var orden = await _db.Ordenes
             .Include(o => o.Items)
             .Include(o => o.SplitPago)
@@ -158,6 +191,7 @@ public class OrdenesController : ControllerBase
     // ── PUT /api/ordenes/{id}/estado ──────────────────────────────────────────
     /// <summary>Transiciona la orden entre estados del OMS.</summary>
     [HttpPut("{id:guid}/estado", Name = "TransicionarEstadoOrden")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -224,6 +258,7 @@ public class OrdenesController : ControllerBase
     // ── GET /api/ordenes/kpis ─────────────────────────────────────────────────
     /// <summary>KPIs del OMS: fill rate, tiempos de ciclo, semáforo.</summary>
     [HttpGet("kpis", Name = "KpisOms")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> ObtenerKpis(CancellationToken cancellationToken)
     {

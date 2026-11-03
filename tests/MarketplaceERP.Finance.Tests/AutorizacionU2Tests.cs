@@ -159,6 +159,7 @@ public class AutorizacionU2Tests
             var publicLogin = controller == typeof(AuthController) && action.Name == nameof(AuthController.Login);
             var buyerCheckout = controller == typeof(CheckoutController) && action.Name == nameof(CheckoutController.ProcesarCheckout);
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
+            var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
             var metadata = controller.GetCustomAttributes(inherit: true).Concat(action.GetCustomAttributes(inherit: true)).ToArray();
             Assert.Equal(publicLogin, metadata.OfType<IAllowAnonymous>().Any());
             foreach (var alias in action.GetCustomAttributes<HttpMethodAttribute>())
@@ -169,7 +170,7 @@ public class AutorizacionU2Tests
                 Assert.False(string.IsNullOrWhiteSpace(verb));
                 Assert.Equal(publicLogin ? 200 : 401, await Probe(controller, action.Name, null));
                 Assert.Equal(publicLogin ? 200 : 403, await Probe(controller, action.Name, "Vendedor"));
-                Assert.Equal(publicLogin || buyerCheckout || buyerTracking ? 200 : 403,
+                Assert.Equal(publicLogin || buyerCheckout || buyerTracking || buyerOrder ? 200 : 403,
                     await Probe(controller, action.Name, "Comprador"));
                 Assert.Equal(buyerCheckout ? 403 : 200, await Probe(controller, action.Name, "Admin"));
                 if (!publicLogin)
