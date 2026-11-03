@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: marketplace_erp
       POSTGRES_USER: marketplace_user
-      POSTGRES_PASSWORD: marketplace_pass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD outside the repository}
     ports:
       - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
@@ -32,8 +32,8 @@ services:
       - "8080:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=marketplace_erp;Username=marketplace_user;Password=marketplace_pass;Include Error Detail=true"
-      Jwt__Key: "DEV_ONLY_CLAVE_SECRETA_MINIMO_32_CARACTERES_AQUI!!"
+      ConnectionStrings__DefaultConnection: "${CONNECTION_STRING:?Set CONNECTION_STRING outside the repository}"
+      Jwt__Key: ${JWT_KEY:?Set JWT_KEY outside the repository}
       Jwt__Issuer: "MarketplaceERP"
       Jwt__Audience: "MarketplaceERP.Clients"
       Jwt__ExpirationMinutes: "480"

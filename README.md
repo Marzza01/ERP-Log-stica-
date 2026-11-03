@@ -312,6 +312,8 @@ El script levantará automáticamente la API de .NET (puerto 5000) y la interfaz
 
 ### Inicio Manual por Consola
 
+Antes de ejecutar la API, configure conexión y firma JWT fuera del repositorio siguiendo [Configuración segura](docs/Configuracion_Segura.md). Los archivos versionados no incluyen secretos operativos. El arranque actual de main todavía puede ejecutar inicialización y migraciones; iniciar la API requiere autorización separada.
+
 1. **Backend (.NET API):**
    ```bash
    cd MarketplaceERP
