@@ -289,7 +289,7 @@ El proyecto sigue una arquitectura desacoplada Frontend/Backend diseñada para s
 ### ⚙️ Backend (Servidor y Lógica de Negocio)
 - **Framework:** .NET 8 (ASP.NET Core Web API).
 - **Patrones:** Domain-Driven Design (DDD) dividido en capas: `Catalog`, `Finance`, `Shared` y `API`.
-- **Persistencia:** Entity Framework Core + **PostgreSQL** (Puerto 5432).
+- **Persistencia:** Entity Framework Core + **PostgreSQL** (en Compose: `db:5432`, sin publicación al host).
 - **Seguridad:** Autenticación y autorización basada en claims JWT.
 - **Documentación API:** Swagger (OpenAPI) disponible en `/swagger`.
 - **Health Checks:** Endpoint `/health` para monitoreo de conectividad de servicios.
@@ -301,7 +301,7 @@ El proyecto sigue una arquitectura desacoplada Frontend/Backend diseñada para s
 ### Requisitos Previos
 1. **Node.js** (v18+)
 2. **.NET 8 SDK**
-3. **PostgreSQL** (Puerto `5432`)
+3. **PostgreSQL** en un destino expresamente autorizado. Compose usa su servicio interno `db:5432` sin publicar PostgreSQL en el host; no reutilizar las instalaciones existentes ni asumir puertos disponibles. Consulte [Configuración segura](docs/Configuracion_Segura.md).
 
 ### Paso Rápido: Inicio con un solo clic (Windows)
 Ejecuta el archivo:

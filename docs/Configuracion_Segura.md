@@ -57,21 +57,43 @@ Los valores efectivos de ese archivo deben mantenerse privados y fuera de Git.
   como `ConnectionStrings__DefaultConnection`. Proporcionar una cadena completa, con
   valores correctamente escapados para Npgsql y coherentes con la base configurada.
   La contraseña no se concatena mediante interpolación dentro de una cadena fija.
-  Para el servicio de base de este Compose, el host interno es `db`, el puerto interno
-  es 5432 y la base/usuario conservan sus nombres de main. Este puerto interno no es
-  una autorización para acceder al PostgreSQL 18 del host.
+  Para este Compose, configurar exclusivamente `Host=db;Port=5432`; la base/usuario
+  conservan sus nombres de main. `localhost` dentro de `app` no designa a `db`.
+  No usar `host.docker.internal`, direcciones del host ni los destinos de las
+  instalaciones PostgreSQL 18 o del laboratorio PostgreSQL 15. La cadena completa
+  es un dato externo: Compose no valida su semántica Npgsql; el operador debe revisar
+  el destino en privado antes de cualquier futura autorización de arranque.
 - `JWT_KEY` es obligatoria y Compose la transmite como `Jwt__Key` a la API.
 - Las tres usan `${VARIABLE:?mensaje}`: una variable ausente o vacía provoca rechazo
   de la interpolación en lugar de aportar un secreto predeterminado.
 - Las restantes variables de la plantilla no se transmiten automáticamente a los
   contenedores: solo se aplican las declaradas por el Compose correspondiente.
 
-U1 no renombra servicios ni cambia imagen, puertos, red, volúmenes o logging de la API.
+U1b conserva servicios, imágenes, red, volúmenes y logging. Elimina únicamente la
+publicación de puertos del servicio `db`; no elimina ni recrea `postgres_data`.
 La cadena externa debe definir los parámetros de conexión/TLS adecuados; no se fuerza
-`Include Error Detail=true` desde Compose. En particular, el puerto de host heredado de Compose puede resolver a
-5432 si no se configura: **no iniciar Compose ni reutilizar ese puerto en este equipo**
-sin una revisión posterior del destino y de posibles colisiones. Esta entrega no
-autoriza ningún acceso a PostgreSQL 18 ni al laboratorio PostgreSQL 15.
+`Include Error Detail=true` desde Compose.
+
+Los servicios comparten la red predeterminada de Compose. `app` depende de `db` y el
+frontend depende de `app`. El Dockerfile del frontend copia
+`frontend/marketplace-ui/nginx.conf`, cuyo proxy conserva `/api/` hacia `http://app:8080`
+sin eliminar el prefijo; la variante `nginx.conf` de la raíz apunta al mismo servicio.
+No se requieren cambios en nginx ni en los Dockerfiles para U1b.
+
+**PostgreSQL no publica ningún puerto en el host.** Su puerto interno 5432 no implica
+un enlace al puerto 5432 de Windows. No existe un valor predeterminado de publicación
+5432 ni 55432, y `POSTGRES_HOST_PORT` ya no es consumida. API conserva `8080:8080` y
+frontend conserva `3000:80`; su exposición, TLS y endurecimiento siguen pendientes
+de revisión. La red predeterminada compartida no constituye aislamiento de egreso.
+
+No se entrega un override de acceso externo porque no existe una necesidad demostrada.
+Si fuera necesario: documentar el motivo y solicitar autorización; preparar para
+revisión un archivo separado que no se cargue automáticamente; exigir un puerto
+elegido y verificado por el operador, sin valor predeterminado, enlazado exclusivamente
+a `127.0.0.1`; revisar su configuración combinada y autorizar separadamente el arranque.
+No asumir que 5432 o 55432 están disponibles. La comprobación de disponibilidad no
+reserva el puerto. Esta entrega no autoriza iniciar Compose ni acceder o modificar
+PostgreSQL 18 o el laboratorio PostgreSQL 15.
 
 Las variables de Compose se convierten en entorno de contenedor. Sus valores pueden
 ser visibles para administradores y mediante herramientas de inspección; no son un

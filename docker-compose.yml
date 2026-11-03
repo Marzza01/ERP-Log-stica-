@@ -8,8 +8,7 @@ services:
       POSTGRES_DB: marketplace_erp
       POSTGRES_USER: marketplace_user
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD outside the repository}
-    ports:
-      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    # Solo red de Compose: no publicar PostgreSQL en el host.
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
