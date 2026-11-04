@@ -4,6 +4,7 @@
  */
 
 using MarketplaceERP.Finance.Services;
+using MarketplaceERP.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -36,6 +37,7 @@ public class LiquidacionesController : ControllerBase
     /// Agrega todos los SplitPagos no liquidados de órdenes entregadas.
     /// </summary>
     [HttpPost("generar", Name = "GenerarLiquidacion")]
+    [PaymentOperationsGuard]
     [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Generar([FromBody] GenerarLiquidacionRequest req, CancellationToken ct)
@@ -65,6 +67,7 @@ public class LiquidacionesController : ControllerBase
     /// Genera el asiento contable: DEBE 2108 (Pasivo Vendedores) → HABER 1101 (Caja).
     /// </summary>
     [HttpPost("procesar-pago/{id:guid}", Name = "ProcesarPagoLiquidacion")]
+    [PaymentOperationsGuard]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

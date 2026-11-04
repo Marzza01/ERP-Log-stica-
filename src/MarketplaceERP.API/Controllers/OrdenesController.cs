@@ -5,6 +5,7 @@
 
 using System.Security.Claims;
 using MarketplaceERP.API.Contracts;
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -191,6 +192,7 @@ public class OrdenesController : ControllerBase
     // ── PUT /api/ordenes/{id}/estado ──────────────────────────────────────────
     /// <summary>Transiciona la orden entre estados del OMS.</summary>
     [HttpPut("{id:guid}/estado", Name = "TransicionarEstadoOrden")]
+    [PaymentOperationsGuard]
     [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

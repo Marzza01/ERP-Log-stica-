@@ -17,6 +17,8 @@ Las variables de entorno con doble guion bajo representan claves jerárquicas:
 | `Jwt__Audience` | `Jwt:Audience` | Opcional; conservar la audiencia acordada. |
 | `Jwt__ExpirationMinutes` | `Jwt:ExpirationMinutes` | Opcional; conservar una duración limitada. |
 | `Cors__AllowedOrigins__0` | `Cors:AllowedOrigins:0` | Origen autorizado; índices adicionales para otros orígenes. |
+| `Payments__Provider` | `Payments:Provider` | `Disabled` para API de consultas sin operaciones financieras; `Mock` solo en Development con `Payments__EnableMock=true`. |
+| `PORT` | Puerto HTTP | Si se define, la API escucha en `0.0.0.0` en ese puerto. |
 
 No se incluyen claves ni contraseñas reales de ejemplo. Inyectar las variables en el
 proceso desde un gestor de secretos o un mecanismo privado de desarrollo. No guardar
@@ -28,18 +30,16 @@ configura un `dotnet run`. Este proyecto no incorpora un `UserSecretsId`; esta e
 usa los proveedores de variables de entorno existentes, sin inicializar secretos de
 usuario ni modificar configuración global.
 
-En los proveedores estándar, el JSON del entorno sobrescribe el JSON base, las
-variables de entorno sobrescriben el JSON y los argumentos de configuración tienen
-prioridad sobre esos proveedores. Existen dos excepciones heredadas en `Program.cs`:
-
-1. Si `DATABASE_URL` no está vacía, su traducción reemplaza la conexión configurada.
-2. Si `CONNECTION_STRING` no está vacía, reemplaza después la conexión, incluso la
-   procedente de `DATABASE_URL` o de los proveedores estándar.
+HTTP y mantenimiento resuelven la conexión con el mismo orden: `CONNECTION_STRING`,
+`DATABASE_URL` y después `ConnectionStrings__DefaultConnection`. El URL PostgreSQL
+requiere usuario, contraseña, host, puerto y base; no admite parámetros de consulta.
+Su traducción solicita TLS y no desactiva la verificación del certificado. Si el
+destino requiere otras opciones TLS, proporcione una cadena Npgsql completa mediante
+`CONNECTION_STRING` o la clave canónica. No mostrar la cadena resuelta en logs.
 
 No definir fuentes de conexión contradictorias. Preferir la clave canónica
 `ConnectionStrings__DefaultConnection` y dejar los dos alias sin definir cuando no se
-necesiten. Se conserva el parser existente de `DATABASE_URL`; U1 no certifica nuevos
-formatos ni cambia su tratamiento de TLS. `JWT_KEY`, `JWT_ISSUER`, `JWT_AUDIENCE` y
+necesiten. `JWT_KEY`, `JWT_ISSUER`, `JWT_AUDIENCE` y
 `CORS_ALLOWED_ORIGINS` no son por sí solos claves jerárquicas consumidas por la API.
 
 `appsettings.json` y `appsettings.Development.json` dejan vacías la conexión y la clave
@@ -104,8 +104,8 @@ variable actualizará automáticamente las credenciales persistidas.
 ## Límites de esta configuración
 
 `ADMIN_EMAIL` y `ADMIN_PASSWORD` se mantienen externos y vacíos en la plantilla. No se
-invoca bootstrap. La configuración de pasarela de main conserva sus rechazos actuales;
-añadir conexión y JWT no certifica el arranque productivo ni habilita pagos reales.
+invoca bootstrap. `Payments:Provider=Disabled` permite el arranque HTTP en Production,
+pero rechaza operaciones financieras. Añadir conexión y JWT no habilita pagos reales.
 
 U4 separa `StartupInitializer` del camino HTTP. Migraciones, bootstrap Admin y seed
 demo requieren comandos CLI explícitos y confirmación del destino; consulte

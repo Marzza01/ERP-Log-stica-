@@ -23,19 +23,18 @@ public static class FinanceServiceExtensions
         IConfiguration configuration,
         bool isDevelopment)
     {
-        // I2B1: rechazo por defecto. El mock jamás debe operar implícitamente.
-        // Aún no se dispone de un proveedor real; por ello cualquier configuración
-        // diferente de Mock habilitado EXPLÍCITAMENTE en Development bloquea
-        // el arranque, antes de abrir conexiones o procesar pagos.
+        // El proveedor debe elegirse explícitamente. Disabled permite consultas
+        // en Production, pero ninguna operación que requiera mover dinero.
         var provider = configuration["Payments:Provider"]?.Trim();
         var allowMock = string.Equals(configuration["Payments:EnableMock"], "true", StringComparison.OrdinalIgnoreCase);
-        if (!string.Equals(provider, "Mock", StringComparison.OrdinalIgnoreCase) ||
-            !isDevelopment || !allowMock)
+        var disabled = string.Equals(provider, "Disabled", StringComparison.OrdinalIgnoreCase);
+        var mock = string.Equals(provider, "Mock", StringComparison.OrdinalIgnoreCase) &&
+                   isDevelopment && allowMock;
+        if (!disabled && !mock)
         {
             throw new InvalidOperationException(
-                "Pasarela de pagos no habilitada: actualmente solo se permite " +
-                "Payments:Provider=Mock y Payments:EnableMock=true en Development. " +
-                "No hay proveedor de cobros reales implementado; Production queda bloqueado.");
+                "Pasarela de pagos no configurada: use Payments:Provider=Disabled, o " +
+                "Payments:Provider=Mock con Payments:EnableMock=true solo en Development.");
         }
 
         // ── DbContext ─────────────────────────────────────────────────────────
@@ -44,8 +43,11 @@ public static class FinanceServiceExtensions
                 configuration.GetConnectionString("DefaultConnection"),
                 npgsql => npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "finance")));
 
-        // ── Mock de pagos: únicamente Development y con consentimiento explícito ──
-        services.AddScoped<IPaymentGateway, PagoServiceMock>();
+        services.AddSingleton(new PaymentOperationsMode(disabled));
+        if (disabled)
+            services.AddScoped<IPaymentGateway, PagoServiceDisabled>();
+        else
+            services.AddScoped<IPaymentGateway, PagoServiceMock>();
 
         // ── Checkout ─────────────────────────────────────────────────────────
         services.AddScoped<CheckoutOrchestrator>();

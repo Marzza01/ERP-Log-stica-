@@ -15,15 +15,37 @@ namespace MarketplaceERP.Finance.Tests;
 /// </summary>
 public sealed class SeguridadOperativaI5Tests
 {
-    [Theory]
-    [InlineData(typeof(FulfillmentController))]
-    [InlineData(typeof(OrdenesController))]
-    public void ControladoresOperativos_RequierenAdminOVendedor(Type controlador)
+    [Fact]
+    public void Fulfillment_ExigeAdminEnTodasSusAcciones()
     {
-        var autorizacion = controlador.GetCustomAttribute<AuthorizeAttribute>();
-        autorizacion.Should().NotBeNull();
-        autorizacion!.Roles.Should().Be("Admin,Vendedor");
+        var controlador = typeof(FulfillmentController);
+        controlador.GetCustomAttribute<AuthorizeAttribute>()!.Roles.Should().Be("Admin");
         controlador.GetCustomAttribute<AllowAnonymousAttribute>().Should().BeNull();
+        controlador.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.GetCustomAttribute<HttpMethodAttribute>() is not null)
+            .Should().OnlyContain(m => m.GetCustomAttribute<AllowAnonymousAttribute>() == null);
+    }
+
+    [Fact]
+    public void Ordenes_ExigeAdminSalvoDetallePropioDelComprador()
+    {
+        var controlador = typeof(OrdenesController);
+        controlador.GetCustomAttribute<AuthorizeAttribute>().Should().NotBeNull();
+        controlador.GetCustomAttribute<AllowAnonymousAttribute>().Should().BeNull();
+        var acciones = controlador.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.GetCustomAttribute<HttpMethodAttribute>() is not null).ToArray();
+        acciones.Select(m => m.Name).Should().BeEquivalentTo(new[]
+        {
+            nameof(OrdenesController.Listar), nameof(OrdenesController.Obtener),
+            nameof(OrdenesController.Crear), nameof(OrdenesController.TransicionarEstado),
+            nameof(OrdenesController.ObtenerKpis)
+        });
+        foreach (var accion in acciones)
+        {
+            accion.GetCustomAttribute<AllowAnonymousAttribute>().Should().BeNull();
+            accion.GetCustomAttribute<AuthorizeAttribute>()!.Roles.Should().Be(
+                accion.Name == nameof(OrdenesController.Obtener) ? "Admin,Comprador" : "Admin");
+        }
     }
 
     [Theory]

@@ -85,14 +85,12 @@ public class ArranqueSeguroU4Tests
             ["ASPNETCORE_ENVIRONMENT"] = environment, ["Seed:DemoData"] = "true",
             ["Startup:ApplyMigrations"] = "true", ["Maintenance:Enabled"] = "true",
             ["ConnectionStrings:DefaultConnection"] = SyntheticConnection,
-            ["Payments:Provider"] = "Mock", ["Payments:EnableMock"] = "true"
+            ["Payments:Provider"] = environment == "Production" ? "Disabled" : "Mock",
+            ["Payments:EnableMock"] = environment == "Production" ? "false" : "true"
         }).Build();
         var services = new ServiceCollection();
         services.AddCoreServices(configuration); services.AddCatalogServices(configuration);
-        // Production is intentionally still blocked by Finance's payment guard; never bypass it.
-        if (environment == "Production")
-            Assert.Throws<InvalidOperationException>(() => services.AddFinanceServices(configuration, false));
-        else services.AddFinanceServices(configuration, true);
+        services.AddFinanceServices(configuration, environment == "Development");
         Assert.DoesNotContain(services, d => d.ServiceType == typeof(IHostedService));
         Assert.Equal(MaintenanceAction.Http, MaintenanceCommand.Parse(Array.Empty<string>()).Action);
     }

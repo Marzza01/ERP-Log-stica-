@@ -3,6 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Core.Data;
@@ -362,6 +363,7 @@ public class ComprasController : ControllerBase
     // ── POST /api/compras/match ───────────────────────────────────────────────
     /// <summary>Ejecuta el Match Tridireccional (PO - Factura - Bodega WMS).</summary>
     [HttpPost("match", Name = "EjecutarMatch3Way")]
+    [PaymentOperationsGuard]
     [ProducesResponseType(typeof(MatchTridireccional), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> EjecutarMatch(

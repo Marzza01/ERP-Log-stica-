@@ -79,6 +79,11 @@ public sealed class CheckoutOrchestrator
     /// <exception cref="PagoFallidoException">Si el pago falla (el stock ya fue liberado como compensación).</exception>
     public async Task<CheckoutResult> ProcesarCheckoutAsync(CheckoutCommand command)
     {
+        // Defensa para invocaciones internas que no atraviesan el filtro HTTP.
+        // La pasarela deshabilitada debe rechazar antes de consultar o reservar stock.
+        if (_paymentGateway is PagoServiceDisabled)
+            throw new InvalidOperationException("Checkout no disponible: pasarela de pagos deshabilitada.");
+
         _logger.LogInformation(
             "Iniciando Checkout Saga. OrdenId={OrdenId}, Monto={Monto:C} {Moneda}",
             command.OrdenId, command.MontoTotal, command.Moneda);

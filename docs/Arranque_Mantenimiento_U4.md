@@ -12,7 +12,7 @@ Docker, migraciones, bootstrap ni seed. No se conectó a ninguna base.
 | Migraciones del inicializador | Core → Catalog → Finance, conexión independiente y advisory lock; podía ocultar fallos en Development | Solo CLI migrate; se recupera la implementación explícita de integración, plazo de lock acotado y fallo propagado. |
 | Seed Admin | Dependía del entorno y ADMIN_EMAIL/ADMIN_PASSWORD; podía crear una cuenta al arrancar | Solo CLI bootstrap-admin. Credenciales externas obligatorias y validación de cuenta existente; no promoción/reparación implícita. |
 | Seed demo | Predeterminado activo en Development; creaba vendedor/categoría e importaba CSV con datos WMS | Solo CLI seed-demo en Development. No es requisito para servir una base ya preparada. Sin la acción explícita no se importa ni modifica nada. |
-| AddCore/Catalog/FinanceServices | Registran contextos y servicios scoped; Finance valida configuración de pagos | Registros conservados; ninguna tarea hosted de mantenimiento encontrada. Finance sigue bloqueando Production. |
+| AddCore/Catalog/FinanceServices | Registran contextos y servicios scoped; Finance valida configuración de pagos | Registros conservados; ninguna tarea hosted de mantenimiento encontrada. Production requiere `Payments:Provider=Disabled` para operar sin pasarela. |
 | ReservasExpiracionService, recuperación, liquidaciones, stock | Servicios invocados por solicitudes; no tareas de arranque registradas | Intactos. No se añade conciliación/reparación/expiración automática. |
 | ProductosController seed-500 | Importación explícita por endpoint privado Admin | Se conserva U2. No es un endpoint público ni se llama al arrancar. No se certifica su idoneidad para bootstrap. |
 | Health /health y /health/ready | El primero es liveness; ready consultaría conexiones bajo solicitud | Intactos y anónimos; no ejecutan migraciones ni se invocaron en pruebas. Ready puede abrir conexiones al recibir una solicitud. |
@@ -56,10 +56,9 @@ No certifica versión PostgreSQL, directorio de datos, identidad física ni serv
 tras DNS/proxy; esos controles requieren una futura auditoría del entorno.
 
 Configuración CLI: appsettings copiados al directorio del ensamblado y proveedores
-estándar de entorno del builder genérico. Usar ConnectionStrings__DefaultConnection
-o CONNECTION_STRING (este alias prevalece si está definido). DATABASE_URL se rechaza
-para evitar una traducción diferente/silenciosa del destino. HTTP conserva todos sus
-proveedores y aliases existentes. Las credenciales no se imprimen; solo descripción
+estándar de entorno del builder genérico. HTTP y mantenimiento usan la misma
+resolución: CONNECTION_STRING, DATABASE_URL, ConnectionStrings__DefaultConnection.
+Las credenciales no se imprimen; solo descripción
 de destino y huella. El contenido de argumentos no se imprime cuando el parser falla.
 
 Antes de una acción modificadora, el runner comprueba current_database() en los tres

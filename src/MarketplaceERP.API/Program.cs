@@ -32,26 +32,13 @@ if (await MaintenanceCommand.RunMaintenanceIfRequestedAsync(command, async () =>
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Soporte para DATABASE_URL de Railway/Heroku ───────────────────────────────
-var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
-if (!string.IsNullOrEmpty(databaseUrl))
-{
-    // Railway provee: postgresql://user:pass@host:port/dbname
-    var uri = new Uri(databaseUrl);
-    var userInfo = uri.UserInfo.Split(':');
-    // NOTA: Railway utiliza certificados autofirmados / proxies dinámicos en su infraestructura PostgreSQL interna.
-    // 'Trust Server Certificate=true' es requerido temporalmente para permitir handshake SSL sin error en Railway;
-    // se mantendrá documentado hasta que se configure una CA personalizada de confianza en el contenedor.
-    var connStr = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
-    builder.Configuration["ConnectionStrings:DefaultConnection"] = connStr;
-}
+// Ambos modos usan la misma selección de destino. Ninguno abre la conexión aquí.
+builder.Configuration["ConnectionStrings:DefaultConnection"] =
+    DatabaseConnectionConfiguration.Resolve(builder.Configuration);
 
-// ── Soporte alternativo via variable CONNECTION_STRING ────────────────────────
-var connStrEnv = Environment.GetEnvironmentVariable("CONNECTION_STRING");
-if (!string.IsNullOrEmpty(connStrEnv))
-{
-    builder.Configuration["ConnectionStrings:DefaultConnection"] = connStrEnv;
-}
+// Railway inyecta PORT al ejecutar el contenedor, no al construir la imagen.
+var listenUrls = RuntimePortConfiguration.ResolveUrls(builder.Configuration["PORT"]);
+if (listenUrls is not null) builder.WebHost.UseUrls(listenUrls);
 
 // ── Configuración JWT usando patrón Options y validación estricta ─────────────
 builder.Services.Configure<JwtSettings>(

@@ -21,6 +21,7 @@ public class LiquidacionService : ILiquidacionService
     private readonly FinanceDbContext _db;
     private readonly IContabilidadService _contabilidad;
     private readonly ILogger<LiquidacionService> _logger;
+    private readonly PaymentOperationsMode _paymentMode;
 
     // Cuentas contables para el asiento de liquidación
     private const string CAJA_BANCOS       = "1101";
@@ -29,17 +30,22 @@ public class LiquidacionService : ILiquidacionService
     public LiquidacionService(
         FinanceDbContext db,
         IContabilidadService contabilidad,
-        ILogger<LiquidacionService> logger)
+        ILogger<LiquidacionService> logger,
+        PaymentOperationsMode paymentMode)
     {
         _db = db;
         _contabilidad = contabilidad;
         _logger = logger;
+        _paymentMode = paymentMode;
     }
 
     // ── Generar Liquidación ───────────────────────────────────────────────────
     public async Task<Liquidacion> GenerarLiquidacionAsync(
         Guid vendedorId, CancellationToken cancellationToken = default)
     {
+        if (_paymentMode.IsDisabled)
+            throw new InvalidOperationException("Liquidaciones deshabilitadas en este entorno.");
+
         // Obtener splits de este vendedor que aún no tienen liquidación
         var splitsPendientes = await _db.SplitsPago
             .Include(s => s.Liquidacion)
@@ -82,6 +88,9 @@ public class LiquidacionService : ILiquidacionService
     public async Task<Liquidacion> ProcesarPagoAsync(
         Guid liquidacionId, CancellationToken cancellationToken = default)
     {
+        if (_paymentMode.IsDisabled)
+            throw new InvalidOperationException("Desembolsos deshabilitados en este entorno.");
+
         var liquidacion = await _db.Liquidaciones
             .FirstOrDefaultAsync(l => l.Id == liquidacionId, cancellationToken)
             ?? throw new InvalidOperationException($"Liquidación {liquidacionId} no encontrada.");

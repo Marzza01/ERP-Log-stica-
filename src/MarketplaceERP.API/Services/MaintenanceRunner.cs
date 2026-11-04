@@ -19,9 +19,7 @@ public static class MaintenanceRunner
                 Args = Array.Empty<string>(), ContentRootPath = AppContext.BaseDirectory
             });
             var config = builder.Configuration;
-            if (!string.IsNullOrWhiteSpace(config["DATABASE_URL"]))
-                throw new InvalidOperationException("Mantenimiento requiere una conexión Npgsql explícita, no DATABASE_URL.");
-            var connection = config["CONNECTION_STRING"] ?? config.GetConnectionString("DefaultConnection");
+            var connection = DatabaseConnectionConfiguration.Resolve(config);
             var target = MaintenanceTarget.Describe(connection);
             if (command.Action == MaintenanceAction.DescribeTarget)
             {

@@ -3,6 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -101,6 +102,7 @@ public class ContabilidadController : ControllerBase
     /// Útil para reversiones, correcciones o asientos de cierre.
     /// </summary>
     [HttpPost("asiento-manual", Name = "AsientoManual")]
+    [PaymentOperationsGuard]
     [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> AsientoManual(
