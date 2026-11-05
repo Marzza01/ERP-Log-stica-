@@ -59,8 +59,17 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/health', { signal: controller.signal })
-      .then(res => setApiOnline(res.ok))
+    fetch('/api/health', { signal: controller.signal })
+      .then(async res => {
+        if (!res.ok || !res.headers.get('content-type')?.includes('application/json')) {
+          setApiOnline(false);
+          return;
+        }
+        const data: unknown = await res.json();
+        setApiOnline(!!data && typeof data === 'object' &&
+          'status' in data && data.status === 'healthy' &&
+          'servicio' in data && data.servicio === 'MarketplaceERP.API');
+      })
       .catch(() => setApiOnline(false));
     return () => controller.abort();
   }, [location.pathname]);

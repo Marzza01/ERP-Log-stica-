@@ -44,7 +44,7 @@ export default function LoginPage() {
         } else if (err.status === 429) {
           setError('Demasiados intentos fallidos. Has alcanzado el límite de seguridad. Espera un minuto antes de intentar de nuevo.');
         } else if (err.status === 0) {
-          setError('No es posible conectar con el servidor de autenticación. Verifica tu conexión de red.');
+          setError(err.message);
         } else {
           setError(err.message || 'Error en la autenticación.');
         }

@@ -7,7 +7,8 @@
 // API Client — Base HTTP client con JWT interceptor y manejo centralizado de 401/403
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const API_BASE = import.meta.env.VITE_API_URL ?? '';
+// Vercel y el proxy de Vite reciben /api desde el mismo origen del navegador.
+export const API_BASE = '';
 
 export class ApiError extends Error {
   constructor(
@@ -72,7 +73,7 @@ async function request<T>(
     // Interceptor 401: Unauthorized
     if (res.status === 401) {
       // Si la petición falló en el login endpoint, no disparamos logout ni redirección global
-      if (!path.includes('/api/auth/login')) {
+      if (path !== '/api/auth/login') {
         if (onUnauthorized) {
           onUnauthorized();
         } else {

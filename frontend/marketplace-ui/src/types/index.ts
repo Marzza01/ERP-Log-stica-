@@ -16,7 +16,8 @@ export interface LoginRequest {
 
 export interface AuthResponse {
   token: string;
-  expira: string;
+  role: string;
+  expiresAt: string;
   usuario: string;
   rol: string;
 }
@@ -392,7 +393,9 @@ export interface PartidaContable {
 }
 
 // ── LIQUIDACIONES ─────────────────────────────────────────────────────────────
-export type EstadoLiquidacion = 'Pendiente' | 'Procesada' | 'Fallida';
+// Estados sincronizados con backend enum EstadoLiquidacion (Finance.Entities)
+// Pendiente=0, EnProceso=1, Completada=2, Fallida=3
+export type EstadoLiquidacion = 'Pendiente' | 'EnProceso' | 'Completada' | 'Fallida';
 
 export interface Liquidacion {
   id: string;

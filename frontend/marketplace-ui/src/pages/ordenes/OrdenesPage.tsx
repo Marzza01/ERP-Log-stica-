@@ -3,15 +3,15 @@
  * Todos los derechos reservados © 2026
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Plus, ChevronRight } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronRight, Plus } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 import { ordenesApi } from '../../api/ordenes';
-import type { Orden, EstadoOrden, TipoCliente } from '../../types';
-import { OPERADORES_LOGISTICOS, obtenerTarifaTransportista } from '../../constants/transportistas';
+import type { EstadoOrden } from '../../types';
 
 const ESTADOS: EstadoOrden[] = ['Pendiente', 'Aprobada', 'EnProceso', 'Enviada', 'Entregada', 'Cancelada'];
 const TRANSICIONES: Partial<Record<EstadoOrden, EstadoOrden[]>> = {
@@ -20,243 +20,259 @@ const TRANSICIONES: Partial<Record<EstadoOrden, EstadoOrden[]>> = {
   EnProceso: ['Enviada', 'Cancelada'],
   Enviada: ['Entregada'],
 };
+const UNCERTAIN_PREFIX = 'erp_orden_estado_incierto_v1:';
 
-const fmt = (d: string) => new Date(d).toLocaleDateString('es-SV', { day: '2-digit', month: 'short', year: '2-digit' });
-const fmtMoney = (n: number) => `$${n.toLocaleString('es-SV', { minimumFractionDigits: 2 })}`;
+interface OrdenVista {
+  id: string;
+  numeroOrden: string;
+  estado: EstadoOrden;
+  tipoCliente: 'Empresa' | 'ConsumidorFinal';
+  montoTotal: number;
+  transportista: string;
+  guiaEnvio?: string;
+  fechaCreacion: string;
+  totalItems: number;
+  subTotal?: number;
+  impuestoIva?: number;
+  costoEnvio?: number;
+  zonaEnvio?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseEstado(value: unknown): EstadoOrden | null {
+  if (typeof value === 'string' && ESTADOS.includes(value as EstadoOrden)) return value as EstadoOrden;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < ESTADOS.length) return ESTADOS[value];
+  return null;
+}
+
+function parseTipoCliente(value: unknown): OrdenVista['tipoCliente'] | null {
+  if (value === 'B2B' || value === 1) return 'Empresa';
+  if (value === 'B2C' || value === 0) return 'ConsumidorFinal';
+  return null;
+}
+
+function parseOrden(value: unknown, detalle = false): OrdenVista | null {
+  if (!isRecord(value)) return null;
+  const estado = parseEstado(value.estado);
+  const tipoCliente = parseTipoCliente(value.tipoCliente);
+  if (typeof value.id !== 'string' || typeof value.numeroOrden !== 'string'
+    || !estado || !tipoCliente || typeof value.montoTotal !== 'number'
+    || !Number.isFinite(value.montoTotal) || typeof value.transportista !== 'string'
+    || typeof value.fechaCreacion !== 'string' || Number.isNaN(Date.parse(value.fechaCreacion))) return null;
+
+  if (detalle && (typeof value.subTotal !== 'number' || !Number.isFinite(value.subTotal)
+    || typeof value.impuestoIva !== 'number' || !Number.isFinite(value.impuestoIva)
+    || typeof value.costoEnvio !== 'number' || !Number.isFinite(value.costoEnvio))) return null;
+
+  const totalItems = typeof value.totalItems === 'number' ? value.totalItems
+    : Array.isArray(value.items) ? value.items.length : 0;
+  return {
+    id: value.id,
+    numeroOrden: value.numeroOrden,
+    estado,
+    tipoCliente,
+    montoTotal: value.montoTotal,
+    transportista: value.transportista,
+    guiaEnvio: typeof value.guiaEnvio === 'string' ? value.guiaEnvio : undefined,
+    fechaCreacion: value.fechaCreacion,
+    totalItems,
+    subTotal: typeof value.subTotal === 'number' ? value.subTotal : undefined,
+    impuestoIva: typeof value.impuestoIva === 'number' ? value.impuestoIva : undefined,
+    costoEnvio: typeof value.costoEnvio === 'number' ? value.costoEnvio : undefined,
+    zonaEnvio: typeof value.zonaEnvio === 'string' ? value.zonaEnvio : undefined,
+  };
+}
+
+function readUncertainIds(): Set<string> | null {
+  try {
+    const ids = new Set<string>();
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index);
+      if (!key?.startsWith(UNCERTAIN_PREFIX)) continue;
+      if (window.localStorage.getItem(key) !== 'incierto') return null;
+      ids.add(key.slice(UNCERTAIN_PREFIX.length));
+    }
+    return ids;
+  } catch {
+    return null;
+  }
+}
+
+const fmt = (date: string) => new Date(date).toLocaleDateString('es-SV', { day: '2-digit', month: 'short', year: '2-digit' });
+const fmtMoney = (amount: number) => '$' + amount.toLocaleString('es-SV', { minimumFractionDigits: 2 });
 
 export default function OrdenesPage() {
-  const [ordenes, setOrdenes] = useState<Orden[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filterEstado, setFilterEstado] = useState<string>('');
-  const [selectedOrden, setSelectedOrden] = useState<Orden | null>(null);
+  const { usuario } = useAuth();
+  const isAdmin = usuario?.rol === 'Admin';
+  const toast = useToast();
+  const [ordenes, setOrdenes] = useState<OrdenVista[]>([]);
+  const [loading, setLoading] = useState(isAdmin);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [dataReady, setDataReady] = useState(false);
+  const [filterEstado, setFilterEstado] = useState('');
+  const [selectedOrden, setSelectedOrden] = useState<OrdenVista | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [transModal, setTransModal] = useState(false);
   const [nuevoEstado, setNuevoEstado] = useState<EstadoOrden | ''>('');
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const loadRequestId = useRef(0);
+  const [uncertainIds, setUncertainIds] = useState<Set<string> | null>(readUncertainIds);
   const [isCompact, setIsCompact] = useState(false);
 
-  // Modal Nueva Orden
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [creatingOrder, setCreatingOrder] = useState(false);
-  const [orderForm, setOrderForm] = useState({
-    tipoCliente: 'ConsumidorFinal' as TipoCliente,
-    nombreProducto: 'Kit Logístico Starter (Seed SKU)',
-    sku: 'SKU-LOGI-8801',
-    cantidad: 2,
-    precioUnitario: 45.00,
-    transportista: 'LOGIMKT Express',
-    zonaEnvio: 'San Salvador y AMSS',
-    direccionEntrega: 'Av. Las Palmas #404, San Salvador',
-    costoEnvio: 5.00,
-    condicionPago: 'Inmediato',
-    tipoComprobante: 'FacturaConsumidorFinal',
-  });
+  useEffect(() => {
+    const syncLocks = (event: StorageEvent) => {
+      if (event.key === null || event.key.startsWith(UNCERTAIN_PREFIX)) {
+        setUncertainIds(readUncertainIds());
+      }
+    };
+    window.addEventListener('storage', syncLocks);
+    return () => window.removeEventListener('storage', syncLocks);
+  }, []);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    // Recuperar órdenes guardadas localmente (para persistencia total en recargas)
-    let storedLocal: Orden[] = [];
-    try {
-      const raw = localStorage.getItem('erp_ordenes_creadas');
-      if (raw) storedLocal = JSON.parse(raw);
-    } catch { /* ignore */ }
-
-    try {
-      const res = await ordenesApi.listar({ estado: filterEstado || undefined, tamano: 100 });
-      const apiOrdenes = res.ordenes || [];
-      // Combinar órdenes del backend con las locales creadas por el usuario sin duplicados
-      const ids = new Set(apiOrdenes.map(o => o.id));
-      const combined = [...storedLocal.filter(o => !ids.has(o.id)), ...apiOrdenes];
-      setOrdenes(filterEstado ? combined.filter(o => o.estado === filterEstado) : combined);
-    } catch {
-      // Demo data combinado con las guardadas por el usuario
-      const mock: Orden[] = Array.from({ length: 15 }, (_, i) => {
-        const trans = ['LOGIMKT Express', 'C807 Express El Salvador', 'Urbano Express El Salvador', 'Cargo Expreso SV'][i % 4];
-        const envioCost = obtenerTarifaTransportista(trans);
-        const sub = 75 + i * 42;
-        const iva = 9.75 + i * 5.46;
-        return {
-          id: `mock-${i + 1}`,
-          numeroOrden: `ORD-2026091${i}-${10000 + i}`,
-          estado: ESTADOS[i % ESTADOS.length],
-          tipoCliente: i % 3 === 0 ? 'Empresa' : 'ConsumidorFinal',
-          montoTotal: sub + iva + envioCost,
-          subTotal: sub,
-          impuestoIva: iva,
-          costoEnvio: envioCost,
-          moneda: 'USD',
-          tipoComprobante: 'FacturaConsumidorFinal',
-          transportista: trans,
-          guiaEnvio: i > 3 ? `C807-${100000 + i}` : undefined,
-          direccionEntrega: `Colonia #${i + 1}, San Salvador`,
-          zonaEnvio: 'San Salvador y AMSS',
-          fechaCreacion: new Date(Date.now() - i * 86400000).toISOString(),
-          totalItems: 1 + (i % 4),
-          minutosEnEstado: i * 120,
-        };
-      });
-      const ids = new Set(storedLocal.map(o => o.id));
-      const combined = [...storedLocal, ...mock.filter(o => !ids.has(o.id))];
-      setOrdenes(filterEstado ? combined.filter(o => o.estado === filterEstado) : combined);
-    } finally {
+    const requestId = ++loadRequestId.current;
+    setSelectedOrden(null);
+    setTransModal(false);
+    setOrdenes([]);
+    setDataReady(false);
+    setLoadError(null);
+    if (!isAdmin) {
       setLoading(false);
+      return;
     }
-  }, [filterEstado]);
+    setLoading(true);
+    try {
+      const response = await ordenesApi.listar({ estado: filterEstado || undefined, tamano: 100 });
+      if (!response || !Array.isArray(response.ordenes)) throw new Error('Respuesta de órdenes no válida.');
+      const parsed = response.ordenes.map(row => parseOrden(row));
+      if (parsed.some(row => row === null)) throw new Error('Respuesta de órdenes no válida.');
+      if (requestId !== loadRequestId.current) return;
+      setOrdenes(parsed as OrdenVista[]);
+      setDataReady(true);
+    } catch {
+      if (requestId !== loadRequestId.current) return;
+      setLoadError('No se pudieron consultar las órdenes. Comprueba la conexión e inténtalo de nuevo.');
+    } finally {
+      if (requestId === loadRequestId.current) setLoading(false);
+    }
+  }, [filterEstado, isAdmin]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
-  const toast = useToast();
+  const abrirDetalle = async (orden: OrdenVista) => {
+    if (!isAdmin || savingRef.current) return;
+    setSelectedOrden(orden);
+    setDetailLoading(true);
+    setDetailError(null);
+    try {
+      const response = await ordenesApi.obtener(orden.id);
+      const detail = parseOrden(response, true);
+      if (!detail || detail.id !== orden.id) throw new Error('Detalle de orden no válido.');
+      setSelectedOrden(detail);
+    } catch {
+      setDetailError('No se pudo confirmar el detalle actualizado de esta orden.');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const abrirTransicion = (orden: OrdenVista) => {
+    if (!isAdmin || savingRef.current || uncertainIds === null || uncertainIds.has(orden.id)) return;
+    const siguientes = TRANSICIONES[orden.estado];
+    if (!siguientes?.length) return;
+    setSelectedOrden(orden);
+    setNuevoEstado(siguientes[0]);
+    setTransModal(true);
+  };
 
   const handleTransicion = async () => {
-    if (!selectedOrden || !nuevoEstado) return;
+    if (!isAdmin || !selectedOrden || !nuevoEstado || savingRef.current
+      || uncertainIds === null || uncertainIds.has(selectedOrden.id)) return;
+    savingRef.current = true;
     setSaving(true);
-    const targetId = selectedOrden.id;
-    const targetEstado = nuevoEstado;
-
+    const id = selectedOrden.id;
+    const estadoAnterior = selectedOrden.estado;
+    const target = nuevoEstado;
+    let enviada = false;
     try {
-      await ordenesApi.transicionarEstado(targetId, targetEstado);
-      await load();
-      toast.success(
-        'Estado de Orden Actualizado',
-        `Orden ${selectedOrden.numeroOrden} pasó a ${targetEstado}.`
-      );
-    } catch {
-      // Optimistic / fallback: actualizar estado local inmediatamente
-      setOrdenes(prev =>
-        prev.map(o => (o.id === targetId ? { ...o, estado: targetEstado } : o))
-      );
-      toast.info(
-        'Estado Actualizado (Local)',
-        `Orden ${selectedOrden.numeroOrden} pasó a ${targetEstado}.`
-      );
-    } finally {
-      // Actualizar en localStorage si existe allí
-      try {
-        const raw = localStorage.getItem('erp_ordenes_creadas');
-        if (raw) {
-          const arr: Orden[] = JSON.parse(raw);
-          const updated = arr.map(o => (o.id === targetId ? { ...o, estado: targetEstado } : o));
-          localStorage.setItem('erp_ordenes_creadas', JSON.stringify(updated));
-        }
-      } catch { /* ignore */ }
+      const response = await ordenesApi.obtener(id);
+      const actual = parseOrden(response, true);
+      if (!actual || actual.id !== id) {
+        toast.warning('Estado no verificable', 'No se envió el cambio: la lectura actual no confirmó la orden.');
+        return;
+      }
+      if (actual.estado !== estadoAnterior || !TRANSICIONES[actual.estado]?.includes(target)) {
+        toast.warning('Estado cambiado', 'No se envió la transición. Se actualizará el listado con el estado de la API.');
+        return;
+      }
 
-      // Siempre reflejar el cambio en la orden seleccionada y cerrar el modal
-      setSelectedOrden(prev => (prev && prev.id === targetId ? { ...prev, estado: targetEstado } : null));
+      const locks = readUncertainIds();
+      if (locks === null || locks.has(id)) {
+        setUncertainIds(locks);
+        toast.warning('Operación bloqueada', 'No se pudo verificar que esta orden admita otra transición.');
+        return;
+      }
+      try {
+        window.localStorage.setItem(UNCERTAIN_PREFIX + id, 'incierto');
+        const stored = readUncertainIds();
+        if (!stored?.has(id)) throw new Error('No se pudo verificar la marca local.');
+        setUncertainIds(stored);
+      } catch {
+        setUncertainIds(null);
+        toast.error('Operación bloqueada', 'No se pudo guardar la marca local. No se envió el cambio.');
+        return;
+      }
+
+      enviada = true;
+      const resultado = await ordenesApi.transicionarEstado(id, target);
+      if (isRecord(resultado) && resultado.id === id
+        && parseEstado(resultado.estadoAnterior) === estadoAnterior
+        && parseEstado(resultado.nuevoEstado) === target) {
+        toast.success('Estado confirmado por la API', 'La orden ' + actual.numeroOrden + ' pasó a ' + target + '.');
+      } else {
+        toast.warning('Resultado incierto', 'La respuesta no confirmó el cambio. No se permitirá repetir esta transición desde esta pantalla.');
+      }
+    } catch {
+      if (enviada) {
+        toast.warning('Resultado incierto', 'No se pudo confirmar el resultado. No se permitirá repetir esta transición desde esta pantalla.');
+      } else {
+        toast.error('No se pudo leer el estado actual', 'No se envió ningún cambio de estado.');
+      }
+    } finally {
+      setSelectedOrden(null);
       setTransModal(false);
+      await load();
+      savingRef.current = false;
       setSaving(false);
     }
   };
 
-  const handleCrearOrden = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreatingOrder(true);
-
-    const sub = Number(orderForm.cantidad) * Number(orderForm.precioUnitario);
-    const iva = Math.round(sub * 0.13 * 100) / 100;
-    const envio = Number(orderForm.costoEnvio);
-    const nuevaLocal: Orden = {
-      id: crypto.randomUUID(),
-      numeroOrden: `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(10000 + Math.random() * 90000)}`,
-      estado: 'Pendiente',
-      tipoCliente: orderForm.tipoCliente,
-      montoTotal: sub + iva + envio,
-      subTotal: sub,
-      impuestoIva: iva,
-      costoEnvio: envio,
-      moneda: 'USD',
-      tipoComprobante: orderForm.tipoComprobante,
-      transportista: orderForm.transportista,
-      direccionEntrega: orderForm.direccionEntrega,
-      zonaEnvio: orderForm.zonaEnvio,
-      fechaCreacion: new Date().toISOString(),
-      totalItems: 1,
-      minutosEnEstado: 0,
-    };
-
-    // Guardar en localStorage para persistencia instantánea y permanente en el navegador
-    try {
-      const raw = localStorage.getItem('erp_ordenes_creadas');
-      const arr: Orden[] = raw ? JSON.parse(raw) : [];
-      localStorage.setItem('erp_ordenes_creadas', JSON.stringify([nuevaLocal, ...arr]));
-    } catch { /* ignore */ }
-
-    // Enviar al Backend .NET API (mapeando TipoCliente a número de enum: 0=B2C, 1=B2B)
-    const tipoClienteNum = orderForm.tipoCliente === 'Empresa' ? 1 : 0;
-    try {
-      await ordenesApi.crear({
-        compradorId: crypto.randomUUID(),
-        vendedorId: crypto.randomUUID(),
-        tipoCliente: tipoClienteNum as unknown as TipoCliente,
-        tipoComprobante: orderForm.tipoComprobante,
-        condicionPago: orderForm.condicionPago,
-        transportista: orderForm.transportista,
-        zonaEnvio: orderForm.zonaEnvio,
-        direccionEntrega: orderForm.direccionEntrega,
-        costoEnvio: envio,
-        items: [
-          {
-            productoId: crypto.randomUUID(),
-            sku: orderForm.sku,
-            nombre: orderForm.nombreProducto,
-            cantidad: Number(orderForm.cantidad),
-            precioUnitario: Number(orderForm.precioUnitario),
-          },
-        ],
-      });
-      await load();
-      toast.success(
-        'Orden Registrada con Éxito',
-        `Orden ${nuevaLocal.numeroOrden} creada (${nuevaLocal.tipoCliente}).`
-      );
-    } catch {
-      // Si la API no estuviera disponible, la orden ya está registrada localmente
-      setOrdenes(prev => [nuevaLocal, ...prev]);
-      toast.success(
-        'Orden Registrada (Modo Local)',
-        `Orden ${nuevaLocal.numeroOrden} guardada en sesión local.`
-      );
-    } finally {
-      setCreateModalOpen(false);
-      setCreatingOrder(false);
-    }
-  };
-
-  // Métricas del canal (Efferd #2 pattern: Channel breakdown & gross total)
-  const totalFacturado = ordenes.reduce((acc, o) => acc + (o.montoTotal || 0), 0);
-  const ordenesB2B = ordenes.filter(o => o.tipoCliente === 'Empresa');
-  const ordenesB2C = ordenes.filter(o => o.tipoCliente !== 'Empresa');
-
+  const totalVisible = ordenes.reduce((sum, orden) => sum + orden.montoTotal, 0);
+  const b2b = ordenes.filter(orden => orden.tipoCliente === 'Empresa');
+  const b2c = ordenes.filter(orden => orden.tipoCliente === 'ConsumidorFinal');
   const columns = [
     { key: 'numeroOrden', header: 'Nº Orden', className: 'td-mono td-primary' },
-    { key: 'estado', header: 'Estado', render: (r: Orden) => <StatusBadge status={r.estado} /> },
-    {
-      key: 'tipoCliente',
-      header: 'Canal',
-      render: (r: Orden) => (
-        <span style={{
-          fontSize: 11,
-          padding: '2px 6px',
-          borderRadius: 4,
-          background: r.tipoCliente === 'Empresa' ? 'rgba(99,102,241,0.12)' : 'var(--bg-surface)',
-          color: r.tipoCliente === 'Empresa' ? 'var(--accent-hover)' : 'var(--text-secondary)',
-          fontWeight: 600
-        }}>
-          {r.tipoCliente === 'Empresa' ? 'B2B Empresa' : 'B2C Retail'}
-        </span>
-      )
-    },
-    { key: 'montoTotal', header: 'Total', className: 'td-right', render: (r: Orden) => <span className="td-primary td-num">{fmtMoney(r.montoTotal)}</span> },
+    { key: 'estado', header: 'Estado', render: (row: OrdenVista) => <StatusBadge status={row.estado} /> },
+    { key: 'tipoCliente', header: 'Canal', render: (row: OrdenVista) => row.tipoCliente === 'Empresa' ? 'B2B Empresa' : 'B2C Retail' },
+    { key: 'montoTotal', header: 'Total', className: 'td-right', render: (row: OrdenVista) => <span className="td-primary td-num">{fmtMoney(row.montoTotal)}</span> },
     { key: 'transportista', header: 'Transportista' },
-    { key: 'guiaEnvio', header: 'Guía', render: (r: Orden) => r.guiaEnvio ? <span className="td-mono">{r.guiaEnvio}</span> : <span style={{ color: 'var(--text-disabled)' }}>—</span> },
-    { key: 'fechaCreacion', header: 'Fecha', render: (r: Orden) => fmt(r.fechaCreacion) },
-    { key: 'acciones', header: '', sortable: false, render: (r: Orden) => {
-      const sig = TRANSICIONES[r.estado];
-      if (!sig?.length) return null;
+    { key: 'guiaEnvio', header: 'Guía', render: (row: OrdenVista) => row.guiaEnvio || '—' },
+    { key: 'fechaCreacion', header: 'Fecha', render: (row: OrdenVista) => fmt(row.fechaCreacion) },
+    { key: 'acciones', header: '', sortable: false, render: (row: OrdenVista) => {
+      if (!TRANSICIONES[row.estado]?.length) return null;
+      if (uncertainIds === null || uncertainIds.has(row.id)) return <span>Transición bloqueada: resultado por verificar</span>;
       return (
-        <button className="btn btn-secondary btn-sm" onClick={e => { e.stopPropagation(); setSelectedOrden(r); setNuevoEstado(sig[0]); setTransModal(true); }}>
+        <button className="btn btn-secondary btn-sm" disabled={saving}
+          onClick={event => { event.stopPropagation(); abrirTransicion(row); }}>
           <ChevronRight size={11} /> Avanzar
         </button>
       );
-    }},
+    } },
   ];
 
   return (
@@ -264,380 +280,104 @@ export default function OrdenesPage() {
       <div className="page-header" style={{ alignItems: 'flex-start' }}>
         <div>
           <h1 className="page-title">Órdenes (OMS)</h1>
-          <p className="page-subtitle">Gestión operativa multicanal — Flujo B2B y B2C con máquina de estados</p>
+          <p className="page-subtitle">Órdenes confirmadas por la API. Los importes visibles no acreditan un cobro.</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button
-            className={`btn btn-secondary btn-sm${isCompact ? ' active' : ''}`}
-            onClick={() => setIsCompact(!isCompact)}
-            title="Alternar densidad visual de la tabla"
-          >
+          <button className={'btn btn-secondary btn-sm' + (isCompact ? ' active' : '')}
+            onClick={() => setIsCompact(!isCompact)} title="Alternar densidad visual de la tabla">
             {isCompact ? 'Vista Normal' : 'Vista Compacta'}
           </button>
-          <select className="form-input" value={filterEstado} onChange={e => setFilterEstado(e.target.value)} style={{ width: 'auto', fontSize: 12 }}>
+          <select className="form-input" value={filterEstado}
+            disabled={!isAdmin || loading || saving}
+            onChange={event => setFilterEstado(event.target.value)}
+            style={{ width: 'auto', fontSize: 12 }}>
             <option value="">Todos los estados</option>
-            {ESTADOS.map(e => <option key={e} value={e}>{e}</option>)}
+            {ESTADOS.map(estado => <option key={estado} value={estado}>{estado}</option>)}
           </select>
-          <button className="btn btn-primary" onClick={() => setCreateModalOpen(true)}><Plus size={13} /> Nueva Orden</button>
+          <button className="btn btn-primary" disabled title="La creación manual requiere comprador, vendedor y producto reales.">
+            <Plus size={13} /> Nueva Orden no disponible
+          </button>
         </div>
       </div>
 
-      {/* Resumen Denso Efferd #2: Canal B2B vs B2C y Volumen Facturado */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 12,
-        marginBottom: 16,
-        padding: '12px 16px',
-        background: 'var(--bg-card)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-lg)'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
-          <div>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>Volumen B2B (Empresas)</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }} className="td-num">
-              {ordenesB2B.length} órdenes ({fmtMoney(ordenesB2B.reduce((a, b) => a + b.montoTotal, 0))})
-            </div>
+      {!isAdmin && <div role="status">El listado y los cambios de órdenes de esta pantalla solo están disponibles para Administrador.</div>}
+      {isAdmin && loading && <div role="status">Cargando órdenes...</div>}
+      {isAdmin && loadError && <div role="alert">{loadError}</div>}
+      {isAdmin && uncertainIds === null && <div role="alert">No se puede verificar el almacenamiento local. Las transiciones están bloqueadas para evitar reintentos inseguros.</div>}
+      {isAdmin && uncertainIds !== null && uncertainIds.size > 0 && <div role="status">Las órdenes con intentos de transición previos permanecen bloqueadas en este navegador hasta una revisión segura.</div>}
+
+      {isAdmin && dataReady && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+            <div className="stat-card"><div className="stat-info"><div className="stat-label">B2B visibles</div><div className="stat-value">{b2b.length} órdenes</div></div></div>
+            <div className="stat-card"><div className="stat-info"><div className="stat-label">B2C visibles</div><div className="stat-value">{b2c.length} órdenes</div></div></div>
+            <div className="stat-card"><div className="stat-info"><div className="stat-label">Total de órdenes visibles</div><div className="stat-value">{fmtMoney(totalVisible)}</div></div></div>
           </div>
-        </div>
+          <DataTable<OrdenVista> title="Listado de Órdenes" columns={columns} data={ordenes}
+            rowKey={row => row.id} pageSize={15} compact={isCompact}
+            emptyMessage="No hay órdenes confirmadas en este estado"
+            onRowClick={row => { void abrirDetalle(row); }} />
+        </>
+      )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderLeft: '1px solid var(--border)', paddingLeft: 12 }}>
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)' }} />
-          <div>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>Volumen B2C (Consumidor)</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }} className="td-num">
-              {ordenesB2C.length} órdenes ({fmtMoney(ordenesB2C.reduce((a, b) => a + b.montoTotal, 0))})
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderLeft: '1px solid var(--border)', paddingLeft: 12 }}>
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--yellow)' }} />
-          <div>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600 }}>Total Facturado Vista</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }} className="td-num">
-              {fmtMoney(totalFacturado)}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Selector de estados rápido con contador */}
-      <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(6,1fr)', marginBottom: 16 }}>
-        {ESTADOS.map(e => {
-          const count = ordenes.filter(o => o.estado === e).length;
-          return (
-            <div
-              key={e}
-              className="stat-card"
-              style={{
-                padding: '10px 14px',
-                cursor: 'pointer',
-                borderColor: filterEstado === e ? 'var(--accent)' : 'var(--border)',
-                background: filterEstado === e ? 'rgba(99,102,241,0.06)' : 'var(--bg-card)'
-              }}
-              onClick={() => setFilterEstado(filterEstado === e ? '' : e)}
-            >
-              <div className="stat-info">
-                <div className="stat-label">{e}</div>
-                <div className="stat-value" style={{ fontSize: 18 }}>{count}</div>
-              </div>
-              <StatusBadge status={e} dot={false} />
-            </div>
-          );
-        })}
-      </div>
-
-      <DataTable<Orden>
-        title="Listado de Órdenes"
-        columns={columns}
-        data={ordenes}
-        loading={loading}
-        rowKey={r => r.id}
-        pageSize={15}
-        compact={isCompact}
-        emptyMessage="No hay órdenes en este estado"
-        onRowClick={r => setSelectedOrden(r)}
-      />
-
-      {/* Modal detalle */}
-      <Modal title={`Orden ${selectedOrden?.numeroOrden}`} open={!!selectedOrden && !transModal} onClose={() => setSelectedOrden(null)} size="md">
-        {selectedOrden && (
+      <Modal title={'Orden ' + (selectedOrden?.numeroOrden ?? '')}
+        open={!!selectedOrden && !transModal} onClose={() => { if (!detailLoading) setSelectedOrden(null); }} size="md">
+        {detailLoading && <div role="status">Cargando detalle actualizado...</div>}
+        {detailError && <div role="alert">{detailError}</div>}
+        {selectedOrden && !detailLoading && !detailError && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div className="grid-2">
-              {[
+              {([
                 ['Estado', <StatusBadge status={selectedOrden.estado} />],
                 ['Tipo Cliente', selectedOrden.tipoCliente],
-                ['Subtotal', fmtMoney(selectedOrden.subTotal)],
-                ['IVA 13%', fmtMoney(selectedOrden.impuestoIva)],
-                ['Costo envío', fmtMoney(selectedOrden.costoEnvio)],
-                ['Total', <strong>{fmtMoney(selectedOrden.montoTotal)}</strong>],
+                ['Subtotal', selectedOrden.subTotal === undefined ? '—' : fmtMoney(selectedOrden.subTotal)],
+                ['IVA 13%', selectedOrden.impuestoIva === undefined ? '—' : fmtMoney(selectedOrden.impuestoIva)],
+                ['Costo envío', selectedOrden.costoEnvio === undefined ? '—' : fmtMoney(selectedOrden.costoEnvio)],
+                ['Total', fmtMoney(selectedOrden.montoTotal)],
                 ['Transportista', selectedOrden.transportista],
-                ['Guía', selectedOrden.guiaEnvio ?? '—'],
-                ['Zona', selectedOrden.zonaEnvio],
+                ['Guía', selectedOrden.guiaEnvio || '—'],
+                ['Zona', selectedOrden.zonaEnvio || '—'],
                 ['Fecha', fmt(selectedOrden.fechaCreacion)],
-              ].map(([lbl, val]) => (
-                <div key={String(lbl)} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{String(lbl)}</span>
-                  <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{val as React.ReactNode}</span>
+              ] as [string, React.ReactNode][]).map(([label, value]) => (
+                <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{label}</span>
+                  <span style={{ fontSize: 13 }}>{value}</span>
                 </div>
               ))}
             </div>
             {TRANSICIONES[selectedOrden.estado]?.length && (
-              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                <button className="btn btn-primary" onClick={() => { setNuevoEstado(TRANSICIONES[selectedOrden.estado]![0]); setTransModal(true); }}>
-                  <ChevronRight size={13} /> Avanzar estado
-                </button>
-              </div>
+              <button className="btn btn-primary"
+                disabled={uncertainIds === null || uncertainIds.has(selectedOrden.id)}
+                onClick={() => abrirTransicion(selectedOrden)}>
+                <ChevronRight size={13} /> Avanzar estado
+              </button>
             )}
           </div>
         )}
       </Modal>
 
-      {/* Modal transición */}
-      <Modal
-        title="Cambiar estado de orden"
-        open={transModal}
-        onClose={() => setTransModal(false)}
-        footer={
-          <>
-            <button className="btn btn-secondary" onClick={() => setTransModal(false)}>Cancelar</button>
-            <button
-              className="btn btn-primary"
-              onClick={handleTransicion}
-              disabled={saving || !nuevoEstado}
-            >
-              {saving ? 'Guardando...' : `Confirmar cambio a ${nuevoEstado || '...'}`}
-            </button>
-          </>
-        }
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-            Orden: <strong style={{ color: 'var(--text-primary)' }}>{selectedOrden?.numeroOrden}</strong>
-          </p>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Estado actual: <StatusBadge status={selectedOrden?.estado ?? ''} />
-          </p>
-          <div className="form-group">
-            <label className="form-label">Nuevo estado a aplicar</label>
-            <select
-              className="form-input"
-              value={nuevoEstado}
-              onChange={e => setNuevoEstado(e.target.value as EstadoOrden)}
-            >
-              {(selectedOrden ? TRANSICIONES[selectedOrden.estado] ?? [] : []).map(e => (
-                <option key={e} value={e}>{e}</option>
-              ))}
-            </select>
-          </div>
+      <Modal title="Cambiar estado de orden" open={transModal}
+        onClose={() => { if (!savingRef.current) { setTransModal(false); setSelectedOrden(null); } }}
+        footer={<>
+          <button className="btn btn-secondary" disabled={saving}
+            onClick={() => { setTransModal(false); setSelectedOrden(null); }}>Cancelar</button>
+          <button className="btn btn-primary" onClick={handleTransicion}
+            disabled={saving || !nuevoEstado || uncertainIds === null
+              || (selectedOrden !== null && uncertainIds.has(selectedOrden.id))}>
+            {saving ? 'Guardando...' : 'Confirmar cambio a ' + (nuevoEstado || '...')}
+          </button>
+        </>}>
+        <p>Orden: <strong>{selectedOrden?.numeroOrden}</strong></p>
+        <p>Estado mostrado: <StatusBadge status={selectedOrden?.estado ?? ''} /></p>
+        <p>Se consultará el estado actual antes de enviar el cambio. Si el resultado es incierto, se bloquearán nuevas transiciones de esta orden en este navegador.</p>
+        <div className="form-group">
+          <label className="form-label">Nuevo estado</label>
+          <select className="form-input" value={nuevoEstado} disabled={saving}
+            onChange={event => setNuevoEstado(event.target.value as EstadoOrden)}>
+            {(selectedOrden ? TRANSICIONES[selectedOrden.estado] ?? [] : []).map(estado =>
+              <option key={estado} value={estado}>{estado}</option>)}
+          </select>
         </div>
-      </Modal>
-
-      {/* Modal Crear Nueva Orden */}
-      <Modal
-        title="Crear Nueva Orden (OMS)"
-        open={createModalOpen}
-        onClose={() => setCreateModalOpen(false)}
-        size="lg"
-        footer={
-          <>
-            <button className="btn btn-secondary" onClick={() => setCreateModalOpen(false)}>Cancelar</button>
-            <button
-              className="btn btn-primary"
-              onClick={handleCrearOrden}
-              disabled={creatingOrder || !orderForm.nombreProducto || orderForm.cantidad <= 0 || orderForm.precioUnitario <= 0}
-            >
-              {creatingOrder ? 'Registrando...' : 'Crear y Registrar Orden'}
-            </button>
-          </>
-        }
-      >
-        <form onSubmit={handleCrearOrden} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Canal / Tipo de Cliente</label>
-              <select
-                className="form-input"
-                value={orderForm.tipoCliente}
-                onChange={e => {
-                  const val = e.target.value as TipoCliente;
-                  setOrderForm({
-                    ...orderForm,
-                    tipoCliente: val,
-                    tipoComprobante: val === 'Empresa' ? 'CreditoFiscalCCF' : 'FacturaConsumidorFinal',
-                    condicionPago: val === 'Empresa' ? 'Credito30' : 'Inmediato',
-                  });
-                }}
-              >
-                <option value="ConsumidorFinal">B2C Retail (Consumidor Final)</option>
-                <option value="Empresa">B2B Empresa (Distribuidor / Mayoreo)</option>
-                <option value="GobiernoPublico">B2G Gobierno / Entidad Pública</option>
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Comprobante Fiscal</label>
-              <select
-                className="form-input"
-                value={orderForm.tipoComprobante}
-                onChange={e => setOrderForm({ ...orderForm, tipoComprobante: e.target.value })}
-              >
-                <option value="FacturaConsumidorFinal">Factura Consumidor Final</option>
-                <option value="CreditoFiscalCCF">Crédito Fiscal (CCF)</option>
-                <option value="FacturaExportacion">Factura de Exportación</option>
-              </select>
-            </div>
-          </div>
-
-          <div style={{ padding: '10px 14px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-              Detalle del Producto / Ítem
-            </span>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginTop: 8 }}>
-              <div className="form-group">
-                <label className="form-label">Nombre del Producto</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={orderForm.nombreProducto}
-                  onChange={e => setOrderForm({ ...orderForm, nombreProducto: e.target.value })}
-                  placeholder="Ej: Smartphone Galaxy A54"
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">SKU</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={orderForm.sku}
-                  onChange={e => setOrderForm({ ...orderForm, sku: e.target.value })}
-                  placeholder="SKU-LOGI-XXXX"
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Cantidad</label>
-                <input
-                  type="number"
-                  min="1"
-                  className="form-input"
-                  value={orderForm.cantidad}
-                  onChange={e => setOrderForm({ ...orderForm, cantidad: parseInt(e.target.value) || 1 })}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Precio Unitario ($ USD)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  className="form-input"
-                  value={orderForm.precioUnitario}
-                  onChange={e => setOrderForm({ ...orderForm, precioUnitario: parseFloat(e.target.value) || 0 })}
-                  required
-                />
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-            <div className="form-group">
-              <label className="form-label">Operador Logístico / Transportista</label>
-              <select
-                className="form-input"
-                value={orderForm.transportista}
-                onChange={e => {
-                  const nuevoTransportista = e.target.value;
-                  const tarifaAuto = obtenerTarifaTransportista(nuevoTransportista);
-                  setOrderForm({
-                    ...orderForm,
-                    transportista: nuevoTransportista,
-                    costoEnvio: tarifaAuto,
-                  });
-                }}
-              >
-                {OPERADORES_LOGISTICOS.map(op => (
-                  <option key={op.id} value={op.id}>
-                    {op.nombre} — {fmtMoney(op.tarifaEnvio)} USD
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Zona de Envío</label>
-              <input
-                type="text"
-                className="form-input"
-                value={orderForm.zonaEnvio}
-                onChange={e => setOrderForm({ ...orderForm, zonaEnvio: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">
-                Costo Envío ($ USD)
-                <span style={{ fontSize: 10, color: 'var(--accent)', marginLeft: 6, fontWeight: 600 }}>
-                  (Automático)
-                </span>
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                className="form-input"
-                value={orderForm.costoEnvio}
-                onChange={e => setOrderForm({ ...orderForm, costoEnvio: parseFloat(e.target.value) || 0 })}
-              />
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Dirección de Entrega</label>
-            <input
-              type="text"
-              className="form-input"
-              value={orderForm.direccionEntrega}
-              onChange={e => setOrderForm({ ...orderForm, direccionEntrega: e.target.value })}
-              placeholder="Dirección completa de entrega"
-              required
-            />
-          </div>
-
-          {/* Resumen de Liquidación */}
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '10px 14px',
-            background: 'rgba(99,102,241,0.08)',
-            border: '1px solid rgba(99,102,241,0.2)',
-            borderRadius: 6,
-            fontSize: 12
-          }}>
-            <div>
-              <span style={{ color: 'var(--text-muted)' }}>Subtotal: </span>
-              <strong>{fmtMoney(orderForm.cantidad * orderForm.precioUnitario)}</strong>
-              <span style={{ color: 'var(--text-muted)', marginLeft: 10 }}>IVA (13%): </span>
-              <strong>{fmtMoney(Math.round(orderForm.cantidad * orderForm.precioUnitario * 0.13 * 100) / 100)}</strong>
-              <span style={{ color: 'var(--text-muted)', marginLeft: 10 }}>Envío: </span>
-              <strong>{fmtMoney(orderForm.costoEnvio)}</strong>
-            </div>
-            <div>
-              <span style={{ color: 'var(--text-muted)' }}>Total a Facturar: </span>
-              <strong style={{ fontSize: 14, color: 'var(--accent-hover)' }}>
-                {fmtMoney(
-                  orderForm.cantidad * orderForm.precioUnitario +
-                  Math.round(orderForm.cantidad * orderForm.precioUnitario * 0.13 * 100) / 100 +
-                  orderForm.costoEnvio
-                )}
-              </strong>
-            </div>
-          </div>
-        </form>
       </Modal>
     </div>
   );
