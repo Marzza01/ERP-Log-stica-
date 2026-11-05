@@ -29,6 +29,7 @@ const semaforoColors: Record<SemaforoColor, string> = {
   Verde: 'var(--green)',
   Amarillo: 'var(--yellow)',
   Rojo: 'var(--red)',
+  Neutro: 'var(--text-muted)',
 };
 
 export default function KpiDetailModal({ selected, data, onClose }: KpiDetailModalProps) {
@@ -52,7 +53,8 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
     const config = KPI_DETAILS_CONFIG[currentKpi.numero];
     if (!config) return null;
 
-    const color = semaforoColors[currentKpi.semaforo];
+    const tieneDatos = currentKpi.tieneDatos !== false && currentKpi.semaforo !== 'Neutro';
+    const color = semaforoColors[currentKpi.semaforo] ?? 'var(--text-muted)';
     const cls = currentKpi.semaforo.toLowerCase();
 
     // Cálculo de diferencia vs meta
@@ -60,7 +62,10 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
     let diffText = '';
     let diffFavorable = false;
 
-    if (config.sentido === 'mayor') {
+    if (!tieneDatos) {
+      diffText = 'Sin registros suficientes para evaluar la meta';
+      diffFavorable = false;
+    } else if (config.sentido === 'mayor') {
       diffFavorable = diff >= 0;
       if (diff >= 0) {
         diffText = `${diff.toLocaleString('es-SV', { maximumFractionDigits: 1 })} ${currentKpi.unidad === '%' ? 'pts' : currentKpi.unidad} por encima de la meta`;
@@ -78,7 +83,9 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
 
     // Progreso visual de la barra hacia la meta
     let progressPct = 0;
-    if (config.sentido === 'mayor') {
+    if (!tieneDatos) {
+      progressPct = 0;
+    } else if (config.sentido === 'mayor') {
       progressPct = currentKpi.meta > 0
         ? Math.min(100, Math.max(0, (currentKpi.valor / currentKpi.meta) * 100))
         : 0;
@@ -90,7 +97,9 @@ export default function KpiDetailModal({ selected, data, onClose }: KpiDetailMod
         : 100;
     }
 
-    const recomendacion = config.recomendaciones[currentKpi.semaforo] ?? '';
+    const recomendacion = (currentKpi.semaforo === 'Neutro'
+      ? 'No hay registros en el período seleccionado para emitir recomendaciones operativas.'
+      : config.recomendaciones[currentKpi.semaforo]) ?? '';
 
     // Renderizado del componente visual específico para este KPI (Gráficos A y B)
     const renderKpiVisuals = () => {

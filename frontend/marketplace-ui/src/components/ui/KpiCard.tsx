@@ -16,11 +16,15 @@ const semaforoColors: Record<SemaforoColor, string> = {
   Verde: 'var(--green)',
   Amarillo: 'var(--yellow)',
   Rojo: 'var(--red)',
+  Neutro: 'var(--text-muted)',
 };
 
 export default function KpiCard({ kpi, onClick }: KpiCardProps) {
-  const color = semaforoColors[kpi.semaforo];
-  const pct = Math.min(100, Math.max(0, kpi.meta > 0 ? (kpi.valor / kpi.meta) * 100 : 0));
+  const tieneDatos = kpi.tieneDatos !== false && kpi.semaforo !== 'Neutro';
+  const color = semaforoColors[kpi.semaforo] ?? 'var(--text-muted)';
+  const pct = tieneDatos && kpi.meta > 0
+    ? Math.min(100, Math.max(0, (kpi.valor / kpi.meta) * 100))
+    : 0;
   const cls = kpi.semaforo.toLowerCase();
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -47,13 +51,15 @@ export default function KpiCard({ kpi, onClick }: KpiCardProps) {
         </span>
         <span className={`semaforo ${cls}`}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' }} />
-          {kpi.semaforo}
+          {kpi.semaforo === 'Neutro' ? 'Sin datos' : kpi.semaforo}
         </span>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-        <span className="kpi-value">{kpi.valor.toLocaleString('es-SV', { maximumFractionDigits: 1 })}</span>
-        <span className="kpi-unit">{kpi.unidad}</span>
+        <span className="kpi-value">
+          {tieneDatos ? kpi.valor.toLocaleString('es-SV', { maximumFractionDigits: 1 }) : '—'}
+        </span>
+        {tieneDatos && <span className="kpi-unit">{kpi.unidad}</span>}
       </div>
 
       <div className="kpi-progress">
@@ -65,9 +71,15 @@ export default function KpiCard({ kpi, onClick }: KpiCardProps) {
 
       <div className="kpi-footer">
         <span className="kpi-meta">Meta: {kpi.meta}{kpi.unidad}</span>
-        <span style={{ fontSize: 11, color: kpi.cumpleMeta ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-          {kpi.cumpleMeta ? '✓ Cumple' : '✗ No cumple'}
-        </span>
+        {tieneDatos ? (
+          <span style={{ fontSize: 11, color: kpi.cumpleMeta ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+            {kpi.cumpleMeta ? '✓ Cumple' : '✗ No cumple'}
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>
+            Sin datos
+          </span>
+        )}
       </div>
     </div>
   );

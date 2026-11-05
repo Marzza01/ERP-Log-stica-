@@ -23,7 +23,7 @@ export interface KpiConfig {
     nombre: string;
     ruta: string;
   };
-  recomendaciones: Record<'Verde' | 'Amarillo' | 'Rojo', string>;
+  recomendaciones: Record<'Verde' | 'Amarillo' | 'Rojo', string> & { Neutro?: string };
 }
 
 export type StatCardKey = 'total_ordenes' | 'ordenes_entregadas' | 'canceladas' | 'comision_generada';
