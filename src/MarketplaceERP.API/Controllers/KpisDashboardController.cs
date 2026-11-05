@@ -93,13 +93,19 @@ public class KpisDashboardController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Base de datos no disponible para KPIs. Generando datos proyectados para la sesión.");
+            _logger.LogError(ex, "Base de datos no disponible para KPIs del Dashboard.");
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                mensaje = "Base de datos no disponible para KPIs del Dashboard.",
+                dbConectada = false
+            });
         }
 
         // ── KPI 1: Fill Rate ──────────────────────────────────────────────────
-        int totalOrdenes    = dbDisponible ? ordenes.Count : 248;
-        int entregadas      = dbDisponible ? ordenes.Count(o => o.Estado == EstadoOrden.Entregada) : 201;
-        double fillRate     = totalOrdenes > 0 ? (double)entregadas / totalOrdenes * 100.0 : 81.05;
+        int totalOrdenes    = ordenes.Count;
+        int entregadas      = ordenes.Count(o => o.Estado == EstadoOrden.Entregada);
+        bool fillRateTieneDatos = totalOrdenes > 0;
+        double fillRate     = fillRateTieneDatos ? (double)entregadas / totalOrdenes * 100.0 : 0.0;
 
         // ── KPI 2: OTIF (On-Time In-Full) ─────────────────────────────────────
         var ordenesConFechaEstimada = ordenes
@@ -108,52 +114,52 @@ public class KpisDashboardController : ControllerBase
                      && o.FechaEntregaEstimada.HasValue)
             .ToList();
         int onTime      = ordenesConFechaEstimada.Count(o => o.FechaEntregaReal!.Value <= o.FechaEntregaEstimada!.Value);
-        double otif     = dbDisponible
-            ? (ordenesConFechaEstimada.Count > 0 ? (double)onTime / ordenesConFechaEstimada.Count * 100.0 : 92.5)
-            : 92.5;
+        bool otifTieneDatos = ordenesConFechaEstimada.Count > 0;
+        double otif     = otifTieneDatos
+            ? (double)onTime / ordenesConFechaEstimada.Count * 100.0
+            : 0.0;
 
         // ── KPI 3: Tasa de Cancelación ────────────────────────────────────────
-        int canceladas      = dbDisponible ? ordenes.Count(o => o.Estado == EstadoOrden.Cancelada) : 12;
-        double tasaCancelacion = totalOrdenes > 0 ? (double)canceladas / totalOrdenes * 100.0 : 4.84;
+        int canceladas      = ordenes.Count(o => o.Estado == EstadoOrden.Cancelada);
+        bool cancelacionTieneDatos = totalOrdenes > 0;
+        double tasaCancelacion = cancelacionTieneDatos ? (double)canceladas / totalOrdenes * 100.0 : 0.0;
 
         // ── KPI 4: Tiempo Promedio de Ciclo (horas) ───────────────────────────
         var tiemposCiclo = ordenes
             .Where(o => o.Estado == EstadoOrden.Entregada && o.FechaEntregaReal.HasValue)
             .Select(o => (o.FechaEntregaReal!.Value - o.FechaCreacion).TotalHours)
             .ToList();
-        double tiempoCicloPromedio = dbDisponible
-            ? (tiemposCiclo.Count > 0 ? tiemposCiclo.Average() : 34.2)
-            : 34.2;
+        bool cicloTieneDatos = tiemposCiclo.Count > 0;
+        double tiempoCicloPromedio = cicloTieneDatos ? tiemposCiclo.Average() : 0.0;
 
         // ── KPI 5: Rotación de Inventario (simplificada) ──────────────────────
         decimal totalInventarioValor = stocks.Sum(s => s.CantidadTotal * 1m); // unidades totales en bodega
         decimal ventasTotales        = ordenes.Where(o => o.Estado == EstadoOrden.Entregada).Sum(o => o.MontoTotal);
-        double rotacionInventario    = (dbDisponible && totalInventarioValor > 0)
+        bool rotacionTieneDatos      = totalInventarioValor > 0;
+        double rotacionInventario    = rotacionTieneDatos
             ? (double)(ventasTotales / totalInventarioValor)
-            : 4.15;
+            : 0.0;
 
         // ── KPI 6: Tasa de Devolución RMA ─────────────────────────────────────
-        int totalRMA        = dbDisponible ? rmas.Count : 8;
-        double tasaRMA      = entregadas > 0 ? (double)totalRMA / entregadas * 100.0 : 3.98;
+        int totalRMA        = rmas.Count;
+        bool rmaTieneDatos  = entregadas > 0;
+        double tasaRMA      = rmaTieneDatos ? (double)totalRMA / entregadas * 100.0 : 0.0;
 
         // ── KPI 7: Precisión del 3-Way Match ──────────────────────────────────
-        int totalMatches    = dbDisponible ? matches.Count : 87;
+        int totalMatches    = matches.Count;
         int matchesConformes = matches.Count(m => m.Resultado == Estado3WayMatch.Conforme);
-        double precisionMatch = dbDisponible
-            ? (totalMatches > 0 ? (double)matchesConformes / totalMatches * 100.0 : 100)
-            : 100;
+        bool matchTieneDatos = totalMatches > 0;
+        double precisionMatch = matchTieneDatos
+            ? (double)matchesConformes / totalMatches * 100.0
+            : 0.0;
 
         // ── KPI 8: Margen de Comisión Marketplace ─────────────────────────────
         decimal totalVentas     = splits.Sum(s => s.MontoTotal);
         decimal totalComision   = splits.Sum(s => s.MontoMarketplace);
-        double margenComision   = (dbDisponible && totalVentas > 0)
+        bool margenTieneDatos   = totalVentas > 0;
+        double margenComision   = margenTieneDatos
             ? (double)(totalComision / totalVentas) * 100.0
-            : 10.0;
-
-        if (!dbDisponible)
-        {
-            totalComision = 4820.50m;
-        }
+            : 0.0;
 
         // ── Construir respuesta con semáforos ─────────────────────────────────
         var dashboard = new
@@ -175,45 +181,53 @@ public class KpisDashboardController : ControllerBase
                 Kpi(1, "Fill Rate",
                     Math.Round(fillRate, 2), "%",
                     meta: 95, umbralVerde: 95, umbralAmarillo: 85,
-                    descripcion: "Porcentaje de órdenes completadas vs. recibidas."),
+                    descripcion: "Porcentaje de órdenes completadas vs. recibidas.",
+                    tieneDatos: fillRateTieneDatos),
 
                 Kpi(2, "OTIF (On-Time In-Full)",
                     Math.Round(otif, 2), "%",
                     meta: 95, umbralVerde: 95, umbralAmarillo: 85,
-                    descripcion: "Órdenes entregadas a tiempo y en su totalidad."),
+                    descripcion: "Órdenes entregadas a tiempo y en su totalidad.",
+                    tieneDatos: otifTieneDatos),
 
                 Kpi(3, "Tasa de Cancelación",
                     Math.Round(tasaCancelacion, 2), "%",
                     meta: 5, umbralVerde: 5, umbralAmarillo: 10,
                     invertido: true,
-                    descripcion: "Porcentaje de órdenes canceladas. Menor es mejor."),
+                    descripcion: "Porcentaje de órdenes canceladas. Menor es mejor.",
+                    tieneDatos: cancelacionTieneDatos),
 
                 Kpi(4, "Tiempo Ciclo Pedido",
                     Math.Round(tiempoCicloPromedio, 1), "horas",
                     meta: 48, umbralVerde: 48, umbralAmarillo: 72,
                     invertido: true,
-                    descripcion: "Tiempo promedio desde creación hasta entrega."),
+                    descripcion: "Tiempo promedio desde creación hasta entrega.",
+                    tieneDatos: cicloTieneDatos),
 
                 Kpi(5, "Rotación de Inventario",
                     Math.Round(rotacionInventario, 2), "veces",
                     meta: 4, umbralVerde: 4, umbralAmarillo: 2,
-                    descripcion: "Veces que el inventario se renueva en el período."),
+                    descripcion: "Veces que el inventario se renueva en el período.",
+                    tieneDatos: rotacionTieneDatos),
 
                 Kpi(6, "Tasa de Devolución RMA",
                     Math.Round(tasaRMA, 2), "%",
                     meta: 3, umbralVerde: 3, umbralAmarillo: 7,
                     invertido: true,
-                    descripcion: "Porcentaje de órdenes entregadas con devolución."),
+                    descripcion: "Porcentaje de órdenes entregadas con devolución.",
+                    tieneDatos: rmaTieneDatos),
 
                 Kpi(7, "Precisión 3-Way Match",
                     Math.Round(precisionMatch, 2), "%",
                     meta: 98, umbralVerde: 98, umbralAmarillo: 90,
-                    descripcion: "Porcentaje de matches conformes sin discrepancias."),
+                    descripcion: "Porcentaje de matches conformes sin discrepancias.",
+                    tieneDatos: matchTieneDatos),
 
                 Kpi(8, "Margen Comisión Marketplace",
                     Math.Round(margenComision, 2), "%",
                     meta: 10, umbralVerde: 9.5, umbralAmarillo: 8,
-                    descripcion: "Comisión promedio retenida por el marketplace (objetivo 10%)."),
+                    descripcion: "Comisión promedio retenida por el marketplace (objetivo 10%).",
+                    tieneDatos: margenTieneDatos),
             }
         };
 
@@ -229,7 +243,7 @@ public class KpisDashboardController : ControllerBase
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> ModeloFinanciero(CancellationToken cancellationToken)
     {
-        decimal ventasBase = 48000m;
+        decimal ventasBase = 0m;
 
         try
         {
@@ -246,7 +260,11 @@ public class KpisDashboardController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Base de datos no disponible para Modelo Financiero. Usando base proyectada.");
+            _logger.LogError(ex, "Base de datos no disponible para Modelo Financiero.");
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                mensaje = "Base de datos no disponible para el Modelo Financiero."
+            });
         }
 
         decimal comisionBase     = ventasBase * 0.10m;
@@ -303,16 +321,29 @@ public class KpisDashboardController : ControllerBase
     // ── Helper: construir objeto KPI con semáforo ──────────────────────────────
     private static object Kpi(int numero, string nombre, double valor, string unidad,
         double meta, double umbralVerde, double umbralAmarillo,
-        string descripcion = "", bool invertido = false)
+        string descripcion = "", bool invertido = false, bool tieneDatos = true)
     {
-        string semaforo = invertido
-            ? (valor <= umbralVerde ? "Verde" : valor <= umbralAmarillo ? "Amarillo" : "Rojo")
-            : (valor >= umbralVerde ? "Verde" : valor >= umbralAmarillo ? "Amarillo" : "Rojo");
+        string semaforo;
+        bool cumpleMeta;
+
+        if (!tieneDatos)
+        {
+            semaforo = "Neutro";
+            cumpleMeta = false;
+        }
+        else
+        {
+            semaforo = invertido
+                ? (valor <= umbralVerde ? "Verde" : valor <= umbralAmarillo ? "Amarillo" : "Rojo")
+                : (valor >= umbralVerde ? "Verde" : valor >= umbralAmarillo ? "Amarillo" : "Rojo");
+            cumpleMeta = invertido ? valor <= meta : valor >= meta;
+        }
 
         return new
         {
             numero, nombre, valor, unidad, meta, semaforo, descripcion,
-            cumpleMeta = invertido ? valor <= meta : valor >= meta
+            cumpleMeta,
+            tieneDatos
         };
     }
 }
