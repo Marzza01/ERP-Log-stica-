@@ -16,7 +16,8 @@ export interface LoginRequest {
 
 export interface AuthResponse {
   token: string;
-  expira: string;
+  role: string;
+  expiresAt: string;
   usuario: string;
   rol: string;
 }

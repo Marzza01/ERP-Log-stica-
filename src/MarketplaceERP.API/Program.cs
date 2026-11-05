@@ -33,8 +33,11 @@ if (await MaintenanceCommand.RunMaintenanceIfRequestedAsync(command, async () =>
 var builder = WebApplication.CreateBuilder(args);
 
 // Ambos modos usan la misma selección de destino. Ninguno abre la conexión aquí.
-builder.Configuration["ConnectionStrings:DefaultConnection"] =
-    DatabaseConnectionConfiguration.Resolve(builder.Configuration);
+var databaseConnection = DatabaseConnectionConfiguration.Resolve(builder.Configuration);
+StagingDatabaseTargetGuard.Validate(builder.Configuration,
+    Environment.GetEnvironmentVariable("RENDER_SERVICE_NAME"),
+    builder.Environment.EnvironmentName, databaseConnection);
+builder.Configuration["ConnectionStrings:DefaultConnection"] = databaseConnection;
 
 // Railway inyecta PORT al ejecutar el contenedor, no al construir la imagen.
 var listenUrls = RuntimePortConfiguration.ResolveUrls(builder.Configuration["PORT"]);
