@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -134,6 +135,17 @@ public class ProductosHttpAislamientoTests
             return client;
         }
 
+        public async Task VerificarSinStockInyectadoAsync(string sku, Guid stockId)
+        {
+            using var scope = _server.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var producto = await db.Productos.Include(p => p.Stocks)
+                .SingleAsync(p => p.Sku == sku);
+            Assert.Equal(SellerA, producto.VendedorId);
+            Assert.Empty(producto.Stocks);
+            Assert.False(await db.StockFisico.AnyAsync(s => s.Id == stockId));
+        }
+
         public void Dispose() => _server.Dispose();
     }
 
@@ -252,4 +264,46 @@ public class ProductosHttpAislamientoTests
         Assert.DoesNotContain("HTTP-FOREIGN-B", body);
         Assert.DoesNotContain("PROVEEDOR-PRIVADO-B", body);
     }
+    [Fact]
+    public async Task Http_CrearProducto_NoPersisteStockInyectadoEnJson()
+    {
+        using var fixture = await Fixture.CreateAsync();
+        using var seller = fixture.Client("Vendedor", fixture.SellerA.ToString());
+        var stockId = Guid.NewGuid();
+        const string sku = "HTTP-NO-OVERPOST";
+        var solicitud = new
+        {
+            id = Guid.NewGuid(), // el servidor asigna el ID
+            sku,
+            nombre = "Producto nuevo sin inventario automático",
+            categoriaNombre = "Tecnología",
+            categoriaId = Guid.NewGuid(),
+            vendedorId = fixture.SellerA,
+            precioB2C = 50m,
+            precioB2B = 40m,
+            estaPublicado = true,
+            // Stock es una propiedad compatibilidad con setter público.
+            // Antes, EF hacía Add del grafo completo y registraba este saldo.
+            stock = new
+            {
+                id = stockId,
+                productoId = fixture.ProductB,
+                cantidadTotal = 9999,
+                cantidadReservada = 0,
+                cantidadBloqueada = 0,
+                ubicacionCodigo = "STOCK-FAKE-CLIENT"
+            }
+        };
+        var response = await seller.PostAsJsonAsync("/api/productos", solicitud);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        await fixture.VerificarSinStockInyectadoAsync(sku, stockId);
+
+        var location = response.Headers.Location?.ToString();
+        Assert.False(string.IsNullOrWhiteSpace(location));
+
+        using var otherSeller = fixture.Client("Vendedor", fixture.SellerB.ToString());
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await otherSeller.GetAsync(location)).StatusCode);
+    }
+
 }
