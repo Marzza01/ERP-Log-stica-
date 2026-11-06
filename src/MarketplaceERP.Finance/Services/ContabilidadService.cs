@@ -82,6 +82,8 @@ public class ContabilidadService : IContabilidadService
         for (var i = 0; i < detalle.Count; i++)
         {
             var item = detalle[i];
+            if (item is null)
+                throw new ArgumentException($"La línea {i + 1} no puede ser nula.");
             var codigo = item.CodigoCuenta?.Trim();
             if (string.IsNullOrWhiteSpace(codigo) ||
                 !NombresCuenta.TryGetValue(codigo, out var nombre))
