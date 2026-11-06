@@ -188,6 +188,22 @@ public class AutorizacionU2Tests
             var buyerCheckout = controller == typeof(CheckoutController) && action.Name == nameof(CheckoutController.ProcesarCheckout);
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
             var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
+            var isProductController = controller == typeof(ProductosController);
+            var isProductCatalogRead = isProductController && (
+                action.Name == nameof(ProductosController.GetPublicados) ||
+                action.Name == nameof(ProductosController.Buscar) ||
+                action.Name == nameof(ProductosController.GetById) ||
+                action.Name == nameof(ProductosController.GetCatalogoB2B));
+            var isProductSellerOp = isProductController && (
+                action.Name == nameof(ProductosController.Create) ||
+                action.Name == nameof(ProductosController.Update) ||
+                action.Name == nameof(ProductosController.Delete) ||
+                action.Name == nameof(ProductosController.Publicar) ||
+                action.Name == nameof(ProductosController.GetAlertasStock));
+
+            var allowsSeller = publicLogin || isProductCatalogRead || isProductSellerOp;
+            var allowsBuyer = publicLogin || buyerCheckout || buyerTracking || buyerOrder || isProductCatalogRead;
+
             var metadata = controller.GetCustomAttributes(inherit: true).Concat(action.GetCustomAttributes(inherit: true)).ToArray();
             Assert.Equal(publicLogin, metadata.OfType<IAllowAnonymous>().Any());
             foreach (var alias in action.GetCustomAttributes<HttpMethodAttribute>())
@@ -197,9 +213,8 @@ public class AutorizacionU2Tests
                 // Authorization is independent of route matching; each alias must carry the same metadata.
                 Assert.False(string.IsNullOrWhiteSpace(verb));
                 Assert.Equal(publicLogin ? 200 : 401, await Probe(controller, action.Name, null));
-                Assert.Equal(publicLogin ? 200 : 403, await Probe(controller, action.Name, "Vendedor"));
-                Assert.Equal(publicLogin || buyerCheckout || buyerTracking || buyerOrder ? 200 : 403,
-                    await Probe(controller, action.Name, "Comprador"));
+                Assert.Equal(allowsSeller ? 200 : 403, await Probe(controller, action.Name, "Vendedor"));
+                Assert.Equal(allowsBuyer ? 200 : 403, await Probe(controller, action.Name, "Comprador"));
                 Assert.Equal(buyerCheckout ? 403 : 200, await Probe(controller, action.Name, "Admin"));
                 if (!publicLogin)
                 {

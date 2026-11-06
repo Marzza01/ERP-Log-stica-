@@ -3,6 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
+using System.Security.Claims;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
@@ -18,7 +19,7 @@ namespace MarketplaceERP.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/productos")]
-[Authorize(Roles = "Admin")]
+[Authorize]
 public class ProductosController : ControllerBase
 {
     private readonly CatalogDbContext _dbContext;
@@ -163,10 +164,22 @@ public class ProductosController : ControllerBase
     /// </summary>
     [HttpGet("alertas-stock")]
     [HttpGet("alertas-reorden")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(IEnumerable<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAlertasStock()
     {
-        var productos = await _dbContext.Productos
+        var query = _dbContext.Productos.AsQueryable();
+
+        if (!User.IsInRole("Admin"))
+        {
+            var vendedorId = ObtenerVendedorIdActual();
+            if (!vendedorId.HasValue)
+                return Forbid();
+
+            query = query.Where(p => p.VendedorId == vendedorId.Value);
+        }
+
+        var productos = await query
             .Where(p => p.Stocks.Any() &&
                         p.Stocks.Sum(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada) <= p.StockMinimo)
             .OrderBy(p => p.Stocks.Sum(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada))
@@ -266,11 +279,27 @@ public class ProductosController : ControllerBase
     /// Publica un nuevo producto. Requiere rol Vendedor o Admin.
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(Producto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Create([FromBody] Producto producto)
     {
+        if (producto is null)
+            return BadRequest(new { mensaje = "El producto no puede ser nulo." });
+
+        if (!User.IsInRole("Admin"))
+        {
+            var vendedorId = ObtenerVendedorIdActual();
+            if (!vendedorId.HasValue)
+                return Forbid();
+
+            // Si el cuerpo especifica un VendedorId distinto al del vendedor autenticado, denegar
+            if (producto.VendedorId != Guid.Empty && producto.VendedorId != vendedorId.Value)
+                return Forbid();
+
+            producto.VendedorId = vendedorId.Value;
+        }
+
         producto.Id = Guid.NewGuid();
         producto.FechaCreacion = DateTime.UtcNow;
 
@@ -287,14 +316,13 @@ public class ProductosController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = producto.Id }, producto);
     }
 
-
     /// <summary>
     /// Actualiza los datos maestros operativos de un producto.
     /// El Código EAN se conserva sin cambios para permitir que la funcionalidad de códigos de barras
     /// sea implementada posteriormente por el integrante responsable.
     /// </summary>
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(Producto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Update(Guid id, [FromBody] ActualizarProductoRequest request)
@@ -305,6 +333,13 @@ public class ProductosController : ControllerBase
 
         if (producto is null)
             return NotFound(new { mensaje = $"Producto {id} no encontrado." });
+
+        if (!User.IsInRole("Admin"))
+        {
+            var vendedorId = ObtenerVendedorIdActual();
+            if (!vendedorId.HasValue || producto.VendedorId != vendedorId.Value)
+                return Forbid();
+        }
 
         producto.Sku = request.Sku;
         producto.Nombre = request.Nombre;
@@ -333,7 +368,7 @@ public class ProductosController : ControllerBase
     /// Da de baja lógica un producto sin eliminar su trazabilidad histórica.
     /// </summary>
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(Guid id)
@@ -341,6 +376,13 @@ public class ProductosController : ControllerBase
         var producto = await _dbContext.Productos.FindAsync(id);
         if (producto is null)
             return NotFound(new { mensaje = $"Producto {id} no encontrado." });
+
+        if (!User.IsInRole("Admin"))
+        {
+            var vendedorId = ObtenerVendedorIdActual();
+            if (!vendedorId.HasValue || producto.VendedorId != vendedorId.Value)
+                return Forbid();
+        }
 
         producto.EstaPublicado = false;
         producto.EstadoProducto = "Inactivo";
@@ -353,7 +395,7 @@ public class ProductosController : ControllerBase
     /// Publica un producto (cambia EstaPublicado a true). Requiere rol Vendedor o Admin.
     /// </summary>
     [HttpPatch("{id:guid}/publicar")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Publicar(Guid id)
@@ -362,11 +404,27 @@ public class ProductosController : ControllerBase
         if (producto is null)
             return NotFound(new { mensaje = $"Producto {id} no encontrado." });
 
+        if (!User.IsInRole("Admin"))
+        {
+            var vendedorId = ObtenerVendedorIdActual();
+            if (!vendedorId.HasValue || producto.VendedorId != vendedorId.Value)
+                return Forbid();
+        }
+
         producto.EstaPublicado = true;
         producto.FechaPublicacion = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync();
 
         return NoContent();
+    }
+
+    private Guid? ObtenerVendedorIdActual()
+    {
+        var claims = User.FindAll("VendedorId").Select(c => c.Value).Where(v => !string.IsNullOrWhiteSpace(v)).ToArray();
+        if (claims.Length == 0) return null;
+        if (claims.Any(c => !Guid.TryParse(c, out var id) || id == Guid.Empty)) return null;
+        var distinct = claims.Select(Guid.Parse).Distinct().ToArray();
+        return distinct.Length == 1 ? distinct[0] : null;
     }
 }
 
