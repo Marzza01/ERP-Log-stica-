@@ -76,10 +76,10 @@ public class DeploymentHttpSecurityTests
     {
         var headers = new HeaderDictionary();
         DeploymentHttpSecurity.AddRenderHsts(headers);
-        Assert.Equal("max-age=2592000", headers.StrictTransportSecurity.ToString());
+        Assert.Equal("max-age=2592000", headers["Strict-Transport-Security"].ToString());
 
-        headers.StrictTransportSecurity = "max-age=3600";
+        headers["Strict-Transport-Security"] = "max-age=3600";
         DeploymentHttpSecurity.AddRenderHsts(headers);
-        Assert.Equal("max-age=3600", headers.StrictTransportSecurity.ToString());
+        Assert.Equal("max-age=3600", headers["Strict-Transport-Security"].ToString());
     }
 }
