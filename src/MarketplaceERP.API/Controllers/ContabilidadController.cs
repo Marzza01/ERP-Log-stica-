@@ -108,23 +108,35 @@ public class ContabilidadController : ControllerBase
     public async Task<IActionResult> AsientoManual(
         [FromBody] AsientoManualRequest req, CancellationToken cancellationToken)
     {
-        decimal totalDebe  = req.Lineas.Sum(l => l.Debe);
-        decimal totalHaber = req.Lineas.Sum(l => l.Haber);
+        if (req is null || req.Lineas is null)
+            return BadRequest(new { mensaje = "Debe proporcionar el asiento y sus líneas." });
 
-        if (Math.Abs(totalDebe - totalHaber) > 0.01m)
-            return BadRequest(new
+        try
+        {
+            var lineas = req.Lineas.Select(l => new LineaAsientoInput(
+                l.CodigoCuenta, l.Debe, l.Haber, l.Glosa)).ToList();
+
+            // No usar GenerarAsientoVentaAsync: cambiaría las cuentas enviadas.
+            var partida = await _contabilidad.GenerarAsientoManualAsync(
+                req.Concepto, req.TipoOperacion, lineas, cancellationToken);
+
+            return CreatedAtAction(nameof(LibroDiario), null, new
             {
-                mensaje = "El asiento no cuadra. La suma de Debe debe ser igual a la suma de Haber.",
-                totalDebe, totalHaber, diferencia = totalDebe - totalHaber
+                partida.Id,
+                partida.NumeroPartida,
+                partida.Concepto,
+                totalDebe = partida.TotalDebe,
+                totalHaber = partida.TotalHaber,
+                lineas = partida.Lineas.Select(l => new
+                {
+                    l.CodigoCuenta, l.NombreCuenta, l.Debe, l.Haber, l.Glosa
+                })
             });
-
-        // Se utiliza el asiento de venta genérico con monto 0 de IVA como contenedor
-        // y se sobreescribe el concepto — en producción se extendería la interfaz
-        var partida = await _contabilidad.GenerarAsientoVentaAsync(
-            Guid.Empty, totalDebe, 0m, "AjusteManual", cancellationToken);
-
-        return CreatedAtAction(nameof(LibroDiario), null,
-            new { partida.Id, partida.NumeroPartida, partida.Concepto, totalDebe, totalHaber });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
     }
 }
 
