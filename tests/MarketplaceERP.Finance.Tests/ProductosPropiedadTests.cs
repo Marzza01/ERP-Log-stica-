@@ -261,7 +261,13 @@ public class ProductosPropiedadTests
     [Fact]
     public async Task SEC02_BusquedaConEanOpcional_NoFallaNiExponeProductosAjenos()
     {
-        await using var db = MemoryContext();
+        // SEC-02 aún no incluye la migración de EAN opcional de staging.
+        // Desactivar solo aquí los null checks del proveedor InMemory para reproducir el dato real de Neon.
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase("sec02-ean-" + Guid.NewGuid(),
+                databaseOptions => databaseOptions.EnableNullChecks(false))
+            .Options;
+        await using var db = new CatalogDbContext(options);
         var vendedorA = Guid.NewGuid();
         var vendedorB = Guid.NewGuid();
 
