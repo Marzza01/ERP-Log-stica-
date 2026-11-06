@@ -68,7 +68,7 @@ jobs:
 
       # 5. Ejecutar tests unitarios
       - name: Run tests
-        run: dotnet test MarketplaceERP.sln --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./TestResults
+        run: dotnet test MarketplaceERP.sln --no-build --configuration Release --logger "trx;LogFilePrefix=test-results" --results-directory ./TestResults
 
       # Preservar reportes TRX sin depender de una accion Node 20 obsoleta.
       - name: Upload test results (TRX)
