@@ -105,3 +105,24 @@ atiende en ese servicio y en la rama Neon test; nunca restaurar `main` ni el
 respaldo para reparar ensayo. Detener cualquier operación cuyo destino no
 coincida con los identificadores anteriores. Suspender o eliminar recursos de
 ensayo requiere autorización específica.
+
+## Seguridad del proxy HTTP y TLS (actualización de staging)
+
+- Render termina TLS antes de enviar las peticiones HTTP internas a Kestrel y redirige
+  automáticamente HTTP externo a HTTPS; la API en Render no debe aplicar de nuevo
+  `UseHttpsRedirection` ni inferir la IP cliente de un `X-Forwarded-For` arbitrario.
+- En servicios Render, `DeploymentHttpSecurity` añade HSTS de 30 días si no existe
+  una política previa. No usa `includeSubDomains` ni `preload`.
+- En otros hosts, `ForwardedHeadersMiddleware` solo confía por defecto en proxies
+  loopback; cualquier proxy adicional debe validarse y registrarse de forma explícita.
+  No se permite vaciar las listas de confianza sin sustituirlas por entradas verificadas.
+- Restricción conocida: el limitador de login usa la IP visible desde Kestrel.
+  En Render podría corresponder al proxy compartido, y varios usuarios pueden
+  compartir temporalmente el presupuesto de intentos. Para limitar por IP real
+  se requiere un canal de identidad del cliente autenticado por la plataforma;
+  nunca confiar directamente en cabeceras que pueda enviar un atacante.
+- Las advertencias de claves efímeras de ASP.NET Core Data Protection no prueban
+  un fallo del JWT Bearer actual, pero una futura autenticación por cookies o uso
+  de tokens cifrados requerirá un almacén de claves persistente y protegido.
+  No silenciar esos avisos ni guardar el anillo de claves en el repositorio.
+
