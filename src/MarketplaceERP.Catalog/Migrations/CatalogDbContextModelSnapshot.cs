@@ -587,7 +587,6 @@ namespace MarketplaceERP.Catalog.Migrations
                         .HasColumnType("character varying(100)");
 
                     b.Property<string>("CodigoEAN")
-                        .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 

@@ -261,13 +261,8 @@ public class ProductosPropiedadTests
     [Fact]
     public async Task SEC02_BusquedaConEanOpcional_NoFallaNiExponeProductosAjenos()
     {
-        // SEC-02 aún no incluye la migración de EAN opcional de staging.
-        // Desactivar solo aquí los null checks del proveedor InMemory para reproducir el dato real de Neon.
-        var options = new DbContextOptionsBuilder<CatalogDbContext>()
-            .UseInMemoryDatabase("sec02-ean-" + Guid.NewGuid(),
-                databaseOptions => databaseOptions.EnableNullChecks(false))
-            .Options;
-        await using var db = new CatalogDbContext(options);
+        // En esta rama el modelo y la migración EAN opcional ya están reconciliados.
+        await using var db = MemoryContext();
         var vendedorA = Guid.NewGuid();
         var vendedorB = Guid.NewGuid();
 
@@ -465,4 +460,36 @@ public class ProductosPropiedadTests
         var publishResult = await controllerAdmin.Publicar(prod.Id);
         Assert.IsType<NoContentResult>(publishResult);
     }
+    [Fact]
+    public async Task SEC04_Create_DescartaGrafoDeStockEnviadoPorCliente()
+    {
+        await using var db = MemoryContext();
+        var sellerId = Guid.NewGuid();
+        var stockId = Guid.NewGuid();
+        var entrada = CreateTestProduct(sellerId, "SEC04-OVERPOST", "Producto con saldo falso");
+        // Producto.Stock tiene setter de compatibilidad y puede poblar Stocks.
+        // Una inserción directa del grafo EF materializaría estas 9.999 unidades.
+        entrada.Stock = new StockFisico
+        {
+            Id = stockId,
+            ProductoId = Guid.NewGuid(),
+            CantidadTotal = 9999,
+            CantidadReservada = 0,
+            CantidadBloqueada = 0
+        };
+
+        var controller = CreateController(db, "Vendedor", actorId: Guid.NewGuid(), vendedorId: sellerId);
+        var result = await controller.Create(entrada);
+        var created = Assert.IsType<CreatedAtActionResult>(result);
+        var saved = Assert.IsType<Producto>(created.Value);
+
+        Assert.NotSame(entrada, saved);
+        Assert.NotEqual(entrada.Id, saved.Id);
+        Assert.Equal(sellerId, saved.VendedorId);
+        Assert.Empty(saved.Stocks);
+        Assert.Null(saved.Stock);
+        Assert.False(await db.StockFisico.AnyAsync(s => s.Id == stockId));
+        Assert.Empty(await db.StockFisico.ToListAsync());
+    }
+
 }
