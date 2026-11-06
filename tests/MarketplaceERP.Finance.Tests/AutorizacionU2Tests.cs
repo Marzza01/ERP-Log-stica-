@@ -192,14 +192,14 @@ public class AutorizacionU2Tests
             var isProductCatalogRead = isProductController && (
                 action.Name == nameof(ProductosController.GetPublicados) ||
                 action.Name == nameof(ProductosController.Buscar) ||
-                action.Name == nameof(ProductosController.GetById) ||
-                action.Name == nameof(ProductosController.GetCatalogoB2B));
+                action.Name == nameof(ProductosController.GetById));
             var isProductSellerOp = isProductController && (
                 action.Name == nameof(ProductosController.Create) ||
                 action.Name == nameof(ProductosController.Update) ||
                 action.Name == nameof(ProductosController.Delete) ||
                 action.Name == nameof(ProductosController.Publicar) ||
-                action.Name == nameof(ProductosController.GetAlertasStock));
+                action.Name == nameof(ProductosController.GetAlertasStock) ||
+                action.Name == nameof(ProductosController.GetCatalogoB2B));
 
             var allowsSeller = publicLogin || isProductCatalogRead || isProductSellerOp;
             var allowsBuyer = publicLogin || buyerCheckout || buyerTracking || buyerOrder || isProductCatalogRead;

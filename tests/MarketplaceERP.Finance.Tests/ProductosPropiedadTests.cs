@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using MarketplaceERP.API.Contracts;
 using MarketplaceERP.API.Controllers;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
@@ -98,15 +99,82 @@ public class ProductosPropiedadTests
         // 2. Detalle de producto
         var detailResult = await controller.GetById(prod1.Id);
         var okDetail = Assert.IsType<OkObjectResult>(detailResult);
-        var prodDetail = Assert.IsType<Producto>(okDetail.Value);
+        var prodDetail = Assert.IsType<ProductoCompradorResponse>(okDetail.Value);
         Assert.Equal("Laptop Gamer Ultra", prodDetail.Nombre);
         Assert.Equal(1500m, prodDetail.PrecioB2C);
+        Assert.True(prodDetail.EstaPublicado);
 
         // 3. Catálogo publicado
         var catalogResult = await controller.GetPublicados(1, 10);
         var okCatalog = Assert.IsType<OkObjectResult>(catalogResult);
         var catalogDoc = JsonDocument.Parse(JsonSerializer.Serialize(okCatalog.Value));
         Assert.Equal(2, catalogDoc.RootElement.GetProperty("Total").GetInt32());
+
+        // 4. Verificación de exclusión de datos confidenciales para Comprador
+        var searchJson = JsonSerializer.Serialize(okSearch.Value);
+        var detailJson = JsonSerializer.Serialize(okDetail.Value);
+        foreach (var sensitive in new[] { "ProveedorNombre", "proveedorNombre", "PrecioB2B", "precioB2B", "VendedorId", "vendedorId", "Stocks", "stocks" })
+        {
+            Assert.DoesNotContain(sensitive, searchJson);
+            Assert.DoesNotContain(sensitive, detailJson);
+        }
+    }
+
+    [Fact]
+    public async Task Comprador_ProductoNoPublicado_Retorna404()
+    {
+        await using var db = MemoryContext();
+        var sellerId = Guid.NewGuid();
+        var prodNoPublicado = CreateTestProduct(sellerId, "SKU-UNPUB-01", "Borrador Oculto", 50m, publicado: false);
+        db.Productos.Add(prodNoPublicado);
+        await db.SaveChangesAsync();
+
+        var controller = CreateController(db, "Comprador", actorId: Guid.NewGuid());
+        var result = await controller.GetById(prodNoPublicado.Id);
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task VendedorYAdmin_ConservanEntidadCompletaYAccesoB2B()
+    {
+        await using var db = MemoryContext();
+        var sellerId = Guid.NewGuid();
+        var prodPublicado = CreateTestProduct(sellerId, "SKU-FULL-01", "Laptop Pro", 2000m, publicado: true);
+        var prodOculto = CreateTestProduct(sellerId, "SKU-FULL-02", "Prototipo", 5000m, publicado: false);
+        db.Productos.AddRange(prodPublicado, prodOculto);
+        await db.SaveChangesAsync();
+
+        // Vendedor
+        var controllerVendedor = CreateController(db, "Vendedor", actorId: Guid.NewGuid(), vendedorId: sellerId);
+        var resVendedor = await controllerVendedor.GetById(prodPublicado.Id);
+        var okVendedor = Assert.IsType<OkObjectResult>(resVendedor);
+        var prodVendedor = Assert.IsType<Producto>(okVendedor.Value);
+        Assert.Equal(sellerId, prodVendedor.VendedorId);
+        Assert.Equal("Proveedor Test", prodVendedor.ProveedorNombre);
+        Assert.True(prodVendedor.PrecioB2B > 0);
+
+        // Vendedor puede consultar producto no publicado
+        var unpubVendedor = await controllerVendedor.GetById(prodOculto.Id);
+        Assert.IsType<OkObjectResult>(unpubVendedor);
+
+        // Vendedor tiene acceso a B2B
+        var b2bVendedor = await controllerVendedor.GetCatalogoB2B(null);
+        Assert.IsType<OkObjectResult>(b2bVendedor);
+
+        // Admin
+        var controllerAdmin = CreateController(db, "Admin", actorId: Guid.NewGuid());
+        var resAdmin = await controllerAdmin.GetById(prodPublicado.Id);
+        var okAdmin = Assert.IsType<OkObjectResult>(resAdmin);
+        var prodAdmin = Assert.IsType<Producto>(okAdmin.Value);
+        Assert.Equal(sellerId, prodAdmin.VendedorId);
+
+        // Admin puede consultar producto no publicado
+        var unpubAdmin = await controllerAdmin.GetById(prodOculto.Id);
+        Assert.IsType<OkObjectResult>(unpubAdmin);
+
+        // Admin tiene acceso a B2B
+        var b2bAdmin = await controllerAdmin.GetCatalogoB2B(null);
+        Assert.IsType<OkObjectResult>(b2bAdmin);
     }
 
     [Fact]
