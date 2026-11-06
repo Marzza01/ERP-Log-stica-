@@ -41,39 +41,11 @@ export default function DashboardPage() {
       const [d, m] = await Promise.all([kpisApi.getDashboard(period), kpisApi.getModeloFinanciero()]);
       setData(d);
       setModelo(m);
-    } catch {
-      setError('No se pudo conectar a la API. Usando datos demo.');
-      // Demo data
-      setData({
-        periodo: { desde: '2026-08-18', hasta: '2026-09-18', diasPeriodo: period },
-        generadoEn: new Date().toISOString(),
-        resumenEjecutivo: { totalOrdenes: 248, ordenesEntregadas: 201, ordenesCanceladas: 12, totalMatches3Way: 87, totalRmasPeriodo: 8, totalComisionGenerada: 4820.5 },
-        kpis: [
-          { numero: 1, nombre: 'Fill Rate', valor: 81.05, unidad: '%', meta: 95, semaforo: 'Rojo', descripcion: 'Porcentaje de órdenes completadas', cumpleMeta: false },
-          { numero: 2, nombre: 'OTIF', valor: 0, unidad: '%', meta: 95, semaforo: 'Rojo', descripcion: 'On-Time In-Full', cumpleMeta: false },
-          { numero: 3, nombre: 'Tasa Cancelación', valor: 4.84, unidad: '%', meta: 5, semaforo: 'Verde', descripcion: 'Menor es mejor', cumpleMeta: true },
-          { numero: 4, nombre: 'Tiempo Ciclo Pedido', valor: 0, unidad: 'horas', meta: 48, semaforo: 'Verde', descripcion: 'Tiempo promedio de entrega', cumpleMeta: true },
-          { numero: 5, nombre: 'Rotación de Inventario', valor: 0, unidad: 'veces', meta: 4, semaforo: 'Rojo', descripcion: 'Renovación del inventario', cumpleMeta: false },
-          { numero: 6, nombre: 'Tasa Devolución RMA', valor: 3.98, unidad: '%', meta: 3, semaforo: 'Amarillo', descripcion: 'Porcentaje de devoluciones', cumpleMeta: false },
-          { numero: 7, nombre: 'Precisión 3-Way Match', valor: 100, unidad: '%', meta: 98, semaforo: 'Verde', descripcion: 'Matches conformes', cumpleMeta: true },
-          { numero: 8, nombre: 'Margen Comisión', valor: 10, unidad: '%', meta: 10, semaforo: 'Verde', descripcion: 'Comisión marketplace', cumpleMeta: true },
-        ],
-      });
-      setModelo({
-        generadoEn: new Date().toISOString(),
-        supuestos: {},
-        resumenAnual: { ventasTotalesAnuales: 578234, comisionTotalAnual: 57823, costosTotalesAnuales: 37585, utilidadTotalAnual: 20238 },
-        meses: Array.from({ length: 12 }, (_, i) => ({
-          mes: i + 1,
-          periodo: `2026-${String(i + 1).padStart(2, '0')}`,
-          ventasProyectadas: 48000 * Math.pow(1.08, i),
-          comisionMarketplace: 4800 * Math.pow(1.08, i),
-          costosOperativos: 3120 * Math.pow(1.08, i),
-          utilidadNeta: 1680 * Math.pow(1.08, i),
-          margenNetoPct: 35,
-          factorCrecimiento: Math.pow(1.08, i),
-        })),
-      });
+    } catch (err: unknown) {
+      setData(null);
+      setModelo(null);
+      const msg = err instanceof Error ? err.message : 'Error de comunicación';
+      setError(`No se pudo obtener información del servidor API: ${msg}. Verifique la conexión con el backend.`);
     } finally {
       setLoading(false);
     }
@@ -82,6 +54,7 @@ export default function DashboardPage() {
   useEffect(() => { load(); }, [period]);
 
   const res = data?.resumenEjecutivo;
+  const hasOrders = (res?.totalOrdenes ?? 0) > 0;
 
   const statCards: {
     key: StatCardKey;
@@ -97,8 +70,8 @@ export default function DashboardPage() {
       label: 'Total Órdenes',
       value: res?.totalOrdenes ?? 0,
       sub: `Últimos ${period} días`,
-      delta: '+8.4%',
-      deltaType: 'up',
+      delta: hasOrders ? `${res?.totalOrdenes} reg.` : '—',
+      deltaType: 'neutral',
       icon: <ShoppingCart size={18} />,
     },
     {
@@ -106,8 +79,8 @@ export default function DashboardPage() {
       label: 'Órdenes Entregadas',
       value: res?.ordenesEntregadas ?? 0,
       sub: 'Completadas a tiempo',
-      delta: `${res?.totalOrdenes ? Math.round(((res.ordenesEntregadas ?? 0) / res.totalOrdenes) * 100) : 0}% tasa`,
-      deltaType: 'up',
+      delta: hasOrders ? `${Math.round(((res?.ordenesEntregadas ?? 0) / res!.totalOrdenes) * 100)}% tasa` : '—',
+      deltaType: hasOrders && (res?.ordenesEntregadas ?? 0) > 0 ? 'up' : 'neutral',
       icon: <Package size={18} />,
     },
     {
@@ -115,8 +88,8 @@ export default function DashboardPage() {
       label: 'Canceladas',
       value: res?.ordenesCanceladas ?? 0,
       sub: 'Requieren atención',
-      delta: `${res?.totalOrdenes ? ((res.ordenesCanceladas ?? 0) / res.totalOrdenes * 100).toFixed(1) : 0}%`,
-      deltaType: ((res?.ordenesCanceladas ?? 0) > 10 ? 'down' : 'neutral'),
+      delta: hasOrders ? `${((res?.ordenesCanceladas ?? 0) / res!.totalOrdenes * 100).toFixed(1)}%` : '—',
+      deltaType: ((res?.ordenesCanceladas ?? 0) > 0 ? 'down' : 'neutral'),
       icon: <TrendingUp size={18} />,
     },
     {
@@ -124,7 +97,7 @@ export default function DashboardPage() {
       label: 'Comisión Generada',
       value: `$${(res?.totalComisionGenerada ?? 0).toLocaleString('es-SV', { maximumFractionDigits: 0 })}`,
       sub: 'Marketplace 10%',
-      delta: '100% cobrable',
+      delta: (res?.totalComisionGenerada ?? 0) > 0 ? 'Registrada' : '—',
       deltaType: 'neutral',
       icon: <DollarSign size={18} />,
     },
@@ -168,8 +141,8 @@ export default function DashboardPage() {
 
       {error && (
         <AlertBanner
-          variant="warning"
-          title="Modo Demo / Datos Simulados"
+          variant="danger"
+          title="Error al cargar Dashboard"
           message={error}
           action={{
             label: 'Reintentar',
@@ -180,7 +153,7 @@ export default function DashboardPage() {
       )}
 
       {/* Resumen ejecutivo neutro y uniforme */}
-      {visibility.visibleStatKeys.length > 0 && (
+      {data && visibility.visibleStatKeys.length > 0 && (
         <div className="stat-grid">
           {statCards
             .filter(s => visibility.visibleKeys.has(s.key))
@@ -248,69 +221,115 @@ export default function DashboardPage() {
       )}
 
       {/* Charts */}
-      {modelo && (
-        <div className="grid-2" style={{ marginTop: 0 }}>
-          {/* Proyección 12 meses */}
-          <div className="chart-container animate-in stagger-6">
-            <div className="chart-header">
-              <div>
-                <div className="card-title">Proyección Financiera 12 Meses</div>
-                <div className="card-subtitle">Ventas · Comisión · Utilidad (crecimiento 8% mensual)</div>
-              </div>
-            </div>
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={modelo.meses} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis dataKey="periodo" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => v.slice(5)} />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip
-                  contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v: unknown) => v !== undefined ? [`$${Number(v).toFixed(0)}`, undefined] : []}
-                />
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey="ventasProyectadas" name="Ventas" stroke="#6366f1" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="comisionMarketplace" name="Comisión" stroke="#22c55e" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="utilidadNeta" name="Utilidad" stroke="#f59e0b" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Bar chart resumen anual */}
-          <div className="chart-container animate-in stagger-7">
-            <div className="chart-header">
-              <div>
-                <div className="card-title">Resumen Anual Proyectado</div>
-                <div className="card-subtitle">Distribución ventas / comisión / costos / utilidad</div>
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-              {[
-                { label: 'Ventas Totales', value: modelo.resumenAnual.ventasTotalesAnuales, color: '#6366f1' },
-                { label: 'Comisión Total', value: modelo.resumenAnual.comisionTotalAnual, color: '#22c55e' },
-                { label: 'Costos Op.', value: modelo.resumenAnual.costosTotalesAnuales, color: '#f59e0b' },
-                { label: 'Utilidad Neta', value: modelo.resumenAnual.utilidadTotalAnual, color: '#22d3ee' },
-              ].map(s => (
-                <div key={s.label} style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-md)', padding: '12px 14px' }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{s.label}</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: s.color, letterSpacing: '-0.03em', marginTop: 4 }}>
-                    ${s.value.toLocaleString('es-SV', { maximumFractionDigits: 0 })}
-                  </div>
+      {modelo && (() => {
+        const hasVentasHistorial = (modelo.resumenAnual?.ventasTotalesAnuales ?? 0) > 0;
+        return (
+          <div className="grid-2" style={{ marginTop: 0 }}>
+            {/* Proyección 12 meses */}
+            <div className="chart-container animate-in stagger-6">
+              <div className="chart-header">
+                <div>
+                  <div className="card-title">Proyección Financiera 12 Meses</div>
+                  <div className="card-subtitle">Ventas · Comisión · Utilidad (crecimiento 8% mensual)</div>
                 </div>
-              ))}
+              </div>
+              {hasVentasHistorial ? (
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={modelo.meses} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                    <XAxis dataKey="periodo" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => v.slice(5)} />
+                    <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip
+                      contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11 }}
+                      formatter={(v: unknown) => v !== undefined ? [`$${Number(v).toFixed(0)}`, undefined] : []}
+                    />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="ventasProyectadas" name="Ventas" stroke="#6366f1" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="comisionMarketplace" name="Comisión" stroke="#22c55e" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="utilidadNeta" name="Utilidad" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: 200,
+                  textAlign: 'center',
+                  color: 'var(--text-muted)',
+                  border: '1px dashed var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '24px 16px',
+                  background: 'var(--bg-card)',
+                }}>
+                  <TrendingUp size={28} style={{ opacity: 0.35, marginBottom: 8 }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                    Sin historial de ventas para proyectar
+                  </span>
+                  <span style={{ fontSize: 11, maxWidth: 340, marginTop: 4 }}>
+                    Se requieren órdenes entregadas con facturación en los últimos 30 días para calcular la proyección financiera de 12 meses.
+                  </span>
+                </div>
+              )}
             </div>
-            <ResponsiveContainer width="100%" height={120}>
-              <BarChart data={modelo.meses.slice(0, 6)} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis dataKey="periodo" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => v.slice(5)} />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11 }} formatter={(v: unknown) => v !== undefined ? [`$${Number(v).toFixed(0)}`] : []} />
-                <Bar dataKey="comisionMarketplace" name="Comisión" fill="#6366f1" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="utilidadNeta" name="Utilidad" fill="#22c55e" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+
+            {/* Bar chart resumen anual */}
+            <div className="chart-container animate-in stagger-7">
+              <div className="chart-header">
+                <div>
+                  <div className="card-title">Resumen Anual Proyectado</div>
+                  <div className="card-subtitle">Distribución ventas / comisión / costos / utilidad</div>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                {[
+                  { label: 'Ventas Totales', value: modelo.resumenAnual.ventasTotalesAnuales, color: '#6366f1' },
+                  { label: 'Comisión Total', value: modelo.resumenAnual.comisionTotalAnual, color: '#22c55e' },
+                  { label: 'Costos Op.', value: modelo.resumenAnual.costosTotalesAnuales, color: '#f59e0b' },
+                  { label: 'Utilidad Neta', value: modelo.resumenAnual.utilidadTotalAnual, color: '#22d3ee' },
+                ].map(s => (
+                  <div key={s.label} style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-md)', padding: '12px 14px' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{s.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: s.color, letterSpacing: '-0.03em', marginTop: 4 }}>
+                      ${s.value.toLocaleString('es-SV', { maximumFractionDigits: 0 })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {hasVentasHistorial ? (
+                <ResponsiveContainer width="100%" height={120}>
+                  <BarChart data={modelo.meses.slice(0, 6)} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                    <XAxis dataKey="periodo" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => v.slice(5)} />
+                    <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip contentStyle={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11 }} formatter={(v: unknown) => v !== undefined ? [`$${Number(v).toFixed(0)}`] : []} />
+                    <Bar dataKey="comisionMarketplace" name="Comisión" fill="#6366f1" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="utilidadNeta" name="Utilidad" fill="#22c55e" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: 120,
+                  textAlign: 'center',
+                  color: 'var(--text-muted)',
+                  border: '1px dashed var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '12px 16px',
+                  background: 'var(--bg-card)',
+                }}>
+                  <span style={{ fontSize: 12, fontWeight: 500 }}>
+                    Sin distribución comercial acumulada en el período
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Modal de Detalle de KPI y Resumen Ejecutivo */}
       <KpiDetailModal

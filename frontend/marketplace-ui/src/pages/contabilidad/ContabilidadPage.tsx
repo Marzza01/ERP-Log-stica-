@@ -15,10 +15,14 @@ export default function ContabilidadPage() {
   const [partidas, setPartidas] = useState<PartidaContable[]>([]);
   const [balance, setBalance] = useState<BalanceComprobacion | null>(null);
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [selectedPartida, setSelectedPartida] = useState<PartidaContable | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setErrorCarga(null);
+    setPartidas([]);
+    setBalance(null);
     try {
       const [diarioRes, balanceRes] = await Promise.all([
         contabilidadApi.libroDiario(),
@@ -26,73 +30,10 @@ export default function ContabilidadPage() {
       ]);
       setPartidas(diarioRes.partidas || []);
       setBalance(balanceRes);
-    } catch {
-      // Fallback demo accounting entries
-      const mockPartidas: PartidaContable[] = [
-        {
-          id: 'part-01',
-          numeroAsiento: 'ASI-202609-001',
-          fecha: new Date(Date.now() - 3600000 * 2).toISOString(),
-          descripcion: 'Reconocimiento venta y split marketplace (Orden ORD-20260918-10042)',
-          referencia: 'ORD-20260918-10042',
-          tipoOrigen: 'Venta OMS',
-          totalDebe: 285.00,
-          totalHaber: 285.00,
-          lineas: [
-            { id: 'l-1', cuenta: '1101-01', descripcion: 'Caja y Bancos (Pasarela de Pago)', debe: 285.00, haber: 0 },
-            { id: 'l-2', cuenta: '2108-01', descripcion: 'Pasivo Vendedor (90% Liquidación)', debe: 0, haber: 256.50 },
-            { id: 'l-3', cuenta: '4101-01', descripcion: 'Ingreso Comisión Marketplace (10%)', debe: 0, haber: 28.50 },
-          ],
-        },
-        {
-          id: 'part-02',
-          numeroAsiento: 'ASI-202609-002',
-          fecha: new Date(Date.now() - 3600000 * 8).toISOString(),
-          descripcion: 'Devengamiento de compra de inventario según PO-20260918-1001 y Factura FAC-991',
-          referencia: 'PO-20260918-1001',
-          tipoOrigen: 'Compra PO (3-Way)',
-          totalDebe: 13560.00,
-          totalHaber: 13560.00,
-          lineas: [
-            { id: 'l-4', cuenta: '1106-01', descripcion: 'Inventario de Mercaderías en Bodega', debe: 12000.00, haber: 0 },
-            { id: 'l-5', cuenta: '1108-02', descripcion: 'IVA Crédito Fiscal (13%)', debe: 1560.00, haber: 0 },
-            { id: 'l-6', cuenta: '2101-01', descripcion: 'Cuentas por Pagar a Proveedores Locales', debe: 0, haber: 13560.00 },
-          ],
-        },
-        {
-          id: 'part-03',
-          numeroAsiento: 'ASI-202609-003',
-          fecha: new Date(Date.now() - 3600000 * 24).toISOString(),
-          descripcion: 'Desembolso bancario por liquidación semanal a Vendedor Tech Wholesale',
-          referencia: 'LIQ-2026-088',
-          tipoOrigen: 'Liquidación Vendedor',
-          totalDebe: 4250.00,
-          totalHaber: 4250.00,
-          lineas: [
-            { id: 'l-7', cuenta: '2108-01', descripcion: 'Cancelación Pasivo Vendedores', debe: 4250.00, haber: 0 },
-            { id: 'l-8', cuenta: '1101-02', descripcion: 'Banco Agrícola Cta. Cte. Operativa', debe: 0, haber: 4250.00 },
-          ],
-        },
-      ];
-
-      const mockBalance: BalanceComprobacion = {
-        fechaGeneracion: new Date().toISOString(),
-        totalDebe: 18095.00,
-        totalHaber: 18095.00,
-        cuadrado: true,
-        cuentas: [
-          { cuenta: '1101-01', nombreCuenta: 'Caja y Bancos Pasarela', saldoDeudor: 285.00, saldoAcreedor: 0, saldoNeto: 285.00 },
-          { cuenta: '1101-02', nombreCuenta: 'Banco Agrícola Operativa', saldoDeudor: 0, saldoAcreedor: 4250.00, saldoNeto: -4250.00 },
-          { cuenta: '1106-01', nombreCuenta: 'Inventario en Bodega Central', saldoDeudor: 12000.00, saldoAcreedor: 0, saldoNeto: 12000.00 },
-          { cuenta: '1108-02', nombreCuenta: 'IVA Crédito Fiscal (13%)', saldoDeudor: 1560.00, saldoAcreedor: 0, saldoNeto: 1560.00 },
-          { cuenta: '2101-01', nombreCuenta: 'Cuentas por Pagar Proveedores', saldoDeudor: 0, saldoAcreedor: 13560.00, saldoNeto: -13560.00 },
-          { cuenta: '2108-01', nombreCuenta: 'Pasivo Vendedores (Custodia)', saldoDeudor: 4250.00, saldoAcreedor: 256.50, saldoNeto: 3993.50 },
-          { cuenta: '4101-01', nombreCuenta: 'Ingresos por Comisión Marketplace', saldoDeudor: 0, saldoAcreedor: 28.50, saldoNeto: -28.50 },
-        ],
-      };
-
-      setPartidas(mockPartidas);
-      setBalance(mockBalance);
+    } catch (error: unknown) {
+      setPartidas([]);
+      setBalance(null);
+      setErrorCarga(error instanceof Error ? error.message : 'No se pudo consultar la información contable.');
     } finally {
       setLoading(false);
     }
@@ -104,7 +45,7 @@ export default function ContabilidadPage() {
 
   const totalDebeGlobal = partidas.reduce((acc, p) => acc + p.totalDebe, 0);
   const totalHaberGlobal = partidas.reduce((acc, p) => acc + p.totalHaber, 0);
-  const estaCuadrado = Math.abs(totalDebeGlobal - totalHaberGlobal) < 0.01;
+  const estaCuadrado = !loading && !errorCarga && partidas.length > 0 && Math.abs(totalDebeGlobal - totalHaberGlobal) < 0.01;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -121,6 +62,7 @@ export default function ContabilidadPage() {
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <button
             onClick={loadData}
+            disabled={loading}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -139,8 +81,9 @@ export default function ContabilidadPage() {
         </div>
       </div>
 
+      {errorCarga && <div role="alert" style={{ padding: '1rem', border: '1px solid var(--red)', borderRadius: 8, color: 'var(--red)' }}>No se pudo cargar la contabilidad desde la API: {errorCarga}. Los datos contables no están disponibles. Utiliza Refrescar para reintentar.</div>}
       {/* KPI Cards Strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+      {!errorCarga && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Total Asientos Registrados</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '0.35rem' }}>
@@ -177,6 +120,7 @@ export default function ContabilidadPage() {
         </div>
       </div>
 
+      }
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
         <button
@@ -219,7 +163,7 @@ export default function ContabilidadPage() {
       </div>
 
       {/* Tab: Diario */}
-      {activeTab === 'diario' && (
+      {!errorCarga && activeTab === 'diario' && (
         <DataTable
           columns={[
             {
@@ -302,7 +246,7 @@ export default function ContabilidadPage() {
       )}
 
       {/* Tab: Balance de Comprobación */}
-      {activeTab === 'balance' && (
+      {!errorCarga && activeTab === 'balance' && (
         <DataTable
           columns={[
             {
@@ -346,7 +290,7 @@ export default function ContabilidadPage() {
           data={balance?.cuentas || []}
           keyExtractor={(item) => item.cuenta}
           loading={loading}
-          emptyText="No se pudo cargar el balance de comprobación."
+          emptyText="No hay cuentas disponibles en el balance de comprobación."
         />
       )}
 

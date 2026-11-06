@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using MarketplaceERP.API.Controllers;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
@@ -37,7 +39,17 @@ public class StagingCatalogEanTests
         await db.SaveChangesAsync();
 
         var controller = new ProductosController(db, Mock.Of<ICatalogImportService>(),
-            NullLogger<ProductosController>.Instance);
+            NullLogger<ProductosController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        new[] { new Claim(ClaimTypes.Role, "Admin") }, "staging-test"))
+                }
+            }
+        };
 
         var listed = Assert.IsType<OkObjectResult>(await controller.GetPublicados());
         Assert.Contains("\"CodigoEAN\":null", JsonSerializer.Serialize(listed.Value));

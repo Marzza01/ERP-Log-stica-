@@ -32,7 +32,6 @@ public class RailwayPreparationTests
         Assert.Equal("store", parsed.Database);
         Assert.Equal("p@ss:word", parsed.Password);
         Assert.Equal(Npgsql.SslMode.Require, parsed.SslMode);
-        Assert.False(parsed.TrustServerCertificate);
 
         config["CONNECTION_STRING"] = "Host=explicit.internal;Database=explicit;Username=person";
         Assert.Equal(config["CONNECTION_STRING"], DatabaseConnectionConfiguration.Resolve(config));

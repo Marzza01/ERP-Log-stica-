@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MarketplaceERP.API.Controllers;
 using MarketplaceERP.API.Security;
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Shared.Settings;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Authorization;
@@ -91,6 +92,33 @@ public class AutorizacionU2Tests
     }
 
     [Theory]
+    [InlineData(typeof(ComprasController), "ListarPO", false)]
+    [InlineData(typeof(ComprasController), "EjecutarMatch", true)]
+    [InlineData(typeof(ContabilidadController), "LibroDiario", false)]
+    [InlineData(typeof(ContabilidadController), "AsientoManual", true)]
+    [InlineData(typeof(LiquidacionesController), "Historial", false)]
+    [InlineData(typeof(LiquidacionesController), "Generar", true)]
+    [InlineData(typeof(LiquidacionesController), "ProcesarPago", true)]
+    [InlineData(typeof(KpisDashboardController), "ObtenerDashboard", false)]
+    public async Task PhaseOneAdministrativeRoutes_EnforceRolesBeforeActionBody(
+        Type controller, string actionName, bool requiresPaymentGuard)
+    {
+        var action = controller.GetMethod(actionName)
+            ?? throw new InvalidOperationException("Missing action");
+        Assert.Equal("Admin", controller.GetCustomAttribute<AuthorizeAttribute>()?.Roles);
+        Assert.NotEmpty(action.GetCustomAttributes<HttpMethodAttribute>());
+        Assert.Equal(requiresPaymentGuard,
+            action.IsDefined(typeof(PaymentOperationsGuardAttribute), inherit: true));
+
+        // Probe invokes authentication and authorization middleware, then a dummy endpoint.
+        // A 200 here proves admission through the policy, not successful action execution.
+        Assert.Equal(401, await Probe(controller, actionName, null));
+        Assert.Equal(403, await Probe(controller, actionName, "Comprador"));
+        Assert.Equal(403, await Probe(controller, actionName, "Vendedor"));
+        Assert.Equal(200, await Probe(controller, actionName, "Admin"));
+    }
+
+    [Theory]
     [InlineData(typeof(WmsController))]
     [InlineData(typeof(RmaController))]
     public async Task OperationalActions_RejectBuyers(Type controller)
@@ -160,6 +188,22 @@ public class AutorizacionU2Tests
             var buyerCheckout = controller == typeof(CheckoutController) && action.Name == nameof(CheckoutController.ProcesarCheckout);
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
             var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
+            var isProductController = controller == typeof(ProductosController);
+            var isProductCatalogRead = isProductController && (
+                action.Name == nameof(ProductosController.GetPublicados) ||
+                action.Name == nameof(ProductosController.Buscar) ||
+                action.Name == nameof(ProductosController.GetById));
+            var isProductSellerOp = isProductController && (
+                action.Name == nameof(ProductosController.Create) ||
+                action.Name == nameof(ProductosController.Update) ||
+                action.Name == nameof(ProductosController.Delete) ||
+                action.Name == nameof(ProductosController.Publicar) ||
+                action.Name == nameof(ProductosController.GetAlertasStock) ||
+                action.Name == nameof(ProductosController.GetCatalogoB2B));
+
+            var allowsSeller = publicLogin || isProductCatalogRead || isProductSellerOp;
+            var allowsBuyer = publicLogin || buyerCheckout || buyerTracking || buyerOrder || isProductCatalogRead;
+
             var metadata = controller.GetCustomAttributes(inherit: true).Concat(action.GetCustomAttributes(inherit: true)).ToArray();
             Assert.Equal(publicLogin, metadata.OfType<IAllowAnonymous>().Any());
             foreach (var alias in action.GetCustomAttributes<HttpMethodAttribute>())
@@ -169,9 +213,8 @@ public class AutorizacionU2Tests
                 // Authorization is independent of route matching; each alias must carry the same metadata.
                 Assert.False(string.IsNullOrWhiteSpace(verb));
                 Assert.Equal(publicLogin ? 200 : 401, await Probe(controller, action.Name, null));
-                Assert.Equal(publicLogin ? 200 : 403, await Probe(controller, action.Name, "Vendedor"));
-                Assert.Equal(publicLogin || buyerCheckout || buyerTracking || buyerOrder ? 200 : 403,
-                    await Probe(controller, action.Name, "Comprador"));
+                Assert.Equal(allowsSeller ? 200 : 403, await Probe(controller, action.Name, "Vendedor"));
+                Assert.Equal(allowsBuyer ? 200 : 403, await Probe(controller, action.Name, "Comprador"));
                 Assert.Equal(buyerCheckout ? 403 : 200, await Probe(controller, action.Name, "Admin"));
                 if (!publicLogin)
                 {

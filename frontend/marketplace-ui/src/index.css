@@ -536,6 +536,7 @@ body {
 .semaforo.verde { color: var(--green); background: var(--green-bg); border-color: rgba(0, 122, 90, 0.2); }
 .semaforo.amarillo { color: var(--yellow); background: var(--yellow-bg); border-color: rgba(161, 98, 7, 0.2); }
 .semaforo.rojo { color: var(--red); background: var(--red-bg); border-color: rgba(223, 27, 65, 0.2); }
+.semaforo.neutro { color: var(--text-muted); background: var(--bg-hover); border-color: var(--border); }
 
 .kpi-progress {
   height: 3px;

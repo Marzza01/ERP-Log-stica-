@@ -81,7 +81,7 @@ public class ConfiguracionSeguraU1Tests
         foreach (var key in new[] { "POSTGRES_PASSWORD", "JWT_KEY", "ADMIN_PASSWORD", "CONNECTION_STRING",
                      "ConnectionStrings__DefaultConnection", "Jwt__Key" })
         {
-            var assignment = Assert.Single(lines.Where(line => line.StartsWith(key + "=", StringComparison.Ordinal)));
+            var assignment = Assert.Single(lines, line => line.StartsWith(key + "=", StringComparison.Ordinal));
             Assert.Equal(key + "=", assignment.Trim());
         }
     }
@@ -91,9 +91,9 @@ public class ConfiguracionSeguraU1Tests
     {
         // Static contract only: Docker interpolation and containers are not executed by this test.
         var lines = File.ReadAllLines(Path.Combine(RepositoryRoot(), "docker-compose.yml"));
-        var password = Assert.Single(lines.Where(line => line.TrimStart().StartsWith("POSTGRES_PASSWORD:", StringComparison.Ordinal)));
-        var jwt = Assert.Single(lines.Where(line => line.TrimStart().StartsWith("Jwt__Key:", StringComparison.Ordinal)));
-        var connection = Assert.Single(lines.Where(line => line.TrimStart().StartsWith("ConnectionStrings__DefaultConnection:", StringComparison.Ordinal)));
+        var password = Assert.Single(lines, line => line.TrimStart().StartsWith("POSTGRES_PASSWORD:", StringComparison.Ordinal));
+        var jwt = Assert.Single(lines, line => line.TrimStart().StartsWith("Jwt__Key:", StringComparison.Ordinal));
+        var connection = Assert.Single(lines, line => line.TrimStart().StartsWith("ConnectionStrings__DefaultConnection:", StringComparison.Ordinal));
         Assert.Contains("${POSTGRES_PASSWORD:?", password);
         Assert.Contains("${JWT_KEY:?", jwt);
         Assert.Contains("${CONNECTION_STRING:?", connection);

@@ -22,7 +22,8 @@ export default async function middleware(request) {
     headers: { 'Cache-Control': 'no-store' } });
   if (!incoming.pathname.startsWith('/api/')) return new Response(null, { status: 404 });
 
-  const upstream = new URL(incoming.pathname + incoming.search, origin);
+  const upstreamPath = incoming.pathname === '/api/health' ? '/health' : incoming.pathname;
+  const upstream = new URL(upstreamPath + incoming.search, origin);
   const headers = new Headers(request.headers);
   for (const name of hopHeaders) headers.delete(name);
   // Current authentication is Bearer JWT. Do not forward Vercel's own cookies.

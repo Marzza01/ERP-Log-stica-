@@ -111,7 +111,7 @@ export interface CrearOrdenRequest {
 }
 
 // ── KPIs DASHBOARD ────────────────────────────────────────────────────────────
-export type SemaforoColor = 'Verde' | 'Amarillo' | 'Rojo';
+export type SemaforoColor = 'Verde' | 'Amarillo' | 'Rojo' | 'Neutro';
 
 export interface Kpi {
   numero: number;
@@ -122,6 +122,7 @@ export interface Kpi {
   semaforo: SemaforoColor;
   descripcion: string;
   cumpleMeta: boolean;
+  tieneDatos?: boolean;
 }
 
 export interface ResumenEjecutivo {
@@ -140,6 +141,7 @@ export interface DashboardKpis {
     diasPeriodo: number;
   };
   generadoEn: string;
+  dbConectada?: boolean;
   resumenEjecutivo: ResumenEjecutivo;
   kpis: Kpi[];
 }
@@ -393,7 +395,9 @@ export interface PartidaContable {
 }
 
 // ── LIQUIDACIONES ─────────────────────────────────────────────────────────────
-export type EstadoLiquidacion = 'Pendiente' | 'Procesada' | 'Fallida';
+// Estados sincronizados con backend enum EstadoLiquidacion (Finance.Entities)
+// Pendiente=0, EnProceso=1, Completada=2, Fallida=3
+export type EstadoLiquidacion = 'Pendiente' | 'EnProceso' | 'Completada' | 'Fallida';
 
 export interface Liquidacion {
   id: string;
