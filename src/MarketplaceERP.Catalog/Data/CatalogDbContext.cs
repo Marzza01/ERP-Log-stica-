@@ -104,11 +104,11 @@ public class CatalogDbContext : DbContext
             entity.ToTable("stock_fisico", table =>
             {
                 table.HasCheckConstraint(
-                "CK_stock_fisico_cantidades_no_negativas",
-                "\"CantidadTotal\" >= 0 AND \"CantidadReservada\" >= 0 AND \"CantidadBloqueada\" >= 0");
+                    "CK_stock_fisico_cantidades_no_negativas",
+                    "\"CantidadTotal\" >= 0 AND \"CantidadReservada\" >= 0 AND \"CantidadBloqueada\" >= 0");
                 table.HasCheckConstraint(
-                "CK_stock_fisico_reservado_bloqueado",
-                "\"CantidadReservada\" + \"CantidadBloqueada\" <= \"CantidadTotal\"");
+                    "CK_stock_fisico_reservado_bloqueado",
+                    "\"CantidadReservada\" + \"CantidadBloqueada\" <= \"CantidadTotal\"");
             });
             entity.HasKey(s => s.Id);
             entity.Property(s => s.Id).ValueGeneratedOnAdd();
@@ -124,8 +124,6 @@ public class CatalogDbContext : DbContext
             entity.Ignore(s => s.EsBajoMinimo);
 
             // Integridad: ninguna cantidad puede ser negativa y reservado+bloqueado no supera el físico.
-
-
 
             // Relación N:1 con Producto: un SKU puede existir en varias ubicaciones.
             entity.HasOne(s => s.Producto)
@@ -150,11 +148,11 @@ public class CatalogDbContext : DbContext
             entity.ToTable("reservas_stock", table =>
             {
                 table.HasCheckConstraint(
-                "CK_reservas_stock_cantidades_no_negativas",
-                "\"CantidadOriginal\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
+                    "CK_reservas_stock_cantidades_no_negativas",
+                    "\"CantidadOriginal\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
                 table.HasCheckConstraint(
-                "CK_reservas_stock_cantidad_resuelta",
-                "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadOriginal\"");
+                    "CK_reservas_stock_cantidad_resuelta",
+                    "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadOriginal\"");
             });
             entity.HasKey(r => r.Id);
             entity.Property(r => r.Id).ValueGeneratedOnAdd();
@@ -166,8 +164,6 @@ public class CatalogDbContext : DbContext
                   .HasConversion<string>()
                   .HasMaxLength(30);
             entity.Property(r => r.FechaReserva).HasDefaultValueSql("NOW()");
-
-
 
 
             // OrdenId es referencia cross-schema: NO FK en DB
@@ -187,11 +183,11 @@ public class CatalogDbContext : DbContext
             entity.ToTable("reservas_stock_detalle", table =>
             {
                 table.HasCheckConstraint(
-                "CK_reservas_stock_detalle_cantidades_no_negativas",
-                "\"CantidadAsignada\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
+                    "CK_reservas_stock_detalle_cantidades_no_negativas",
+                    "\"CantidadAsignada\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
                 table.HasCheckConstraint(
-                "CK_reservas_stock_detalle_cantidad_resuelta",
-                "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadAsignada\"");
+                    "CK_reservas_stock_detalle_cantidad_resuelta",
+                    "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadAsignada\"");
             });
             entity.HasKey(d => d.Id);
             entity.Property(d => d.Id).ValueGeneratedOnAdd();
@@ -199,8 +195,6 @@ public class CatalogDbContext : DbContext
             entity.Property(d => d.CantidadLiberada).HasDefaultValue(0);
             entity.Property(d => d.CantidadConsumida).HasDefaultValue(0);
             entity.Ignore(d => d.CantidadPendiente);
-
-
 
 
             entity.HasOne(d => d.ReservaStock)
@@ -224,8 +218,8 @@ public class CatalogDbContext : DbContext
             entity.ToTable("movimientos_inventario", table =>
             {
                 table.HasCheckConstraint(
-                "CK_movimientos_inventario_cantidad_positiva",
-                "\"Cantidad\" > 0");
+                    "CK_movimientos_inventario_cantidad_positiva",
+                    "\"Cantidad\" > 0");
             });
             entity.HasKey(m => m.Id);
             entity.Property(m => m.Id).ValueGeneratedOnAdd();
@@ -236,8 +230,6 @@ public class CatalogDbContext : DbContext
             entity.Property(m => m.Referencia).HasMaxLength(100);
             entity.Property(m => m.Observaciones).HasMaxLength(500);
             entity.Property(m => m.FechaMovimiento).HasDefaultValueSql("NOW()");
-
-
 
             entity.HasOne(m => m.Producto)
                   .WithMany(p => p.MovimientosInventario)
@@ -273,8 +265,8 @@ public class CatalogDbContext : DbContext
             entity.ToTable("ajustes_inventario", table =>
             {
                 table.HasCheckConstraint(
-                "CK_ajustes_inventario_cantidad_positiva",
-                "\"Cantidad\" > 0");
+                    "CK_ajustes_inventario_cantidad_positiva",
+                    "\"Cantidad\" > 0");
             });
             entity.HasKey(a => a.Id);
             entity.Property(a => a.Id).ValueGeneratedOnAdd();
@@ -288,8 +280,6 @@ public class CatalogDbContext : DbContext
             entity.Property(a => a.AprobadoPor).HasMaxLength(150);
             entity.Property(a => a.AplicadoPor).HasMaxLength(150);
             entity.Property(a => a.FechaCreacion).HasDefaultValueSql("NOW()");
-
-
 
             entity.HasOne(a => a.StockFisico)
                   .WithMany()
@@ -313,7 +303,7 @@ public class CatalogDbContext : DbContext
             entity.ToTable("conteos_ciclicos", table =>
             {
                 table.HasCheckConstraint(
-                "CK_conteos_ciclicos_cantidades_no_negativas",
+                    "CK_conteos_ciclicos_cantidades_no_negativas",
                 "(\"CantidadSistema\" IS NULL OR \"CantidadSistema\" >= 0) AND " +
                 "(\"PrimerConteo\" IS NULL OR \"PrimerConteo\" >= 0) AND " +
                 "(\"SegundoConteo\" IS NULL OR \"SegundoConteo\" >= 0)");
@@ -327,8 +317,6 @@ public class CatalogDbContext : DbContext
             entity.Property(c => c.ContadoPor).HasMaxLength(150);
             entity.Property(c => c.RecontadoPor).HasMaxLength(150);
             entity.Property(c => c.FechaCreacion).HasDefaultValueSql("NOW()");
-
-
 
             entity.HasOne(c => c.StockFisico)
                   .WithMany()
