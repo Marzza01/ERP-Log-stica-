@@ -345,4 +345,33 @@ public class ProductosHttpAislamientoTests
             (await otherSeller.GetAsync(location)).StatusCode);
     }
 
+    [Theory]
+    [InlineData("/api/productos?pagina=0&tamano=20")]
+    [InlineData("/api/productos?pagina=-1&tamano=20")]
+    [InlineData("/api/productos?pagina=1&tamano=0")]
+    [InlineData("/api/productos?pagina=1&tamano=501")]
+    [InlineData("/api/productos?pagina=2147483647&tamano=500")]
+    [InlineData("/api/productos/buscar?q=Laptop&pagina=0")]
+    [InlineData("/api/productos/buscar?q=Laptop&tamano=501")]
+    [InlineData("/api/productos/buscar?q=Laptop&pagina=2147483647&tamano=500")]
+    public async Task Http_PaginacionInvalida_Responde400SinConsultarMasivamente(string ruta)
+    {
+        using var fixture = await Fixture.CreateAsync();
+        using var buyer = fixture.Client("Comprador");
+        var response = await buyer.GetAsync(ruta);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("/api/productos?pagina=1&tamano=500")]
+    [InlineData("/api/productos/buscar?q=Laptop&pagina=1&tamano=500")]
+    public async Task Http_PaginacionMaximaPermitida_SigueFuncionando(string ruta)
+    {
+        using var fixture = await Fixture.CreateAsync();
+        using var buyer = fixture.Client("Comprador");
+        var response = await buyer.GetAsync(ruta);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("HTTP-FOREIGN-B", await response.Content.ReadAsStringAsync());
+    }
+
 }
