@@ -46,7 +46,7 @@ public class ProductosPaginacionTests
     [InlineData(1, -2)]
     [InlineData(1, 101)]
     [InlineData(int.MaxValue, 2)]
-    [InlineData(21474837, 100)]
+    [InlineData(21474838, 100)]
     public async Task PaginacionInvalida_Devuelve400EnAmbosEndpoints(int pagina, int tamano)
     {
         await using var db = Db();
