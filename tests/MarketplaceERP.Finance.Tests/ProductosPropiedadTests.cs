@@ -259,6 +259,38 @@ public class ProductosPropiedadTests
     }
 
     [Fact]
+    public async Task SEC02_BusquedaConEanOpcional_NoFallaNiExponeProductosAjenos()
+    {
+        await using var db = MemoryContext();
+        var vendedorA = Guid.NewGuid();
+        var vendedorB = Guid.NewGuid();
+
+        var sinEan = CreateTestProduct(vendedorA, "SEC02-SIN-EAN", "Producto sin código de barras");
+        sinEan.CodigoEAN = null!; // La migración de catálogo permite EAN NULL en staging.
+        var propioConEan = CreateTestProduct(vendedorA, "SEC02-CON-EAN", "Producto propio");
+        propioConEan.CodigoEAN = "7891234567895";
+        var ajenoConEan = CreateTestProduct(vendedorB, "SEC02-AJENO-EAN", "Producto privado");
+        ajenoConEan.CodigoEAN = "7891234567895";
+        ajenoConEan.ProveedorNombre = "Proveedor confidencial";
+        db.Productos.AddRange(sinEan, propioConEan, ajenoConEan);
+        await db.SaveChangesAsync();
+
+        var vendedor = CreateController(db, "Vendedor", actorId: Guid.NewGuid(), vendedorId: vendedorA);
+        var resultado = Assert.IsType<OkObjectResult>(
+            await vendedor.Buscar("7891234567895", null, null, null, null, null));
+        var json = JsonSerializer.Serialize(resultado.Value);
+
+        Assert.Contains("SEC02-CON-EAN", json);
+        Assert.DoesNotContain("SEC02-AJENO-EAN", json);
+        Assert.DoesNotContain("Proveedor confidencial", json);
+
+        var sinCoincidencias = Assert.IsType<OkObjectResult>(
+            await vendedor.Buscar("NO-EXISTE-EN-CATALOGO", null, null, null, null, null));
+        var documento = JsonDocument.Parse(JsonSerializer.Serialize(sinCoincidencias.Value));
+        Assert.Equal(0, documento.RootElement.GetProperty("Total").GetInt32());
+    }
+
+    [Fact]
     public async Task SEC02_VendedorSinClaimValido_DenegadoEnLecturasAdministrativas()
     {
         await using var db = MemoryContext();
