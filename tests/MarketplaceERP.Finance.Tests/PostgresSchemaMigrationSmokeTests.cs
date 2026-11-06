@@ -175,7 +175,7 @@ public sealed class PostgresSchemaMigrationSmokeTests : IAsyncLifetime
     private static async Task AssertMigrationStateAsync<TContext>(
         TContext context, string? requiredMigration = null) where TContext : DbContext
     {
-        var known = (await context.Database.GetMigrationsAsync()).ToArray();
+        var known = context.Database.GetMigrations().ToArray();
         var applied = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
         Assert.NotEmpty(known);
         Assert.Equal(known.OrderBy(x => x, StringComparer.Ordinal),
