@@ -202,6 +202,118 @@ public class ProductosPropiedadTests
     }
 
     [Fact]
+    public async Task SEC02_Vendedor_NoPuedeLeerDatosDeOtrosVendedores()
+    {
+        await using var db = MemoryContext();
+        var vendedorA = Guid.NewGuid();
+        var vendedorB = Guid.NewGuid();
+        var propio = CreateTestProduct(vendedorA, "OWN-SEC02", "Producto propio", 50m);
+        var ajeno = CreateTestProduct(vendedorB, "OTHER-SEC02", "Producto ajeno", 80m);
+        ajeno.ProveedorNombre = "Proveedor privado de B";
+        ajeno.PrecioB2B = 7m;
+        var borradorAjeno = CreateTestProduct(vendedorB, "DRAFT-SEC02", "Borrador ajeno", 90m, publicado: false);
+        db.Productos.AddRange(propio, ajeno, borradorAjeno);
+        await db.SaveChangesAsync();
+
+        var vendedor = CreateController(db, "Vendedor", actorId: Guid.NewGuid(), vendedorId: vendedorA);
+
+        var lista = Assert.IsType<OkObjectResult>(await vendedor.GetPublicados(1, 20));
+        var listaJson = JsonSerializer.Serialize(lista.Value);
+        Assert.Contains("OWN-SEC02", listaJson);
+        Assert.DoesNotContain("OTHER-SEC02", listaJson);
+        Assert.DoesNotContain("DRAFT-SEC02", listaJson);
+        Assert.DoesNotContain("Proveedor privado de B", listaJson);
+
+        var busqueda = Assert.IsType<OkObjectResult>(
+            await vendedor.Buscar("Producto", null, null, null, null, null));
+        var busquedaJson = JsonSerializer.Serialize(busqueda.Value);
+        Assert.Contains("OWN-SEC02", busquedaJson);
+        Assert.DoesNotContain("OTHER-SEC02", busquedaJson);
+
+        var b2b = Assert.IsType<OkObjectResult>(await vendedor.GetCatalogoB2B(null));
+        var b2bJson = JsonSerializer.Serialize(b2b.Value);
+        Assert.Contains("OWN-SEC02", b2bJson);
+        Assert.DoesNotContain("OTHER-SEC02", b2bJson);
+        Assert.DoesNotContain("Proveedor privado de B", b2bJson);
+
+        Assert.IsType<NotFoundObjectResult>(await vendedor.GetById(ajeno.Id));
+        Assert.IsType<NotFoundObjectResult>(await vendedor.GetById(borradorAjeno.Id));
+        Assert.IsType<OkObjectResult>(await vendedor.GetById(propio.Id));
+
+        // Admin conserva su vista global.
+        var admin = CreateController(db, "Admin", actorId: Guid.NewGuid());
+        var adminLista = Assert.IsType<OkObjectResult>(await admin.GetPublicados(1, 20));
+        var adminJson = JsonSerializer.Serialize(adminLista.Value);
+        Assert.Contains("OWN-SEC02", adminJson);
+        Assert.Contains("OTHER-SEC02", adminJson);
+        Assert.IsType<OkObjectResult>(await admin.GetById(borradorAjeno.Id));
+
+        // Comprador conserva el catálogo B2C publicado sin datos privados.
+        var comprador = CreateController(db, "Comprador", actorId: Guid.NewGuid());
+        var compradorLista = Assert.IsType<OkObjectResult>(await comprador.GetPublicados(1, 20));
+        var compradorJson = JsonSerializer.Serialize(compradorLista.Value);
+        Assert.Contains("OWN-SEC02", compradorJson);
+        Assert.Contains("OTHER-SEC02", compradorJson);
+        Assert.DoesNotContain("Proveedor privado de B", compradorJson);
+        Assert.DoesNotContain("PrecioB2B", compradorJson);
+    }
+
+    [Fact]
+    public async Task SEC02_BusquedaConEanOpcional_NoFallaNiExponeProductosAjenos()
+    {
+        // SEC-02 aún no incluye la migración de EAN opcional de staging.
+        // Desactivar solo aquí los null checks del proveedor InMemory para reproducir el dato real de Neon.
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase("sec02-ean-" + Guid.NewGuid(),
+                databaseOptions => databaseOptions.EnableNullChecks(false))
+            .Options;
+        await using var db = new CatalogDbContext(options);
+        var vendedorA = Guid.NewGuid();
+        var vendedorB = Guid.NewGuid();
+
+        var sinEan = CreateTestProduct(vendedorA, "SEC02-SIN-EAN", "Producto sin código de barras");
+        sinEan.CodigoEAN = null!; // La migración de catálogo permite EAN NULL en staging.
+        var propioConEan = CreateTestProduct(vendedorA, "SEC02-CON-EAN", "Producto propio");
+        propioConEan.CodigoEAN = "7891234567895";
+        var ajenoConEan = CreateTestProduct(vendedorB, "SEC02-AJENO-EAN", "Producto privado");
+        ajenoConEan.CodigoEAN = "7891234567895";
+        ajenoConEan.ProveedorNombre = "Proveedor confidencial";
+        db.Productos.AddRange(sinEan, propioConEan, ajenoConEan);
+        await db.SaveChangesAsync();
+
+        var vendedor = CreateController(db, "Vendedor", actorId: Guid.NewGuid(), vendedorId: vendedorA);
+        var resultado = Assert.IsType<OkObjectResult>(
+            await vendedor.Buscar("7891234567895", null, null, null, null, null));
+        var json = JsonSerializer.Serialize(resultado.Value);
+
+        Assert.Contains("SEC02-CON-EAN", json);
+        Assert.DoesNotContain("SEC02-AJENO-EAN", json);
+        Assert.DoesNotContain("Proveedor confidencial", json);
+
+        var sinCoincidencias = Assert.IsType<OkObjectResult>(
+            await vendedor.Buscar("NO-EXISTE-EN-CATALOGO", null, null, null, null, null));
+        var documento = JsonDocument.Parse(JsonSerializer.Serialize(sinCoincidencias.Value));
+        Assert.Equal(0, documento.RootElement.GetProperty("Total").GetInt32());
+    }
+
+    [Fact]
+    public async Task SEC02_VendedorSinClaimValido_DenegadoEnLecturasAdministrativas()
+    {
+        await using var db = MemoryContext();
+        var propietario = Guid.NewGuid();
+        var producto = CreateTestProduct(propietario, "CLAIM-SEC02", "Producto con dueño");
+        db.Productos.Add(producto);
+        await db.SaveChangesAsync();
+
+        var vendedorSinId = CreateController(db, "Vendedor", actorId: Guid.NewGuid());
+        Assert.IsType<ForbidResult>(await vendedorSinId.GetPublicados(1, 10));
+        Assert.IsType<ForbidResult>(
+            await vendedorSinId.Buscar(null, null, null, null, null, null));
+        Assert.IsType<ForbidResult>(await vendedorSinId.GetCatalogoB2B(null));
+        Assert.IsType<ForbidResult>(await vendedorSinId.GetById(producto.Id));
+    }
+
+    [Fact]
     public async Task Vendedor_OperacionesLegitimas_PermitidasSobreSusPropiosProductos()
     {
         await using var db = MemoryContext();
