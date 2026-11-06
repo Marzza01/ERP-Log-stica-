@@ -96,6 +96,10 @@ public class ContabilidadService : IContabilidadService
                 decimal.Round(item.Haber, 2) != item.Haber)
                 throw new ArgumentException($"Solo se admiten dos decimales en línea {i + 1}.");
 
+            const decimal maximo = 9999999999999999.99m; // precision PostgreSQL numeric(18,2)
+            if (item.Debe > maximo || item.Haber > maximo)
+                throw new ArgumentException($"El monto de línea {i + 1} supera la precisión contable.");
+
             var glosa = string.IsNullOrWhiteSpace(item.Glosa) ? concepto.Trim() : item.Glosa.Trim();
             if (glosa.Length > 300)
                 throw new ArgumentException($"La glosa de línea {i + 1} supera 300 caracteres.");
@@ -112,6 +116,10 @@ public class ContabilidadService : IContabilidadService
                 Glosa = glosa
             });
         }
+
+        // Los totales también deben caber en numeric(18,2).
+        if (totalDebe > 9999999999999999.99m || totalHaber > 9999999999999999.99m)
+            throw new ArgumentException("El total del asiento supera la precisión contable.");
 
         // No permitir un descuadre de un centavo por redondeo/tolerancia.
         if (totalDebe == 0m || totalDebe != totalHaber)
