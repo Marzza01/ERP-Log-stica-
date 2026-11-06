@@ -77,6 +77,29 @@ public class ProductosPaginacionTests
             await controller.Buscar(null, null, null, null, null, null, pagina, tamano));
     }
 
+    private static Producto NuevoProducto(Guid vendedorId, string sku) => new()
+    {
+        Id = Guid.NewGuid(),
+        VendedorId = vendedorId,
+        Sku = sku,
+        Nombre = "Producto " + sku,
+        Descripcion = "Descripción " + sku,
+        CategoriaNombre = "Tecnología",
+        Subcategoria = "Pruebas",
+        PrecioB2C = 20m,
+        PrecioB2B = 18m,
+        StockMinimo = 1,
+        ProveedorNombre = "Proveedor de pruebas",
+        PaisOrigen = "El Salvador",
+        PesoKg = 1m,
+        DimensionesCm = "10x10x10",
+        UnidadMedida = "Unidad",
+        EstadoProducto = "Activo",
+        EstaPublicado = true,
+        CategoriaId = Guid.NewGuid(),
+        FechaCreacion = DateTime.UtcNow
+    };
+
     [Fact]
     public async Task PaginacionDeVendedor_SoloDevuelveSuCatalogo()
     {
@@ -84,16 +107,8 @@ public class ProductosPaginacionTests
         var a = Guid.NewGuid();
         var b = Guid.NewGuid();
         db.Productos.AddRange(
-            new Producto
-            {
-                Id = Guid.NewGuid(), VendedorId = a, Sku = "OWN-PAGE-01",
-                Nombre = "Propio", Descripcion = "Producto propio", EstaPublicado = true
-            },
-            new Producto
-            {
-                Id = Guid.NewGuid(), VendedorId = b, Sku = "OTHER-PAGE-01",
-                Nombre = "Ajeno", Descripcion = "Producto ajeno", EstaPublicado = true
-            });
+            NuevoProducto(a, "OWN-PAGE-01"),
+            NuevoProducto(b, "OTHER-PAGE-01"));
         await db.SaveChangesAsync();
 
         var controller = Controller(db, "Vendedor", a);
