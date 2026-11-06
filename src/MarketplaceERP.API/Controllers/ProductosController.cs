@@ -44,6 +44,9 @@ public class ProductosController : ControllerBase
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPublicados([FromQuery] int pagina = 1, [FromQuery] int tamano = 50)
     {
+        if (!PaginacionValida(pagina, tamano))
+            return BadRequest(new { mensaje = "La página debe ser positiva, el tamaño estar entre 1 y 500 y el desplazamiento ser válido." });
+
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
@@ -90,6 +93,9 @@ public class ProductosController : ControllerBase
         [FromQuery] int pagina = 1,
         [FromQuery] int tamano = 50)
     {
+        if (!PaginacionValida(pagina, tamano))
+            return BadRequest(new { mensaje = "La página debe ser positiva, el tamaño estar entre 1 y 500 y el desplazamiento ser válido." });
+
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
@@ -511,6 +517,13 @@ public class ProductosController : ControllerBase
 
         return NoContent();
     }
+
+    // El catálogo inicial contiene 500 SKU; no permitir consultas sin límite
+    // ni desbordamientos enteros al calcular Skip((pagina - 1) * tamano).
+    private static bool PaginacionValida(int pagina, int tamano) =>
+        pagina >= 1 &&
+        tamano is >= 1 and <= 500 &&
+        ((long)pagina - 1) * tamano <= int.MaxValue;
 
     private Guid? ObtenerVendedorIdActual()
     {
