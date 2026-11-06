@@ -4,6 +4,7 @@
  */
 
 using System.Security.Claims;
+using MarketplaceERP.API.Contracts;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
@@ -40,7 +41,7 @@ public class ProductosController : ControllerBase
     /// Lista todos los productos publicados (con soporte de paginación básica).
     /// </summary>
     [HttpGet]
-    [ProducesResponseType(typeof(IEnumerable<Producto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPublicados([FromQuery] int pagina = 1, [FromQuery] int tamano = 50)
     {
         var query = _dbContext.Productos
@@ -54,6 +55,12 @@ public class ProductosController : ControllerBase
             .Take(tamano)
             .ToListAsync();
 
+        if (User.IsInRole("Comprador"))
+        {
+            var compradorItems = productos.Select(ToCompradorDto).ToList();
+            return Ok(new { Total = total, Pagina = pagina, Tamano = tamano, Items = compradorItems });
+        }
+
         return Ok(new { Total = total, Pagina = pagina, Tamano = tamano, Items = productos });
     }
 
@@ -61,7 +68,7 @@ public class ProductosController : ControllerBase
     /// Búsqueda y filtrado del catálogo por texto, categoría, subcategoría, rango de precio y stock.
     /// </summary>
     [HttpGet("buscar")]
-    [ProducesResponseType(typeof(IEnumerable<Producto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> Buscar(
         [FromQuery] string? q,
         [FromQuery] string? categoria,
@@ -117,6 +124,12 @@ public class ProductosController : ControllerBase
             .Take(tamano)
             .ToListAsync();
 
+        if (User.IsInRole("Comprador"))
+        {
+            var compradorItems = items.Select(ToCompradorDto).ToList();
+            return Ok(new { Total = total, Pagina = pagina, Tamano = tamano, Items = compradorItems });
+        }
+
         return Ok(new { Total = total, Pagina = pagina, Tamano = tamano, Items = items });
     }
 
@@ -124,6 +137,7 @@ public class ProductosController : ControllerBase
     /// Catálogo especializado para clientes B2B con precios por volumen (PDF 2 - Sección 2 y 4).
     /// </summary>
     [HttpGet("b2b")]
+    [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(IEnumerable<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetCatalogoB2B([FromQuery] string? categoria)
     {
@@ -261,7 +275,7 @@ public class ProductosController : ControllerBase
     /// Obtiene un producto por su ID.
     /// </summary>
     [HttpGet("{id:guid}")]
-    [ProducesResponseType(typeof(Producto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetById(Guid id)
     {
@@ -271,6 +285,14 @@ public class ProductosController : ControllerBase
 
         if (producto is null)
             return NotFound(new { mensaje = $"Producto {id} no encontrado." });
+
+        if (User.IsInRole("Comprador"))
+        {
+            if (!producto.EstaPublicado)
+                return NotFound(new { mensaje = $"Producto {id} no encontrado." });
+
+            return Ok(ToCompradorDto(producto));
+        }
 
         return Ok(producto);
     }
@@ -425,6 +447,26 @@ public class ProductosController : ControllerBase
         if (claims.Any(c => !Guid.TryParse(c, out var id) || id == Guid.Empty)) return null;
         var distinct = claims.Select(Guid.Parse).Distinct().ToArray();
         return distinct.Length == 1 ? distinct[0] : null;
+    }
+
+    private static ProductoCompradorResponse ToCompradorDto(Producto p)
+    {
+        bool disponible = p.Stocks.Any(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada > 0);
+        return new ProductoCompradorResponse(
+            p.Id,
+            p.Sku,
+            p.Nombre,
+            p.Descripcion,
+            p.CategoriaNombre,
+            p.Subcategoria,
+            p.PrecioB2C,
+            p.Moneda,
+            p.UnidadMedida,
+            p.EstadoProducto,
+            p.EstaPublicado,
+            null,
+            disponible
+        );
     }
 }
 
