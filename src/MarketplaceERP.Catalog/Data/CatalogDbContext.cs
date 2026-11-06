@@ -61,7 +61,7 @@ public class CatalogDbContext : DbContext
             entity.Property(p => p.DimensionesCm).HasMaxLength(50);
             entity.Property(p => p.UnidadMedida).HasMaxLength(50).HasDefaultValue("Unidad");
             entity.Property(p => p.EstadoProducto).HasMaxLength(50).HasDefaultValue("Activo");
-            entity.Property(p => p.CodigoEAN).HasMaxLength(50);
+            entity.Property(p => p.CodigoEAN).HasMaxLength(50).IsRequired(false);
             entity.Property(p => p.Descripcion).HasMaxLength(2000);
             entity.Property(p => p.FechaCreacion).HasDefaultValueSql("NOW()");
 
