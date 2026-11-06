@@ -146,6 +146,14 @@ public class ProductosHttpAislamientoTests
             Assert.False(await db.StockFisico.AnyAsync(s => s.Id == stockId));
         }
 
+        public async Task VerificarRechazoSinCambiosAsync(string sku, Guid stockId)
+        {
+            using var scope = _server.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            Assert.False(await db.Productos.AnyAsync(p => p.Sku == sku));
+            Assert.False(await db.StockFisico.AnyAsync(s => s.Id == stockId));
+        }
+
         public void Dispose() => _server.Dispose();
     }
 
@@ -265,25 +273,33 @@ public class ProductosHttpAislamientoTests
         Assert.DoesNotContain("PROVEEDOR-PRIVADO-B", body);
     }
     [Fact]
-    public async Task Http_CrearProducto_NoPersisteStockInyectadoEnJson()
+    public async Task Http_CrearProducto_RechazaGrafoMaliciosoYPreservaAltaLegitima()
     {
         using var fixture = await Fixture.CreateAsync();
         using var seller = fixture.Client("Vendedor", fixture.SellerA.ToString());
         var stockId = Guid.NewGuid();
         const string sku = "HTTP-NO-OVERPOST";
-        var solicitud = new
+
+        // Stock es una propiedad de compatibilidad con setter público.
+        // Un grafo de inventario enviado desde HTTP debe rechazarse o
+        // descartarse sin ninguna escritura; aquí el model binder lo rechaza.
+        var maliciosa = new
         {
-            id = Guid.NewGuid(), // el servidor asigna el ID
             sku,
-            nombre = "Producto nuevo sin inventario automático",
+            nombre = "Producto con intento de stock",
+            descripcion = "Ficha del producto",
             categoriaNombre = "Tecnología",
+            subcategoria = "Laptops",
             categoriaId = Guid.NewGuid(),
             vendedorId = fixture.SellerA,
             precioB2C = 50m,
             precioB2B = 40m,
+            proveedorNombre = "Proveedor de prueba",
+            paisOrigen = "El Salvador",
+            dimensionesCm = "10x10x10",
+            unidadMedida = "Unidad",
+            estadoProducto = "Activo",
             estaPublicado = true,
-            // Stock es una propiedad compatibilidad con setter público.
-            // Antes, EF hacía Add del grafo completo y registraba este saldo.
             stock = new
             {
                 id = stockId,
@@ -294,7 +310,30 @@ public class ProductosHttpAislamientoTests
                 ubicacionCodigo = "STOCK-FAKE-CLIENT"
             }
         };
-        var response = await seller.PostAsJsonAsync("/api/productos", solicitud);
+        var invalidResponse = await seller.PostAsJsonAsync("/api/productos", maliciosa);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+        await fixture.VerificarRechazoSinCambiosAsync(sku, stockId);
+
+        // Un producto maestro válido sí se puede crear, sin alta WMS automática.
+        var legitima = new
+        {
+            sku,
+            nombre = "Producto nuevo sin inventario automático",
+            descripcion = "Ficha del producto",
+            categoriaNombre = "Tecnología",
+            subcategoria = "Laptops",
+            categoriaId = Guid.NewGuid(),
+            vendedorId = fixture.SellerA,
+            precioB2C = 50m,
+            precioB2B = 40m,
+            proveedorNombre = "Proveedor de prueba",
+            paisOrigen = "El Salvador",
+            dimensionesCm = "10x10x10",
+            unidadMedida = "Unidad",
+            estadoProducto = "Activo",
+            estaPublicado = true
+        };
+        var response = await seller.PostAsJsonAsync("/api/productos", legitima);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         await fixture.VerificarSinStockInyectadoAsync(sku, stockId);
 
