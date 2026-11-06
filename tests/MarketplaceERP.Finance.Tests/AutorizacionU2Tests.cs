@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MarketplaceERP.API.Controllers;
 using MarketplaceERP.API.Security;
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Shared.Settings;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Authorization;
@@ -88,6 +89,33 @@ public class AutorizacionU2Tests
             Assert.Equal(403, await Probe(controller, method.Name, "Vendedor"));
             Assert.Equal(200, await Probe(controller, method.Name, "Admin"));
         }
+    }
+
+    [Theory]
+    [InlineData(typeof(ComprasController), "ListarPO", false)]
+    [InlineData(typeof(ComprasController), "EjecutarMatch", true)]
+    [InlineData(typeof(ContabilidadController), "LibroDiario", false)]
+    [InlineData(typeof(ContabilidadController), "AsientoManual", true)]
+    [InlineData(typeof(LiquidacionesController), "Historial", false)]
+    [InlineData(typeof(LiquidacionesController), "Generar", true)]
+    [InlineData(typeof(LiquidacionesController), "ProcesarPago", true)]
+    [InlineData(typeof(KpisDashboardController), "ObtenerDashboard", false)]
+    public async Task PhaseOneAdministrativeRoutes_EnforceRolesBeforeActionBody(
+        Type controller, string actionName, bool requiresPaymentGuard)
+    {
+        var action = controller.GetMethod(actionName)
+            ?? throw new InvalidOperationException("Missing action");
+        Assert.Equal("Admin", controller.GetCustomAttribute<AuthorizeAttribute>()?.Roles);
+        Assert.NotEmpty(action.GetCustomAttributes<HttpMethodAttribute>());
+        Assert.Equal(requiresPaymentGuard,
+            action.IsDefined(typeof(PaymentOperationsGuardAttribute), inherit: true));
+
+        // Probe invokes authentication and authorization middleware, then a dummy endpoint.
+        // A 200 here proves admission through the policy, not successful action execution.
+        Assert.Equal(401, await Probe(controller, actionName, null));
+        Assert.Equal(403, await Probe(controller, actionName, "Comprador"));
+        Assert.Equal(403, await Probe(controller, actionName, "Vendedor"));
+        Assert.Equal(200, await Probe(controller, actionName, "Admin"));
     }
 
     [Theory]
