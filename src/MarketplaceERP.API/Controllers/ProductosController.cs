@@ -46,11 +46,22 @@ public class ProductosController : ControllerBase
     {
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
-            .Where(p => p.EstaPublicado)
-            .OrderBy(p => p.Sku);
+            .Where(p => p.EstaPublicado);
+
+        // El catálogo de gestión de un Vendedor solo incluye productos propios.
+        // Comprador sigue viendo el catálogo publicado mediante el DTO público seguro.
+        if (User.IsInRole("Vendedor") && !User.IsInRole("Admin"))
+        {
+            var vendedorId = ObtenerVendedorIdActual();
+            if (!vendedorId.HasValue) return Forbid();
+            query = query.Where(p => p.VendedorId == vendedorId.Value);
+        }
+        else if (!User.IsInRole("Comprador") && !User.IsInRole("Admin"))
+            return Forbid();
 
         var total = await query.CountAsync();
         var productos = await query
+            .OrderBy(p => p.Sku)
             .Skip((pagina - 1) * tamano)
             .Take(tamano)
             .ToListAsync();
@@ -82,6 +93,15 @@ public class ProductosController : ControllerBase
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
+
+        if (User.IsInRole("Vendedor") && !User.IsInRole("Admin"))
+        {
+            var vendedorId = ObtenerVendedorIdActual();
+            if (!vendedorId.HasValue) return Forbid();
+            query = query.Where(p => p.VendedorId == vendedorId.Value);
+        }
+        else if (!User.IsInRole("Comprador") && !User.IsInRole("Admin"))
+            return Forbid();
 
         if (!string.IsNullOrWhiteSpace(q))
         {
@@ -144,6 +164,16 @@ public class ProductosController : ControllerBase
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado && p.PrecioB2B > 0);
+
+        // Precios mayoristas, proveedores y unidades físicas son datos privados.
+        if (User.IsInRole("Vendedor") && !User.IsInRole("Admin"))
+        {
+            var vendedorId = ObtenerVendedorIdActual();
+            if (!vendedorId.HasValue) return Forbid();
+            query = query.Where(p => p.VendedorId == vendedorId.Value);
+        }
+        else if (!User.IsInRole("Admin"))
+            return Forbid();
 
         if (!string.IsNullOrWhiteSpace(categoria))
         {
@@ -294,7 +324,22 @@ public class ProductosController : ControllerBase
             return Ok(ToCompradorDto(producto));
         }
 
-        return Ok(producto);
+        if (User.IsInRole("Admin"))
+            return Ok(producto);
+
+        if (User.IsInRole("Vendedor"))
+        {
+            var vendedorId = ObtenerVendedorIdActual();
+            if (!vendedorId.HasValue) return Forbid();
+
+            // No revelar detalles privados ni borradores de vendedores ajenos.
+            if (producto.VendedorId != vendedorId.Value)
+                return NotFound(new { mensaje = $"Producto {id} no encontrado." });
+
+            return Ok(producto);
+        }
+
+        return Forbid();
     }
 
     /// <summary>
