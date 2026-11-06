@@ -165,8 +165,12 @@ public class ProductosController : ControllerBase
     [HttpGet("b2b")]
     [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(IEnumerable<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetCatalogoB2B([FromQuery] string? categoria)
+    public async Task<IActionResult> GetCatalogoB2B([FromQuery] string? categoria, [FromQuery] int pagina = 1, [FromQuery] int tamano = 500)
     {
+        // Misma forma de respuesta (array) para clientes existentes; limitar la consulta.
+        if (!PaginacionValida(pagina, tamano))
+            return BadRequest(new { mensaje = "La página debe ser positiva, el tamaño estar entre 1 y 500 y el desplazamiento ser válido." });
+
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado && p.PrecioB2B > 0);
@@ -204,6 +208,8 @@ public class ProductosController : ControllerBase
                 p.CodigoEAN,
                 StockDisponible = p.Stocks.Sum(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada)
             })
+            .Skip((pagina - 1) * tamano)
+            .Take(tamano)
             .ToListAsync();
 
         return Ok(productos);
