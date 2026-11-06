@@ -9,9 +9,15 @@ namespace MarketplaceERP.Finance.Services;
 
 public record LibroMayorCuenta(string CodigoCuenta, string NombreCuenta, decimal TotalDebe, decimal TotalHaber, decimal Saldo);
 public record BalanceComprobacion(decimal TotalDebe, decimal TotalHaber, bool EstaCuadrado, List<LibroMayorCuenta> Cuentas);
+public record LineaAsientoInput(string CodigoCuenta, decimal Debe, decimal Haber, string? Glosa = null);
 
 public interface IContabilidadService
 {
+    Task<PartidaContable> GenerarAsientoManualAsync(
+        string concepto,
+        string tipoOperacion,
+        IEnumerable<LineaAsientoInput> lineas,
+        CancellationToken cancellationToken = default);
     Task<PartidaContable> GenerarAsientoVentaAsync(Guid ordenId, decimal montoVenta, decimal iva, string tipoComprobante, CancellationToken cancellationToken = default);
     Task<PartidaContable> GenerarAsientoCompraAsync(Guid ordenCompraId, decimal montoCompra, decimal iva, CancellationToken cancellationToken = default);
     Task<IEnumerable<PartidaContable>> ObtenerLibroDiarioAsync(DateTime? desde = null, DateTime? hasta = null, CancellationToken cancellationToken = default);
