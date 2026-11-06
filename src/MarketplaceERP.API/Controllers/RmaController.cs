@@ -16,7 +16,7 @@ namespace MarketplaceERP.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/rma")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class RmaController : ControllerBase
 {
     private readonly IRmaService _rmaService;
@@ -50,7 +50,7 @@ public class RmaController : ControllerBase
     /// Ejecuta la inspección técnica de calidad en bodega y emite el dictamen (Re-stock, Scrap, Remate).
     /// </summary>
     [HttpPost("{id:guid}/inspeccionar")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(DevolucionRMA), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Inspeccionar(Guid id, [FromBody] DictaminarRmaRequest request)

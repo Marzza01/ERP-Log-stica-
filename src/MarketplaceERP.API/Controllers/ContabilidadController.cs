@@ -3,7 +3,9 @@
  * Todos los derechos reservados © 2026
  */
 
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MarketplaceERP.API.Controllers;
@@ -14,6 +16,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Requisito: PDF1 R-CONT-01 a R-CONT-05
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class ContabilidadController : ControllerBase
@@ -99,6 +102,7 @@ public class ContabilidadController : ControllerBase
     /// Útil para reversiones, correcciones o asientos de cierre.
     /// </summary>
     [HttpPost("asiento-manual", Name = "AsientoManual")]
+    [PaymentOperationsGuard]
     [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> AsientoManual(

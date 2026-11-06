@@ -16,7 +16,7 @@ namespace MarketplaceERP.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/vendedores")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class VendedoresController : ControllerBase
 {
     private readonly CoreDbContext _dbContext;
@@ -32,7 +32,7 @@ public class VendedoresController : ControllerBase
     /// Lista todos los vendedores activos.
     /// </summary>
     [HttpGet]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(IEnumerable<Vendedor>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll()
     {
@@ -48,7 +48,7 @@ public class VendedoresController : ControllerBase
     /// Obtiene un vendedor por su ID.
     /// </summary>
     [HttpGet("{id:guid}")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(Vendedor), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetById(Guid id)

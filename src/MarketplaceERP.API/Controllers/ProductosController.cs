@@ -18,7 +18,7 @@ namespace MarketplaceERP.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/productos")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class ProductosController : ControllerBase
 {
     private readonly CatalogDbContext _dbContext;
@@ -197,7 +197,7 @@ public class ProductosController : ControllerBase
     /// Carga masiva de los 500 productos mediante archivo CSV multipart (PDF 2 - Sección 3).
     /// </summary>
     [HttpPost("importar-csv")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(ImportResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> ImportarCsv(IFormFile archivo)
@@ -266,7 +266,7 @@ public class ProductosController : ControllerBase
     /// Publica un nuevo producto. Requiere rol Vendedor o Admin.
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Vendedor,Admin")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(Producto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Create([FromBody] Producto producto)
@@ -294,7 +294,7 @@ public class ProductosController : ControllerBase
     /// sea implementada posteriormente por el integrante responsable.
     /// </summary>
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Vendedor,Admin")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(Producto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Update(Guid id, [FromBody] ActualizarProductoRequest request)
@@ -333,7 +333,7 @@ public class ProductosController : ControllerBase
     /// Da de baja lógica un producto sin eliminar su trazabilidad histórica.
     /// </summary>
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Vendedor,Admin")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(Guid id)
@@ -353,7 +353,7 @@ public class ProductosController : ControllerBase
     /// Publica un producto (cambia EstaPublicado a true). Requiere rol Vendedor o Admin.
     /// </summary>
     [HttpPatch("{id:guid}/publicar")]
-    [Authorize(Roles = "Vendedor,Admin")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Publicar(Guid id)

@@ -20,7 +20,7 @@ namespace MarketplaceERP.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/proveedores")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class ProveedoresController : ControllerBase
 {
     private readonly CoreDbContext _coreDb;

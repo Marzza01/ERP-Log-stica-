@@ -55,7 +55,8 @@ public class FlujoIntegralE2ETests
         var contabilidadService = new ContabilidadService(financeDb, NullLogger<ContabilidadService>.Instance);
         var stockService = new StockService(catalogDb, NullLogger<StockService>.Instance);
         var fulfillmentService = new FulfillmentService(catalogDb, stockService, NullLogger<FulfillmentService>.Instance);
-        var liquidacionService = new LiquidacionService(financeDb, contabilidadService, NullLogger<LiquidacionService>.Instance);
+        var liquidacionService = new LiquidacionService(financeDb, contabilidadService,
+            NullLogger<LiquidacionService>.Instance, new PaymentOperationsMode(false));
 
         // ── 1. Alta de Proveedor y Catálogo de Producto ─────────────────────────
         var proveedor = new Proveedor

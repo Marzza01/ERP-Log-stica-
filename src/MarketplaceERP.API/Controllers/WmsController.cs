@@ -15,7 +15,7 @@ namespace MarketplaceERP.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/wms")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class WmsController : ControllerBase
 {
     private readonly IWmsService _wmsService;
@@ -59,7 +59,7 @@ public class WmsController : ControllerBase
     /// Unidades reservadas o bloqueadas no pueden moverse.
     /// </summary>
     [HttpPost("transferir")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(TransferenciaInventarioResult), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(TransferenciaInventarioResult), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Transferir([FromBody] TransferirStockRequest request)
@@ -90,7 +90,7 @@ public class WmsController : ControllerBase
     /// La UI nueva utiliza /transferir.
     /// </summary>
     [HttpPost("reubicar")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Reubicar([FromBody] ReubicarStockRequest request)

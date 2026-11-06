@@ -43,7 +43,8 @@ public class AuthController : ControllerBase
     private readonly ILogger<AuthController> _logger;
     private readonly PasswordHasher<Usuario> _passwordHasher;
     private static readonly Usuario _dummyUsuario = new() { Email = "dummy@security.internal" };
-    private static readonly string _dummyHash = new PasswordHasher<Usuario>().HashPassword(_dummyUsuario, "DummySecurityHashValue2026!");
+    private static readonly string _dummyHash = new PasswordHasher<Usuario>().HashPassword(
+        _dummyUsuario, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
 
     public AuthController(
         CoreDbContext coreDb,

@@ -3,10 +3,12 @@
  * Todos los derechos reservados © 2026
  */
 
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Core.Data;
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,6 +20,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Requisito: PDF1 R-COMP-01 a R-COMP-06
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class ComprasController : ControllerBase
@@ -360,6 +363,7 @@ public class ComprasController : ControllerBase
     // ── POST /api/compras/match ───────────────────────────────────────────────
     /// <summary>Ejecuta el Match Tridireccional (PO - Factura - Bodega WMS).</summary>
     [HttpPost("match", Name = "EjecutarMatch3Way")]
+    [PaymentOperationsGuard]
     [ProducesResponseType(typeof(MatchTridireccional), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> EjecutarMatch(

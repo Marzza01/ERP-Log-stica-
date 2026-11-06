@@ -31,6 +31,25 @@ public class CheckoutOrchestratorTests
     }
 
     [Fact]
+    public async Task PasarelaDeshabilitada_RechazaAntesDeReservarORegistrarIntento()
+    {
+        using var db = CrearDbContextEnMemoria();
+        var stock = new Mock<IStockService>(MockBehavior.Strict);
+        var commission = new Mock<ICommissionService>(MockBehavior.Strict);
+        var sut = new CheckoutOrchestrator(stock.Object, commission.Object,
+            new PagoServiceDisabled(), db, NullLogger<CheckoutOrchestrator>.Instance);
+        var command = new CheckoutCommand(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), 1, 1m, "USD");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ProcesarCheckoutAsync(command));
+        stock.VerifyNoOtherCalls();
+        commission.VerifyNoOtherCalls();
+        Assert.Empty(db.ChangeTracker.Entries());
+        Assert.Empty(await db.IntentosPago.ToListAsync());
+        Assert.Empty(await db.SplitsPago.ToListAsync());
+    }
+
+    [Fact]
     public async Task ProcesarCheckoutAsync_FlujoCorrecto_DebeRetornarResultadoExitoso()
     {
         // Arrange

@@ -11,7 +11,7 @@ namespace MarketplaceERP.API.Controllers;
 
 [ApiController]
 [Route("api/inventario/bloqueos")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class BloqueosInventarioController : ControllerBase
 {
     private readonly IInventoryService _inventoryService;
@@ -22,7 +22,7 @@ public class BloqueosInventarioController : ControllerBase
     }
 
     [HttpPost("bloquear")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(BloqueoInventarioResult), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(BloqueoInventarioResult), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Bloquear(
@@ -40,7 +40,7 @@ public class BloqueosInventarioController : ControllerBase
     }
 
     [HttpPost("desbloquear")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(BloqueoInventarioResult), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(BloqueoInventarioResult), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Desbloquear(

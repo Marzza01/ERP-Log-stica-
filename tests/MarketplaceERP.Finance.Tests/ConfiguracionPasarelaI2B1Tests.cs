@@ -70,4 +70,18 @@ public class ConfiguracionPasarelaI2B1Tests
         var pasarela = sp.GetRequiredService<IPaymentGateway>();
         Assert.IsType<PagoServiceMock>(pasarela);
     }
+
+    [Fact]
+    public async Task Production_ConProveedorDeshabilitado_RegistraPasarelaQueNuncaConfirmaCobros()
+    {
+        var services = new ServiceCollection();
+        services.AddFinanceServices(Configurar("Disabled", null), isDevelopment: false);
+        using var sp = services.BuildServiceProvider();
+        Assert.True(sp.GetRequiredService<PaymentOperationsMode>().IsDisabled);
+        var gateway = sp.GetRequiredService<IPaymentGateway>();
+        Assert.IsType<PagoServiceDisabled>(gateway);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            gateway.ProcesarPagoAsync(new MarketplaceERP.Shared.DTOs.PagoRequest(
+                Guid.NewGuid(), Guid.NewGuid(), 1m, "USD", "test")));
+    }
 }

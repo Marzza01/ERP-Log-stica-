@@ -3,7 +3,8 @@
  * Todos los derechos reservados © 2026
  */
 
-using System.Text;
+using MarketplaceERP.API.Security;
+using MarketplaceERP.API.Services;
 using System.Threading.RateLimiting;
 using MarketplaceERP.Catalog;
 using MarketplaceERP.Core;
@@ -12,35 +13,32 @@ using MarketplaceERP.Core.Entities;
 using MarketplaceERP.Finance;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Shared.Settings;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
+
+MaintenanceCommand command;
+try { command = MaintenanceCommand.Parse(args); }
+catch (ArgumentException)
+{
+    Console.Error.WriteLine("Comando de mantenimiento inválido. No se inició HTTP ni mantenimiento.");
+    Environment.ExitCode = 2;
+    return;
+}
+if (await MaintenanceCommand.RunMaintenanceIfRequestedAsync(command, async () =>
+    { Environment.ExitCode = await MaintenanceRunner.RunAsync(command); }))
+    return;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Soporte para DATABASE_URL de Railway/Heroku ───────────────────────────────
-var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
-if (!string.IsNullOrEmpty(databaseUrl))
-{
-    // Railway provee: postgresql://user:pass@host:port/dbname
-    var uri = new Uri(databaseUrl);
-    var userInfo = uri.UserInfo.Split(':');
-    // NOTA: Railway utiliza certificados autofirmados / proxies dinámicos en su infraestructura PostgreSQL interna.
-    // 'Trust Server Certificate=true' es requerido temporalmente para permitir handshake SSL sin error en Railway;
-    // se mantendrá documentado hasta que se configure una CA personalizada de confianza en el contenedor.
-    var connStr = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
-    builder.Configuration["ConnectionStrings:DefaultConnection"] = connStr;
-}
+// Ambos modos usan la misma selección de destino. Ninguno abre la conexión aquí.
+builder.Configuration["ConnectionStrings:DefaultConnection"] =
+    DatabaseConnectionConfiguration.Resolve(builder.Configuration);
 
-// ── Soporte alternativo via variable CONNECTION_STRING ────────────────────────
-var connStrEnv = Environment.GetEnvironmentVariable("CONNECTION_STRING");
-if (!string.IsNullOrEmpty(connStrEnv))
-{
-    builder.Configuration["ConnectionStrings:DefaultConnection"] = connStrEnv;
-}
+// Railway inyecta PORT al ejecutar el contenedor, no al construir la imagen.
+var listenUrls = RuntimePortConfiguration.ResolveUrls(builder.Configuration["PORT"]);
+if (listenUrls is not null) builder.WebHost.UseUrls(listenUrls);
 
 // ── Configuración JWT usando patrón Options y validación estricta ─────────────
 builder.Services.Configure<JwtSettings>(
@@ -51,59 +49,7 @@ var jwtSettings = builder.Configuration
     .Get<JwtSettings>()
     ?? throw new InvalidOperationException("La configuración JWT es obligatoria. Verifica appsettings.json o variables de entorno.");
 
-// Validación estricta de Key y Expiration
-var isProduction = builder.Environment.IsProduction();
-if (isProduction)
-{
-    if (string.IsNullOrWhiteSpace(jwtSettings.Key) ||
-        jwtSettings.Key.Length < 32 ||
-        jwtSettings.Key.Contains("CAMBIA", StringComparison.OrdinalIgnoreCase) ||
-        jwtSettings.Key.Contains("DEV_ONLY", StringComparison.OrdinalIgnoreCase))
-    {
-        throw new InvalidOperationException("En Production, Jwt:Key no puede estar vacía, debe tener mínimo 32 caracteres y no puede contener palabras placeholder ('CAMBIA' o 'DEV_ONLY').");
-    }
-}
-else
-{
-    if (string.IsNullOrWhiteSpace(jwtSettings.Key) || jwtSettings.Key.Length < 32)
-    {
-        throw new InvalidOperationException("Jwt:Key debe tener al menos 32 caracteres. Configura appsettings.json o variables de entorno.");
-    }
-}
-
-if (jwtSettings.ExpirationMinutes > 1440)
-{
-    throw new InvalidOperationException("Jwt:ExpirationMinutes no puede superar el límite máximo de 1440 minutos (24 horas).");
-}
-
-// ── Autenticación JWT Bearer ──────────────────────────────────────────────────
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings.Issuer,
-        ValidAudience = jwtSettings.Audience,
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(jwtSettings.Key)),
-        ClockSkew = TimeSpan.Zero
-    };
-});
-
-builder.Services.AddAuthorization(options =>
-{
-    options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .Build();
-});
+builder.Services.AddMarketplaceSecurity(jwtSettings);
 
 // ── Rate Limiting nativo para Login ───────────────────────────────────────────
 builder.Services.AddRateLimiter(options =>
@@ -255,13 +201,6 @@ app.MapGet("/health/ready", async (
 }).AllowAnonymous();
 
 app.MapControllers();
-
-// ── Secuencia de arranque única, ordenada y asíncrona (StartupInitializer) ────
-await MarketplaceERP.API.Services.StartupInitializer.InicializarAsync(
-    app.Services,
-    app.Configuration,
-    app.Environment,
-    app.Logger);
 
 app.Run();
 

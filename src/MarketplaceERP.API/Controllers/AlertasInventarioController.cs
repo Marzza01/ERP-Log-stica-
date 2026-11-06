@@ -15,7 +15,7 @@ namespace MarketplaceERP.API.Controllers;
 
 [ApiController]
 [Route("api/alertas-inventario")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public sealed class AlertasInventarioController : ControllerBase
 {
     private readonly IAlertaInventarioService _alertas;

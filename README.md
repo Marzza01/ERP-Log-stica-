@@ -289,7 +289,7 @@ El proyecto sigue una arquitectura desacoplada Frontend/Backend diseñada para s
 ### ⚙️ Backend (Servidor y Lógica de Negocio)
 - **Framework:** .NET 8 (ASP.NET Core Web API).
 - **Patrones:** Domain-Driven Design (DDD) dividido en capas: `Catalog`, `Finance`, `Shared` y `API`.
-- **Persistencia:** Entity Framework Core + **PostgreSQL** (Puerto 5432).
+- **Persistencia:** Entity Framework Core + **PostgreSQL** (en Compose: `db:5432`, sin publicación al host).
 - **Seguridad:** Autenticación y autorización basada en claims JWT.
 - **Documentación API:** Swagger (OpenAPI) disponible en `/swagger`.
 - **Health Checks:** Endpoint `/health` para monitoreo de conectividad de servicios.
@@ -301,7 +301,7 @@ El proyecto sigue una arquitectura desacoplada Frontend/Backend diseñada para s
 ### Requisitos Previos
 1. **Node.js** (v18+)
 2. **.NET 8 SDK**
-3. **PostgreSQL** (Puerto `5432`)
+3. **PostgreSQL** en un destino expresamente autorizado. Compose usa su servicio interno `db:5432` sin publicar PostgreSQL en el host; no reutilizar las instalaciones existentes ni asumir puertos disponibles. Consulte [Configuración segura](docs/Configuracion_Segura.md).
 
 ### Paso Rápido: Inicio con un solo clic (Windows)
 Ejecuta el archivo:
@@ -311,6 +311,8 @@ INICIAR_LOCAL.bat
 El script levantará automáticamente la API de .NET (puerto 5000) y la interfaz Vite (puerto 5173), detectando tu IP local para acceso desde celulares y tablets.
 
 ### Inicio Manual por Consola
+
+Antes de ejecutar la API, configure conexión y firma JWT fuera del repositorio siguiendo [Configuración segura](docs/Configuracion_Segura.md). U4 separa el arranque HTTP de migraciones y seeds mediante [mantenimiento explícito](docs/Arranque_Mantenimiento_U4.md). Iniciar servicios o ejecutar mantenimiento requiere revisión y autorización separadas; el bloqueo productivo de pagos se conserva.
 
 1. **Backend (.NET API):**
    ```bash

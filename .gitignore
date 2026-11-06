@@ -41,11 +41,10 @@ pnpm-debug.log*
 lerna-debug.log*
 
 ## Environment / Secrets
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env*
+!.env.example
+!.env.sample
+!.env.template
 
 ## OS generated files
 .DS_Store
