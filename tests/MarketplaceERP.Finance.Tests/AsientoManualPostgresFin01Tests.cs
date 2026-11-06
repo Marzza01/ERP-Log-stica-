@@ -114,6 +114,7 @@ public sealed class AsientoManualPostgresFin01Tests : IAsyncLifetime
         if (!Active) return;
         await using var db = NewContext();
         var antes = await db.PartidasContables.CountAsync();
+        var lineasAntes = await db.LineasPartidaContable.CountAsync();
         await Assert.ThrowsAsync<ArgumentException>(() =>
             Service(db).GenerarAsientoManualAsync("No válido", "Ajuste", new[]
             {
@@ -121,7 +122,7 @@ public sealed class AsientoManualPostgresFin01Tests : IAsyncLifetime
                 new LineaAsientoInput("4101", 0m, 9.99m)
             }));
         Assert.Equal(antes, await db.PartidasContables.CountAsync());
-        Assert.Equal(3, await db.LineasPartidaContable.CountAsync());
+        Assert.Equal(lineasAntes, await db.LineasPartidaContable.CountAsync());
     }
 
     [Fact]
