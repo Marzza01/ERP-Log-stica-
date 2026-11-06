@@ -44,6 +44,9 @@ public class ProductosController : ControllerBase
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPublicados([FromQuery] int pagina = 1, [FromQuery] int tamano = 50)
     {
+        if (!PaginacionValida(pagina, tamano))
+            return BadRequest(new { mensaje = "La página debe ser >= 1, el tamaño entre 1 y 100 y el desplazamiento válido." });
+
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
@@ -90,6 +93,9 @@ public class ProductosController : ControllerBase
         [FromQuery] int pagina = 1,
         [FromQuery] int tamano = 50)
     {
+        if (!PaginacionValida(pagina, tamano))
+            return BadRequest(new { mensaje = "La página debe ser >= 1, el tamaño entre 1 y 100 y el desplazamiento válido." });
+
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
@@ -511,6 +517,10 @@ public class ProductosController : ControllerBase
 
         return NoContent();
     }
+
+    private static bool PaginacionValida(int pagina, int tamano) =>
+        pagina >= 1 && tamano is >= 1 and <= 100 &&
+        ((long)pagina - 1) * tamano <= int.MaxValue;
 
     private Guid? ObtenerVendedorIdActual()
     {
