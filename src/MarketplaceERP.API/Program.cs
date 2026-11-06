@@ -13,7 +13,6 @@ using MarketplaceERP.Core.Entities;
 using MarketplaceERP.Finance;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Shared.Settings;
-using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -33,8 +32,11 @@ if (await MaintenanceCommand.RunMaintenanceIfRequestedAsync(command, async () =>
 var builder = WebApplication.CreateBuilder(args);
 
 // Ambos modos usan la misma selección de destino. Ninguno abre la conexión aquí.
-builder.Configuration["ConnectionStrings:DefaultConnection"] =
-    DatabaseConnectionConfiguration.Resolve(builder.Configuration);
+var databaseConnection = DatabaseConnectionConfiguration.Resolve(builder.Configuration);
+StagingDatabaseTargetGuard.Validate(builder.Configuration,
+    Environment.GetEnvironmentVariable("RENDER_SERVICE_NAME"),
+    builder.Environment.EnvironmentName, databaseConnection);
+builder.Configuration["ConnectionStrings:DefaultConnection"] = databaseConnection;
 
 // Railway inyecta PORT al ejecutar el contenedor, no al construir la imagen.
 var listenUrls = RuntimePortConfiguration.ResolveUrls(builder.Configuration["PORT"]);
@@ -136,17 +138,29 @@ var app = builder.Build();
 // ── Middleware pipeline ───────────────────────────────────────────────────────
 if (app.Environment.IsProduction())
 {
-    var forwardedOptions = new ForwardedHeadersOptions
+    if (DeploymentHttpSecurity.RenderTerminatesTls(
+        Environment.GetEnvironmentVariable("RENDER_SERVICE_NAME")))
     {
-        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
-        ForwardLimit = 1
-    };
-    forwardedOptions.KnownNetworks.Clear();
-    forwardedOptions.KnownProxies.Clear();
-    app.UseForwardedHeaders(forwardedOptions);
-
-    app.UseHsts();
-    app.UseHttpsRedirection();
+        // Render ya redirige HTTP→HTTPS en el borde. No confiar en
+        // X-Forwarded-For/Proto recibidos por el contenedor para rate limiting.
+        app.Use(async (context, next) =>
+        {
+            context.Response.OnStarting(() =>
+            {
+                DeploymentHttpSecurity.AddRenderHsts(context.Response.Headers);
+                return Task.CompletedTask;
+            });
+            await next(context);
+        });
+    }
+    else
+    {
+        // Para otros despliegues, aceptar solo proxies loopback explícitos.
+        // Nunca eliminar los filtros de IP para confiar en cabeceras arbitrarias.
+        app.UseForwardedHeaders(DeploymentHttpSecurity.LocalTrustedForwarders());
+        app.UseHsts();
+        app.UseHttpsRedirection();
+    }
 }
 
 app.UseCors();

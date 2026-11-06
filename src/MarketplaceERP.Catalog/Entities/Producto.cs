@@ -69,7 +69,7 @@ public class Producto
     public string EstadoProducto { get; set; } = "Activo";
 
     // 15. Código EAN (EAN-13 para escaneo óptico)
-    public string CodigoEAN { get; set; } = string.Empty;
+    public string? CodigoEAN { get; set; }
 
     // 16. Descripción Corta / Ficha técnica
     public string Descripcion { get; set; } = string.Empty;

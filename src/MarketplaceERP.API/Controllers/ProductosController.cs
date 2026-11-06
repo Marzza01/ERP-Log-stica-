@@ -44,6 +44,9 @@ public class ProductosController : ControllerBase
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPublicados([FromQuery] int pagina = 1, [FromQuery] int tamano = 50)
     {
+        if (!PaginacionValida(pagina, tamano))
+            return BadRequest(new { mensaje = "La página debe ser positiva, el tamaño estar entre 1 y 500 y el desplazamiento ser válido." });
+
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
@@ -90,6 +93,9 @@ public class ProductosController : ControllerBase
         [FromQuery] int pagina = 1,
         [FromQuery] int tamano = 50)
     {
+        if (!PaginacionValida(pagina, tamano))
+            return BadRequest(new { mensaje = "La página debe ser positiva, el tamaño estar entre 1 y 500 y el desplazamiento ser válido." });
+
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
@@ -159,8 +165,12 @@ public class ProductosController : ControllerBase
     [HttpGet("b2b")]
     [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(IEnumerable<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetCatalogoB2B([FromQuery] string? categoria)
+    public async Task<IActionResult> GetCatalogoB2B([FromQuery] string? categoria, [FromQuery] int pagina = 1, [FromQuery] int tamano = 500)
     {
+        // Misma forma de respuesta (array) para clientes existentes; limitar la consulta.
+        if (!PaginacionValida(pagina, tamano))
+            return BadRequest(new { mensaje = "La página debe ser positiva, el tamaño estar entre 1 y 500 y el desplazamiento ser válido." });
+
         var query = _dbContext.Productos
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado && p.PrecioB2B > 0);
@@ -198,6 +208,8 @@ public class ProductosController : ControllerBase
                 p.CodigoEAN,
                 StockDisponible = p.Stocks.Sum(s => s.CantidadTotal - s.CantidadReservada - s.CantidadBloqueada)
             })
+            .Skip((pagina - 1) * tamano)
+            .Take(tamano)
             .ToListAsync();
 
         return Ok(productos);
@@ -354,33 +366,60 @@ public class ProductosController : ControllerBase
         if (producto is null)
             return BadRequest(new { mensaje = "El producto no puede ser nulo." });
 
+        var vendedorId = producto.VendedorId;
         if (!User.IsInRole("Admin"))
         {
-            var vendedorId = ObtenerVendedorIdActual();
-            if (!vendedorId.HasValue)
+            var vendedorAutenticado = ObtenerVendedorIdActual();
+            if (!vendedorAutenticado.HasValue)
                 return Forbid();
 
-            // Si el cuerpo especifica un VendedorId distinto al del vendedor autenticado, denegar
-            if (producto.VendedorId != Guid.Empty && producto.VendedorId != vendedorId.Value)
+            // La propiedad de la mercancía se deriva de la identidad autenticada.
+            if (vendedorId != Guid.Empty && vendedorId != vendedorAutenticado.Value)
                 return Forbid();
 
-            producto.VendedorId = vendedorId.Value;
+            vendedorId = vendedorAutenticado.Value;
         }
 
-        producto.Id = Guid.NewGuid();
-        producto.FechaCreacion = DateTime.UtcNow;
+        // Lista blanca de campos maestros. Producto es una entidad EF con
+        // navegaciones públicas (Stock, Reservas, Movimientos, etc.) que pueden
+        // llegar por JSON; nunca insertar el grafo recibido con DbContext.Add.
+        // El inventario físico se modifica exclusivamente por los flujos WMS.
+        var ahora = DateTime.UtcNow;
+        var nuevoProducto = new Producto
+        {
+            Id = Guid.NewGuid(),
+            Sku = producto.Sku,
+            Nombre = producto.Nombre,
+            Descripcion = producto.Descripcion,
+            CategoriaNombre = producto.CategoriaNombre,
+            Subcategoria = producto.Subcategoria,
+            PrecioB2C = producto.PrecioB2C,
+            PrecioB2B = producto.PrecioB2B,
+            Moneda = producto.Moneda,
+            StockInicial = producto.StockInicial, // dato maestro; NO crea StockFisico
+            StockMinimo = producto.StockMinimo,
+            ProveedorNombre = producto.ProveedorNombre,
+            PaisOrigen = producto.PaisOrigen,
+            PesoKg = producto.PesoKg,
+            DimensionesCm = producto.DimensionesCm,
+            UnidadMedida = producto.UnidadMedida,
+            EstadoProducto = producto.EstadoProducto,
+            CodigoEAN = producto.CodigoEAN,
+            VendedorId = vendedorId,
+            CategoriaId = producto.CategoriaId,
+            EstaPublicado = producto.EstaPublicado,
+            FechaCreacion = ahora,
+            FechaPublicacion = producto.EstaPublicado ? ahora : null
+        };
 
-        if (producto.EstaPublicado)
-            producto.FechaPublicacion = DateTime.UtcNow;
-
-        _dbContext.Productos.Add(producto);
+        _dbContext.Productos.Add(nuevoProducto);
         await _dbContext.SaveChangesAsync();
 
         _logger.LogInformation(
             "Producto creado. Id={Id}, SKU={Sku}, Nombre={Nombre}, VendedorId={VendedorId}",
-            producto.Id, producto.Sku, producto.Nombre, producto.VendedorId);
+            nuevoProducto.Id, nuevoProducto.Sku, nuevoProducto.Nombre, nuevoProducto.VendedorId);
 
-        return CreatedAtAction(nameof(GetById), new { id = producto.Id }, producto);
+        return CreatedAtAction(nameof(GetById), new { id = nuevoProducto.Id }, nuevoProducto);
     }
 
     /// <summary>
@@ -484,6 +523,13 @@ public class ProductosController : ControllerBase
 
         return NoContent();
     }
+
+    // El catálogo inicial contiene 500 SKU; no permitir consultas sin límite
+    // ni desbordamientos enteros al calcular Skip((pagina - 1) * tamano).
+    private static bool PaginacionValida(int pagina, int tamano) =>
+        pagina >= 1 &&
+        tamano is >= 1 and <= 500 &&
+        ((long)pagina - 1) * tamano <= int.MaxValue;
 
     private Guid? ObtenerVendedorIdActual()
     {
