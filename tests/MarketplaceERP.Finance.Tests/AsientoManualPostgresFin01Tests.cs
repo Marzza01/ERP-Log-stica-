@@ -158,7 +158,12 @@ public sealed class AsientoManualPostgresFin01Tests : IAsyncLifetime
             return;
 
         // Únicamente la base efímera creada por ESTE test, nunca postgres/Neon.
-        NpgsqlConnection.ClearAllPools();
+        // Limpiar solamente el pool de la base efímera, no los pools de otras suites.
+        if (_testConnection is not null)
+        {
+            using var ephemeral = new NpgsqlConnection(_testConnection);
+            NpgsqlConnection.ClearPool(ephemeral);
+        }
         await using var admin = new NpgsqlConnection(_adminConnection);
         await admin.OpenAsync();
         await using var cmd = admin.CreateCommand();
