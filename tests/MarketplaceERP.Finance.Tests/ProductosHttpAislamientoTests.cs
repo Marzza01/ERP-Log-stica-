@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -134,6 +135,25 @@ public class ProductosHttpAislamientoTests
             return client;
         }
 
+        public async Task VerificarSinStockInyectadoAsync(string sku, Guid stockId)
+        {
+            using var scope = _server.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var producto = await db.Productos.Include(p => p.Stocks)
+                .SingleAsync(p => p.Sku == sku);
+            Assert.Equal(SellerA, producto.VendedorId);
+            Assert.Empty(producto.Stocks);
+            Assert.False(await db.StockFisico.AnyAsync(s => s.Id == stockId));
+        }
+
+        public async Task VerificarRechazoSinCambiosAsync(string sku, Guid stockId)
+        {
+            using var scope = _server.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            Assert.False(await db.Productos.AnyAsync(p => p.Sku == sku));
+            Assert.False(await db.StockFisico.AnyAsync(s => s.Id == stockId));
+        }
+
         public void Dispose() => _server.Dispose();
     }
 
@@ -252,4 +272,77 @@ public class ProductosHttpAislamientoTests
         Assert.DoesNotContain("HTTP-FOREIGN-B", body);
         Assert.DoesNotContain("PROVEEDOR-PRIVADO-B", body);
     }
+    [Fact]
+    public async Task Http_CrearProducto_RechazaGrafoMaliciosoYPreservaAltaLegitima()
+    {
+        using var fixture = await Fixture.CreateAsync();
+        using var seller = fixture.Client("Vendedor", fixture.SellerA.ToString());
+        var stockId = Guid.NewGuid();
+        const string sku = "HTTP-NO-OVERPOST";
+
+        // Stock es una propiedad de compatibilidad con setter público.
+        // Un grafo de inventario enviado desde HTTP debe rechazarse o
+        // descartarse sin ninguna escritura; aquí el model binder lo rechaza.
+        var maliciosa = new
+        {
+            sku,
+            nombre = "Producto con intento de stock",
+            descripcion = "Ficha del producto",
+            categoriaNombre = "Tecnología",
+            subcategoria = "Laptops",
+            categoriaId = Guid.NewGuid(),
+            vendedorId = fixture.SellerA,
+            precioB2C = 50m,
+            precioB2B = 40m,
+            proveedorNombre = "Proveedor de prueba",
+            paisOrigen = "El Salvador",
+            dimensionesCm = "10x10x10",
+            unidadMedida = "Unidad",
+            estadoProducto = "Activo",
+            estaPublicado = true,
+            stock = new
+            {
+                id = stockId,
+                productoId = fixture.ProductB,
+                cantidadTotal = 9999,
+                cantidadReservada = 0,
+                cantidadBloqueada = 0,
+                ubicacionCodigo = "STOCK-FAKE-CLIENT"
+            }
+        };
+        var invalidResponse = await seller.PostAsJsonAsync("/api/productos", maliciosa);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+        await fixture.VerificarRechazoSinCambiosAsync(sku, stockId);
+
+        // Un producto maestro válido sí se puede crear, sin alta WMS automática.
+        var legitima = new
+        {
+            sku,
+            nombre = "Producto nuevo sin inventario automático",
+            descripcion = "Ficha del producto",
+            categoriaNombre = "Tecnología",
+            subcategoria = "Laptops",
+            categoriaId = Guid.NewGuid(),
+            vendedorId = fixture.SellerA,
+            precioB2C = 50m,
+            precioB2B = 40m,
+            proveedorNombre = "Proveedor de prueba",
+            paisOrigen = "El Salvador",
+            dimensionesCm = "10x10x10",
+            unidadMedida = "Unidad",
+            estadoProducto = "Activo",
+            estaPublicado = true
+        };
+        var response = await seller.PostAsJsonAsync("/api/productos", legitima);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        await fixture.VerificarSinStockInyectadoAsync(sku, stockId);
+
+        var location = response.Headers.Location?.ToString();
+        Assert.False(string.IsNullOrWhiteSpace(location));
+
+        using var otherSeller = fixture.Client("Vendedor", fixture.SellerB.ToString());
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await otherSeller.GetAsync(location)).StatusCode);
+    }
+
 }
