@@ -244,3 +244,53 @@ test('métodos, cabeceras y códigos HTTP no se convierten en éxito local', asy
   assert.equal(await client.apiClient.delete('/api/ordenes/123'), undefined);
   assert.equal(calls[1].options.method, 'DELETE');
 });
+
+test('navegación y control de acceso: reabastecimiento solo admite Admin (Vendedor y Comprador bloqueados)', () => {
+  const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
+  const sidebarSource = fs.readFileSync(path.join(root, 'src/components/layout/Sidebar.tsx'), 'utf8');
+
+  // 1. Verificar definición de ruta en App.tsx
+  const reabastecimientoRouteMatch = appSource.match(/<Route\s+path="reabastecimiento"\s+element=\{<RoleRouteGuard\s+allowedRoles=\{([^}]+)\}>\s*<ReabastecimientoPage\s*\/>/);
+  assert.ok(reabastecimientoRouteMatch, 'La ruta reabastecimiento debe estar protegida con RoleRouteGuard');
+  const allowedRolesApp = eval(reabastecimientoRouteMatch[1]);
+  assert.deepEqual(allowedRolesApp, ['Admin'], 'App.tsx debe permitir únicamente Admin en reabastecimiento');
+
+  // 2. Verificar Sidebar.tsx navGroups para reabastecimiento
+  const reabastecimientoSidebarMatch = sidebarSource.match(/to:\s*['"]\/reabastecimiento['"][\s\S]*?allowedRoles:\s*(\[[^\]]+\])/);
+  assert.ok(reabastecimientoSidebarMatch, 'El ítem /reabastecimiento debe estar en Sidebar.tsx con allowedRoles');
+  const allowedRolesSidebar = eval(reabastecimientoSidebarMatch[1]);
+  assert.deepEqual(allowedRolesSidebar, ['Admin'], 'Sidebar.tsx debe permitir únicamente Admin en reabastecimiento');
+
+  // 3. Simular lógica de filtrado de Sidebar por rol
+  const filterSidebarItem = (itemRoles, userRole) => itemRoles.includes(userRole);
+  assert.equal(filterSidebarItem(allowedRolesSidebar, 'Admin'), true, 'Sidebar: Admin debe ver reabastecimiento');
+  assert.equal(filterSidebarItem(allowedRolesSidebar, 'Vendedor'), false, 'Sidebar: Vendedor NO debe ver reabastecimiento');
+  assert.equal(filterSidebarItem(allowedRolesSidebar, 'Comprador'), false, 'Sidebar: Comprador NO debe ver reabastecimiento');
+
+  // 4. Simular lógica de RoleRouteGuard
+  function evaluateRoleGuard(allowedRoles, isAuthenticated, userRole) {
+    if (!isAuthenticated) return { allowed: false, redirect: '/login' };
+    if (!allowedRoles.includes(userRole)) return { allowed: false, component: 'SinAccesoPage' };
+    return { allowed: true };
+  }
+
+  // Admin permitido
+  const adminAccess = evaluateRoleGuard(allowedRolesApp, true, 'Admin');
+  assert.equal(adminAccess.allowed, true, 'RoleRouteGuard: Admin debe tener acceso');
+
+  // Vendedor bloqueado
+  const vendedorAccess = evaluateRoleGuard(allowedRolesApp, true, 'Vendedor');
+  assert.equal(vendedorAccess.allowed, false, 'RoleRouteGuard: Vendedor debe ser bloqueado');
+  assert.equal(vendedorAccess.component, 'SinAccesoPage', 'RoleRouteGuard: Vendedor debe ver SinAccesoPage');
+
+  // Comprador bloqueado
+  const compradorAccess = evaluateRoleGuard(allowedRolesApp, true, 'Comprador');
+  assert.equal(compradorAccess.allowed, false, 'RoleRouteGuard: Comprador debe ser bloqueado');
+  assert.equal(compradorAccess.component, 'SinAccesoPage', 'RoleRouteGuard: Comprador debe ver SinAccesoPage');
+
+  // No autenticado redirige a /login
+  const anonAccess = evaluateRoleGuard(allowedRolesApp, false, '');
+  assert.equal(anonAccess.allowed, false);
+  assert.equal(anonAccess.redirect, '/login');
+});
+

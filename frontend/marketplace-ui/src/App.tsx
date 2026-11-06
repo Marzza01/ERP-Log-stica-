@@ -114,7 +114,7 @@ function AppRoutes() {
           <Route path="dashboard" element={<RoleRouteGuard allowedRoles={['Admin']}><DashboardPage /></RoleRouteGuard>} />
           <Route path="ordenes" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><OrdenesPage /></RoleRouteGuard>} />
           <Route path="wms" element={<RoleRouteGuard allowedRoles={['Admin']}><WmsPage /></RoleRouteGuard>} />
-          <Route path="reabastecimiento" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><ReabastecimientoPage /></RoleRouteGuard>} />
+          <Route path="reabastecimiento" element={<RoleRouteGuard allowedRoles={['Admin']}><ReabastecimientoPage /></RoleRouteGuard>} />
           <Route path="proveedores" element={<RoleRouteGuard allowedRoles={['Admin']}><ProveedoresPage /></RoleRouteGuard>} />
           <Route path="ajustes" element={<RoleRouteGuard allowedRoles={['Admin']}><AjustesPage /></RoleRouteGuard>} />
           <Route path="conteos" element={<RoleRouteGuard allowedRoles={['Admin']}><ConteosPage /></RoleRouteGuard>} />

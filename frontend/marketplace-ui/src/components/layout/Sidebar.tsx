@@ -60,7 +60,7 @@ const navGroups: NavGroup[] = [
         icon: <RefreshCw size={16} />,
         label: 'Reabastecimiento',
         shortLabel: 'Reabast.',
-        allowedRoles: ['Admin', 'Vendedor'],
+        allowedRoles: ['Admin'],
       },
       {
         to: '/proveedores',
