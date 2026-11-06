@@ -108,8 +108,8 @@ public class ContabilidadController : ControllerBase
     public async Task<IActionResult> AsientoManual(
         [FromBody] AsientoManualRequest req, CancellationToken cancellationToken)
     {
-        if (req is null || req.Lineas is null)
-            return BadRequest(new { mensaje = "Debe proporcionar el asiento y sus líneas." });
+        if (req is null || req.Lineas is null || req.Lineas.Any(l => l is null))
+            return BadRequest(new { mensaje = "Debe proporcionar el asiento y todas sus líneas." });
 
         try
         {
