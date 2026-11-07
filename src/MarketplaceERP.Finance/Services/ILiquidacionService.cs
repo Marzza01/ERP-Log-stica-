@@ -24,8 +24,8 @@ public record KpiVendedor(
 public interface ILiquidacionService
 {
     /// <summary>
-    /// Genera la liquidación periódica de un vendedor a partir de sus SplitPagos pendientes.
-    /// Registra el asiento contable correspondiente (Débito CxP Vendedores / Crédito Caja).
+    /// Genera un registro interno pendiente de liquidación para un SplitPago del vendedor.
+    /// No genera asiento ni ejecuta transferencia bancaria en esta etapa.
     /// </summary>
     Task<Liquidacion> GenerarLiquidacionAsync(Guid vendedorId, CancellationToken cancellationToken = default);
 
@@ -35,7 +35,8 @@ public interface ILiquidacionService
     Task<IEnumerable<Liquidacion>> ObtenerHistorialAsync(Guid? vendedorId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Procesa el pago de una liquidación pendiente y actualiza su estado a Completada.
+    /// Marca como Completada la simulación de registro contable de una liquidación pendiente.
+    /// No envía ni confirma transferencias bancarias; el flujo real no está implementado.
     /// </summary>
     Task<Liquidacion> ProcesarPagoAsync(Guid liquidacionId, CancellationToken cancellationToken = default);
 
