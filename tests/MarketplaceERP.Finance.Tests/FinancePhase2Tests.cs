@@ -248,6 +248,94 @@ public class TresWayMatchingServiceTests
         match.Resultado.Should().Be(Estado3WayMatch.DiscrepanciaTotal);
         match.AutorizadoParaPago.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task Match3Way_CantidadPresentadaNoCoincideConWms_NoAutoriza()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m, cantidadRecibida: 8);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+
+        Assert.False(factura.AprobadaParaPago);
+        Assert.Empty(await db.MatchesTridireccionales.ToListAsync());
+        Assert.Equal(8, po.Items.Single().CantidadRecibida);
+    }
+
+    [Fact]
+    public async Task Match3Way_FacturaDeOtraPo_NoAutoriza()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (poA, facturaA) = await CrearPOyFactura(db, 10, 113m);
+        var (_, facturaB) = await CrearPOyFactura(db, 10, 113m);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(poA.Id, facturaB.Id, CantidadRecibidaBodega: 10)));
+
+        Assert.False(facturaA.AprobadaParaPago);
+        Assert.False(facturaB.AprobadaParaPago);
+        Assert.Empty(await db.MatchesTridireccionales.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Match3Way_FacturaDeOtroProveedor_NoAutoriza()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m);
+        factura.ProveedorId = Guid.NewGuid();
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+        Assert.Empty(await db.MatchesTridireccionales.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Match3Way_POEnBorrador_NoAutorizaAunqueCantidadesCoincidan()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m);
+        po.Estado = EstadoOrdenCompra.Borrador;
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+        Assert.False(factura.AprobadaParaPago);
+    }
+
+    [Fact]
+    public async Task Match3Way_Repetido_NoCreaOtroMatchConforme()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m);
+        var first = await service.EjecutarMatchAsync(new(po.Id, factura.Id, 10));
+        Assert.True(first.AutorizadoParaPago);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+        Assert.Single(await db.MatchesTridireccionales.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Match3Way_FacturaConImporteDescuadrado_NoAutoriza()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m);
+        factura.MontoTotal = 113.01m;
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+        Assert.False(factura.AprobadaParaPago);
+        Assert.Empty(await db.MatchesTridireccionales.ToListAsync());
+    }
 }
 
 /// <summary>
