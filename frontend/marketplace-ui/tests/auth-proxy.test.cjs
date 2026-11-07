@@ -294,3 +294,20 @@ test('navegación y control de acceso: reabastecimiento solo admite Admin (Vende
   assert.equal(anonAccess.redirect, '/login');
 });
 
+
+test('Preview enruta readiness al backend real en el mismo origen', async () => {
+  const urls = [];
+  await withProxyEnvironment('preview', 'https://marketplaceerp-api-staging.onrender.com',
+    async url => {
+      urls.push(url.toString());
+      return new Response(JSON.stringify({ status: 'ready' }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    }, async proxy => {
+      const response = await proxy(new Request('https://preview.vercel.app/api/health/ready'));
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.equal((await response.json()).status, 'ready');
+    });
+  assert.deepEqual(urls, ['https://marketplaceerp-api-staging.onrender.com/health/ready']);
+});
