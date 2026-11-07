@@ -326,9 +326,12 @@ public class ContabilidadService : IContabilidadService
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-    private async Task<string> GenerarNumeroPartidaAsync(string prefijo, CancellationToken ct)
+    private static Task<string> GenerarNumeroPartidaAsync(string prefijo, CancellationToken ct)
     {
-        int total = await _dbContext.PartidasContables.CountAsync(ct);
-        return $"{prefijo}-{DateTime.UtcNow:yyyy}-{(total + 1):D6}";
+        // Count()+1 reutilizaba números tras bajas y en escrituras simultáneas.
+        // La referencia conserva el prefijo contable y el año, pero no depende
+        // de consultas ni de un contador compartido con otros tipos de asiento.
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult($"{prefijo}-{DateTime.UtcNow:yyyy}-{Guid.NewGuid():N}");
     }
 }
