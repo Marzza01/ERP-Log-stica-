@@ -494,17 +494,19 @@ public class P0ComprasPostgresTests
                     new(lineaRace.Id, 5, 5, ubicacion.Id, operationId)
                 }, "HTTP concurrency test"));
 
-        using var responseA = await RequestRaceAsync(Guid.NewGuid());
-        // Lanzar ambas tareas antes de esperarlas, con clientes HTTP reales.
+        // Lanzar ambas peticiones antes de esperarlas: una debe registrar
+        // las unidades y la otra devolver conflicto, nunca dos éxitos.
         var pendientes = await Task.WhenAll(
             RequestRaceAsync(Guid.NewGuid()), RequestRaceAsync(Guid.NewGuid()));
-        foreach (var response in pendientes) response.Dispose();
-
-        // Ya hubo una recepción HTTP correcta antes de la carrera:
-        // las dos solicitudes posteriores deben rechazar nuevos tokens.
-        Assert.Equal(HttpStatusCode.OK, responseA.StatusCode);
-        Assert.All(pendientes, response =>
-            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode));
+        try
+        {
+            Assert.Single(pendientes.Where(r => r.StatusCode == HttpStatusCode.OK));
+            Assert.Single(pendientes.Where(r => r.StatusCode == HttpStatusCode.Conflict));
+        }
+        finally
+        {
+            foreach (var response in pendientes) response.Dispose();
+        }
 
         await using var raceVerify = new FinanceDbContext(financeOptions);
         Assert.Equal(5, (await raceVerify.OrdenesCompra
