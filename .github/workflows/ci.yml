@@ -102,6 +102,11 @@ jobs:
           node --check scripts/p0-staging-acceptance.mjs
           node scripts/p0-staging-acceptance.mjs --help
 
+      - name: Validate P1 staging auth runner (syntax/help only)
+        run: |
+          node --check scripts/p1-staging-auth-readonly.mjs
+          node scripts/p1-staging-auth-readonly.mjs --help
+
       # 8. Instalar dependencias npm
       - name: Install npm dependencies
         working-directory: frontend/marketplace-ui
