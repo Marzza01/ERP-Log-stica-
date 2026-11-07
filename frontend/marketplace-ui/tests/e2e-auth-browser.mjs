@@ -67,6 +67,12 @@ function setupApi(page) {
       return route.fulfill({ status: protectedStatus, contentType: 'application/json',
         body: JSON.stringify({ mensaje: 'Respuesta de prueba ' + protectedStatus }) });
     }
+    // The mock has no financial KPI fixture: return a controlled server error,
+    // which the Dashboard handles, rather than malformed 200 financial objects.
+    if (url.pathname.startsWith('/api/kpis-dashboard')) {
+      return route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ mensaje: 'KPI no disponible en el fixture local' }) });
+    }
     if (url.pathname.startsWith('/api/productos')) {
       return route.fulfill({ status: 200, contentType: 'application/json',
         body: JSON.stringify({ total: 0, items: [], pagina: 1 }) });
