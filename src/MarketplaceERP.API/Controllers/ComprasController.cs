@@ -489,6 +489,15 @@ public class ComprasController : ControllerBase
             .FirstOrDefaultAsync(p => p.Id == req.OrdenCompraId, cancellationToken);
         if (po == null) return NotFound(new { mensaje = $"PO {req.OrdenCompraId} no encontrada." });
 
+        // Un borrador todavía no representa una compra enviada al proveedor.
+        // Tampoco admitir facturas nuevas de órdenes anuladas o pagadas.
+        if (po.Estado is EstadoOrdenCompra.Borrador or
+            EstadoOrdenCompra.Cancelada or EstadoOrdenCompra.Pagada)
+            return Conflict(new
+            {
+                mensaje = $"No se puede registrar una factura para una PO en estado {po.Estado}. Primero envíe la orden al proveedor."
+            });
+
         var numeroFactura = req.NumeroFactura?.Trim();
         if (string.IsNullOrWhiteSpace(numeroFactura) || numeroFactura.Length > 50)
             return BadRequest(new { mensaje = "La factura requiere un número válido de máximo 50 caracteres." });
