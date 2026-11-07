@@ -4,6 +4,8 @@ using System.Security.Claims;
 using System.Text;
 using System.IdentityModel.Tokens.Jwt;
 using MarketplaceERP.API.Controllers;
+using MarketplaceERP.API.Security;
+using MarketplaceERP.Shared.Settings;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Core.Data;
 using MarketplaceERP.Finance.Data;
@@ -47,22 +49,13 @@ public class P0AutorizacionHttpTests
                 services.AddSingleton(Mock.Of<IContabilidadService>());
                 services.AddSingleton(Mock.Of<IInventoryService>());
 
-                services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-                    .AddJwtBearer(options =>
-                    {
-                        options.TokenValidationParameters = new TokenValidationParameters
-                        {
-                            ValidateIssuer = true,
-                            ValidIssuer = Issuer,
-                            ValidateAudience = true,
-                            ValidAudience = Audience,
-                            ValidateIssuerSigningKey = true,
-                            IssuerSigningKey = key,
-                            ValidateLifetime = true,
-                            ClockSkew = TimeSpan.Zero
-                        };
-                    });
-                services.AddAuthorization();
+                // Ejercitar la MISMA configuración de autenticación y roles
+                // que utiliza Program.cs, no una política JWT inventada por CI.
+                services.AddMarketplaceSecurity(new JwtSettings
+                {
+                    Key = Secret, Issuer = Issuer, Audience = Audience,
+                    ExpirationMinutes = 5
+                });
                 services.AddControllers().AddApplicationPart(typeof(ComprasController).Assembly);
             })
             .Configure(app =>
