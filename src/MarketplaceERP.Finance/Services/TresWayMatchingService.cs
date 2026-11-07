@@ -118,7 +118,9 @@ public class TresWayMatchingService : ITresWayMatchingService
             po.Items.Any(item => factura.Items.FirstOrDefault(f =>
                 f.ItemOrdenCompraId == item.Id)?.CantidadFacturada != item.CantidadRecibida);
 
-        bool errorPrecio = Math.Abs(montoPO - montoFactura) > 0.05m ||
+        // Importes monetarios decimal(18,2): incluso un centavo de diferencia
+        // no puede declararse conforme ni generar un asiento de compra.
+        bool errorPrecio = montoPO != montoFactura ||
             po.Items.Any(item => factura.Items.Any(f =>
                 f.ItemOrdenCompraId == item.Id &&
                 f.PrecioUnitarioFacturado != item.PrecioUnitarioAcordado));
