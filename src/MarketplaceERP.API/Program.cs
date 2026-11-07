@@ -196,9 +196,17 @@ app.MapGet("/health/ready", async (
     bool coreOk = false, catalogOk = false, financeOk = false;
     try
     {
-        coreOk = await coreDb.Database.CanConnectAsync();
-        catalogOk = await catalogDb.Database.CanConnectAsync();
-        financeOk = await financeDb.Database.CanConnectAsync();
+        // CanConnectAsync alone returns true for an empty database. Require
+        // a representative module table and each EF migration history table.
+        coreOk = await coreDb.Database.CanConnectAsync() &&
+            await ReadinessSchemaProbe.RequiredTablesExistAsync(
+                coreDb, "core.usuarios", "core.\"__EFMigrationsHistory\"");
+        catalogOk = await catalogDb.Database.CanConnectAsync() &&
+            await ReadinessSchemaProbe.RequiredTablesExistAsync(
+                catalogDb, "catalog.productos", "catalog.\"__EFMigrationsHistory\"");
+        financeOk = await financeDb.Database.CanConnectAsync() &&
+            await ReadinessSchemaProbe.RequiredTablesExistAsync(
+                financeDb, "finance.ordenes_compra", "finance.\"__EFMigrationsHistory\"");
     }
     catch
     {
