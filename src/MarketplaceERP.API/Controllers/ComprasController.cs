@@ -601,6 +601,21 @@ public class ComprasController : ControllerBase
             .FirstOrDefaultAsync(p => p.Id == factura.OrdenCompraId, cancellationToken);
         if (po is null) return Conflict(new { mensaje = "La orden original de la factura no existe." });
 
+        // Completar líneas de una factura heredada no puede eludir las
+        // mismas reglas que rigen el registro de una factura nueva.
+        if (po.Estado is EstadoOrdenCompra.Borrador or
+            EstadoOrdenCompra.Cancelada or EstadoOrdenCompra.Pagada)
+            return Conflict(new
+            {
+                mensaje = $"No se puede completar una factura de una PO en estado {po.Estado}."
+            });
+
+        if (po.ProveedorId != factura.ProveedorId)
+            return Conflict(new
+            {
+                mensaje = "La factura pertenece a otro proveedor distinto al de la PO."
+            });
+
         List<ItemFacturaProveedor> detalle;
         try
         {
