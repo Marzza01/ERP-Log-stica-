@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using System.IdentityModel.Tokens.Jwt;
@@ -122,20 +123,15 @@ public class P0AutorizacionHttpTests
         // Incluso un JWT Admin válido no puede ejecutar efectos financieros
         // si el modo de pagos se encuentra deshabilitado.
         Assert.Equal(HttpStatusCode.ServiceUnavailable,
-            (await admin.PostAsync("/api/liquidaciones/generar",
-                new StringContent(
-                    "{\\"vendedorId\\":\\"" + Guid.NewGuid() + "\\"}",
-                    Encoding.UTF8, "application/json"))).StatusCode);
+            (await admin.PostAsJsonAsync("/api/liquidaciones/generar",
+                new GenerarLiquidacionRequest(Guid.NewGuid()))).StatusCode);
         Assert.Equal(HttpStatusCode.ServiceUnavailable,
             (await admin.PostAsync(
                 "/api/liquidaciones/procesar-pago/" + Guid.NewGuid(), null)).StatusCode);
         Assert.Equal(HttpStatusCode.ServiceUnavailable,
-            (await admin.PostAsync("/api/compras/match",
-                new StringContent(
-                    "{\\"ordenCompraId\\":\\"" + Guid.NewGuid() +
-                    "\\",\\"facturaProveedorId\\":\\"" + Guid.NewGuid() +
-                    "\\",\\"cantidadRecibidaBodega\\":1}",
-                    Encoding.UTF8, "application/json"))).StatusCode);
+            (await admin.PostAsJsonAsync("/api/compras/match",
+                new Validar3WayMatchRequest(
+                    Guid.NewGuid(), Guid.NewGuid(), 1))).StatusCode);
 
         matching.Verify(m => m.EjecutarMatchAsync(
             It.IsAny<Validar3WayMatchRequest>(), It.IsAny<CancellationToken>()),
