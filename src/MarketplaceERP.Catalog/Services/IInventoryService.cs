@@ -65,6 +65,19 @@ public interface IInventoryService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Comprueba sin mutar stock si una recepción anterior corresponde
+    /// exactamente al token, SKU, cantidad, PO y ubicación del reintento.
+    /// </summary>
+    Task<bool> ConfirmarInboundProcesadoAsync(
+        string sku,
+        int cantidad,
+        Guid ubicacionAlmacenId,
+        Guid ordenCompraId,
+        Guid itemOrdenCompraId,
+        Guid operacionId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Reingresa inventario disponible proveniente de un RMA clasificado como ReStock.
     /// Un mismo RMA solo puede generar un reingreso físico; reintentos son idempotentes.
     /// </summary>
