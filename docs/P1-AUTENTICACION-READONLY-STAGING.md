@@ -49,25 +49,25 @@ o si faltan requisitos históricos explícitos del issue.
 
 ## E2E visual real en Vercel Preview (protegido)
 
-El archivo \`frontend/marketplace-ui/tests/e2e-staging-preview.mjs\`
+El archivo `frontend/marketplace-ui/tests/e2e-staging-preview.mjs`
 ejecuta un Chromium real contra **Vercel Preview de la rama staging**,
 atraviesa su proxy hacia Render staging y valida una sesión Admin legítima
 con consultas de solo lectura. Produce exclusivamente
-\`P1_PREVIEW_EVIDENCE={...}\` y ningún secreto.
+`P1_PREVIEW_EVIDENCE={...}` y ningún secreto.
 
 **Requisitos en el equipo del operador**:
 - PowerShell 7, Node.js 24, Vercel CLI ya autenticado como propietario del proyecto,
   Vercel Preview y permisos Trusted Sources apropiados para desarrollo→Preview.
 - El proyecto local de frontend vinculado al proyecto Vercel
-  \`erp-log-stica\` (equipo \`2-cm2\`). Evitar vínculos con otro proyecto.
-- \`npm ci\`, luego \`npm install --no-save --no-package-lock playwright@1.55.0\`,
-  y \`npx playwright install chromium\` en la carpeta del frontend.
+  `erp-log-stica` (equipo `2-cm2`). Evitar vínculos con otro proyecto.
+- `npm ci`, luego `npm install --no-save --no-package-lock playwright@1.55.0`,
+  y `npx playwright install chromium` en la carpeta del frontend.
 - No habilitar Deployment Protection bypass, ni utilizar Production.
 
-Ejemplo desde \`frontend/marketplace-ui\` de un **worktree P1 aislado**
+Ejemplo desde `frontend/marketplace-ui` de un **worktree P1 aislado**
 sin cambiar el checkout original:
 
-\`\`\`powershell
+```powershell
 $env:P1_STAGING_PREVIEW_URL = "https://<preview-exacto-de-staging>.vercel.app"
 $env:P1_ADMIN_EMAIL = "admin.evaluacion@erp.example"
 $segura = Read-Host "Password de Admin staging" -AsSecureString
@@ -81,20 +81,20 @@ finally {
     Remove-Item Env:P1_ADMIN_EMAIL,Env:P1_ADMIN_PASSWORD,Env:P1_STAGING_PREVIEW_URL -ErrorAction SilentlyContinue
     Remove-Variable segura -ErrorAction SilentlyContinue
 }
-\`\`\`
+```
 
 **Sustituir el host de ejemplo por el dominio exacto del deployment Preview
 de staging**. No sirve la URL de Production ni un alias externo. El script
 rechaza otros hostnames y solo inicia sesión, realiza GET y cierra sesión.
 Nunca compra, siembra catálogo, crea órdenes, registra pagos ni modifica DB.
 
-Si \`vc env run\` no proporciona \`VERCEL_OIDC_TOKEN\`, revisar que el
+Si `vc env run` no proporciona `VERCEL_OIDC_TOKEN`, revisar que el
 directorio esté vinculado al proyecto correcto y los permisos de Trusted
 Sources en Vercel; no pegar secretos en ChatGPT, no hacer público el Preview
 ni saltarse Deployment Protection.
 
 La aceptación E2E real está completa solo con
-\`P1_PREVIEW_EVIDENCE.completed=true\` y todos los estados esperados. Las
+`P1_PREVIEW_EVIDENCE.completed=true` y todos los estados esperados. Las
 pruebas de CI con API simulada/local son complementarias pero no sustituyen
 esa ejecución. El navegador tampoco puede demostrar las rutas reales de
 Vendedor/Comprador en staging si no existen cuentas legítimas de esos roles:
