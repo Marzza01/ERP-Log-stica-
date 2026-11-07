@@ -373,7 +373,19 @@ public class ComprasController : ControllerBase
     public async Task<IActionResult> EjecutarMatch(
         [FromBody] Validar3WayMatchRequest req, CancellationToken cancellationToken)
     {
-        var match = await _matching.EjecutarMatchAsync(req, cancellationToken);
+        MatchTridireccional match;
+        try
+        {
+            match = await _matching.EjecutarMatchAsync(req, cancellationToken);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
 
         // Si el match es conforme, generar asiento contable automático
         if (match.Resultado == Estado3WayMatch.Conforme && match.AutorizadoParaPago)
