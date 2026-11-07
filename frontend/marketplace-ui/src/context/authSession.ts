@@ -32,13 +32,18 @@ function tokenRole(payload: Record<string, unknown> | null): unknown {
   return payload?.role ?? payload?.['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'];
 }
 
+// The frontend must expire its own session even if no API request is made.
+// Use the EARLIEST of the backend response deadline and the JWT exp claim.
+export function sessionRemainingMs(session: Pick<AuthSession, 'token' | 'expiresAt'>): number {
+  const responseExpiry = Date.parse(session.expiresAt);
+  const expiryClaim = parseJwtPayload(session.token)?.exp;
+  const jwtExpiry = typeof expiryClaim === 'number' ? expiryClaim * 1000 : NaN;
+  if (!Number.isFinite(responseExpiry) || !Number.isFinite(jwtExpiry)) return -1;
+  return Math.min(responseExpiry, jwtExpiry) - Date.now();
+}
+
 export function isSessionValid(token: string | null, expiresAt: string | null): boolean {
-  if (!token || !expiresAt) return false;
-  const responseExpiry = Date.parse(expiresAt);
-  const payload = parseJwtPayload(token);
-  return Number.isFinite(responseExpiry) && responseExpiry > Date.now() &&
-    typeof payload?.exp === 'number' && Number.isFinite(payload.exp) &&
-    payload.exp * 1000 > Date.now();
+  return !!token && !!expiresAt && sessionRemainingMs({ token, expiresAt }) > 0;
 }
 
 export function sessionFromLogin(response: AuthResponse, email: string): AuthSession {

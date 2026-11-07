@@ -7,7 +7,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, typ
 import type { Usuario } from '../types';
 import { authApi } from '../api/auth';
 import { setUnauthorizedHandler } from '../api/client';
-import { clearStoredSession, persistSession, readStoredSession, sessionFromLogin, type AuthSession } from './authSession';
+import { clearStoredSession, persistSession, readStoredSession, sessionFromLogin, sessionRemainingMs, type AuthSession } from './authSession';
 
 interface AuthContextType {
   usuario: Usuario | null;
@@ -29,13 +29,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(null);
   }, []);
 
+  // Invalidate an idle browser session when its token expires, without waiting
+  // for a 401 response from the next HTTP request.
+  useEffect(() => {
+    if (!session) return;
+    const remainingMs = sessionRemainingMs(session);
+    if (remainingMs <= 0) {
+      logout();
+      return;
+    }
+    const timeout = window.setTimeout(logout, Math.min(remainingMs, 2_147_483_647));
+    return () => window.clearTimeout(timeout);
+  }, [session, logout]);
+
   // Registrar callback global para 401 desde el cliente HTTP
   useEffect(() => {
     setUnauthorizedHandler(() => {
+      // ProtectedRoute performs the redirect after logout; a second imperative
+      // window.location navigation races with React Router and aborts tests.
       logout();
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
     });
   }, [logout]);
 

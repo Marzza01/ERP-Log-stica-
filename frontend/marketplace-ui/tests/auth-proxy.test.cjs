@@ -311,3 +311,33 @@ test('Preview enruta readiness al backend real en el mismo origen', async () => 
     });
   assert.deepEqual(urls, ['https://marketplaceerp-api-staging.onrender.com/health/ready']);
 });
+
+test('JWT de vida corta expira antes que expiresAt del backend', () => {
+  const exp = Math.floor(Date.now() / 1000) + 30;
+  const session = {
+    token: fakeToken('Admin', exp),
+    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+  };
+  const remaining = sessions.sessionRemainingMs(session);
+  assert.ok(remaining > 0 && remaining <= 30_000);
+  assert.equal(sessions.isSessionValid(session.token, session.expiresAt), true);
+  assert.ok(sessions.sessionRemainingMs({
+    token: fakeToken('Admin', exp - 3600), expiresAt: session.expiresAt,
+  }) < 0);
+});
+
+test('Vercel protege scripts y evita embedding y APIs externas', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
+  const global = config.headers.find(row => row.source === '/(.*)');
+  assert.ok(global, 'Deben existir cabeceras globales');
+  const header = key => global.headers.find(h => h.key === key)?.value;
+  const csp = header('Content-Security-Policy');
+  assert.ok(csp.includes("script-src 'self'"));
+  assert.ok(csp.includes("connect-src 'self'"));
+  assert.ok(csp.includes("frame-ancestors 'none'"));
+  assert.ok(!csp.includes("'unsafe-eval'"));
+  assert.ok(!csp.includes("script-src 'self' 'unsafe-inline'"));
+  assert.equal(header('X-Content-Type-Options'), 'nosniff');
+  assert.equal(header('X-Frame-Options'), 'DENY');
+  assert.ok(header('Permissions-Policy').includes('camera=()'));
+});

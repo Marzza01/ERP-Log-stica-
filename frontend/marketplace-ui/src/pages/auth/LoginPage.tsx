@@ -34,6 +34,10 @@ export default function LoginPage() {
             navigate('/checkout');
             return;
           }
+          if (u.rol === 'Vendedor') {
+            navigate('/ordenes');
+            return;
+          }
         } catch { /* ignore */ }
       }
       navigate('/dashboard');
