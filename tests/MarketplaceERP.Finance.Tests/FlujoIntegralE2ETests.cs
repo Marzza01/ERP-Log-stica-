@@ -134,7 +134,17 @@ public class FlujoIntegralE2ETests
             MontoSubTotal = 1000m,
             MontoIva = 130m,
             MontoTotal = 1130m,
-            FechaEmision = DateTime.UtcNow
+            FechaEmision = DateTime.UtcNow,
+            Items = new List<ItemFacturaProveedor>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    ItemOrdenCompraId = po.Items.Single().Id,
+                    CantidadFacturada = 10,
+                    PrecioUnitarioFacturado = 100m
+                }
+            }
         };
         financeDb.FacturasProveedor.Add(facturaProv);
         await financeDb.SaveChangesAsync();

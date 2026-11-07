@@ -29,6 +29,7 @@ public class TresWayMatchingService : ITresWayMatchingService
             ?? throw new InvalidOperationException($"La Orden de Compra {request.OrdenCompraId} no existe.");
 
         var factura = await _dbContext.FacturasProveedor
+            .Include(f => f.Items)
             .FirstOrDefaultAsync(f => f.Id == request.FacturaProveedorId, cancellationToken)
             ?? throw new InvalidOperationException($"La Factura de Proveedor {request.FacturaProveedorId} no existe.");
 
@@ -71,17 +72,72 @@ public class TresWayMatchingService : ITresWayMatchingService
             throw new InvalidOperationException(
                 "La orden ya cuenta con un match autorizado. No se puede autorizar nuevamente.");
 
-        // Este DTO no registra cantidades por línea de factura; solo podemos
-        // verificar la cantidad recibida contra la orden. No inventar una cifra
-        // facturada independiente: la auditoría usa esta cifra provisional.
-        int cantidadFacturada = cantidadRecibida;
+        // FIN-07: jamás equiparar "facturado" con "recibido". Las facturas
+        // históricas sin líneas se conservan, pero no pueden autorizar pagos.
+        if (factura.Items.Count == 0)
+            throw new InvalidOperationException(
+                "La factura no tiene detalle documental por producto. Registre sus líneas antes de conciliar.");
+
+        var poPorId = po.Items.ToDictionary(i => i.Id);
+        if (factura.Items.Count > po.Items.Count ||
+            factura.Items.GroupBy(i => i.ItemOrdenCompraId).Any(g => g.Count() != 1) ||
+            factura.Items.Any(i => !poPorId.ContainsKey(i.ItemOrdenCompraId) ||
+                i.CantidadFacturada <= 0 || i.PrecioUnitarioFacturado <= 0m ||
+                decimal.Round(i.PrecioUnitarioFacturado, 2) != i.PrecioUnitarioFacturado))
+            throw new InvalidOperationException(
+                "El detalle facturado contiene líneas inválidas, duplicadas o ajenas a la orden.");
+
+        int cantidadFacturada;
+        decimal subtotalLineas;
+        try
+        {
+            cantidadFacturada = 0;
+            subtotalLineas = 0m;
+            foreach (var linea in factura.Items)
+            {
+                cantidadFacturada = checked(cantidadFacturada + linea.CantidadFacturada);
+                subtotalLineas = checked(subtotalLineas +
+                    checked(linea.CantidadFacturada * linea.PrecioUnitarioFacturado));
+            }
+        }
+        catch (OverflowException)
+        {
+            throw new InvalidOperationException("El detalle de factura excede la precisión admitida.");
+        }
+
+        if (subtotalLineas != factura.MontoSubTotal)
+            throw new InvalidOperationException(
+                "La suma de las líneas de factura no coincide con el subtotal guardado.");
 
         decimal montoPO = po.MontoTotal;
         decimal montoFactura = factura.MontoTotal;
 
         var discrepancias = new List<string>();
-        bool errorCantidad = cantidadOrdenada != cantidadRecibida;
-        bool errorPrecio = Math.Abs(montoPO - montoFactura) > 0.05m;
+        bool errorCantidad = cantidadOrdenada != cantidadRecibida ||
+            factura.Items.Count != po.Items.Count ||
+            po.Items.Any(item => factura.Items.FirstOrDefault(f =>
+                f.ItemOrdenCompraId == item.Id)?.CantidadFacturada != item.CantidadRecibida);
+
+        // Importes monetarios decimal(18,2): incluso un centavo de diferencia
+        // no puede declararse conforme ni generar un asiento de compra.
+        bool errorPrecio = montoPO != montoFactura ||
+            po.Items.Any(item => factura.Items.Any(f =>
+                f.ItemOrdenCompraId == item.Id &&
+                f.PrecioUnitarioFacturado != item.PrecioUnitarioAcordado));
+
+        foreach (var item in po.Items)
+        {
+            var linea = factura.Items.FirstOrDefault(f => f.ItemOrdenCompraId == item.Id);
+            if (linea is null)
+                discrepancias.Add($"Factura sin línea para SKU {item.Sku}.");
+            else
+            {
+                if (linea.CantidadFacturada != item.CantidadRecibida)
+                    discrepancias.Add($"SKU {item.Sku}: facturado {linea.CantidadFacturada}, recibido WMS {item.CantidadRecibida}.");
+                if (linea.PrecioUnitarioFacturado != item.PrecioUnitarioAcordado)
+                    discrepancias.Add($"SKU {item.Sku}: precio factura {linea.PrecioUnitarioFacturado:F2}, PO {item.PrecioUnitarioAcordado:F2}.");
+            }
+        }
 
         Estado3WayMatch resultado;
         bool autorizado = false;
@@ -89,13 +145,13 @@ public class TresWayMatchingService : ITresWayMatchingService
         if (errorCantidad && errorPrecio)
         {
             resultado = Estado3WayMatch.DiscrepanciaTotal;
-            discrepancias.Add($"Cantidad solicitada ({cantidadOrdenada}) difiere de recibida ({cantidadRecibida}).");
+            discrepancias.Add($"Cantidad: PO {cantidadOrdenada}, WMS {cantidadRecibida}, factura {cantidadFacturada}.");
             discrepancias.Add($"Monto PO (${montoPO:F2}) difiere del facturado (${montoFactura:F2}).");
         }
         else if (errorCantidad)
         {
             resultado = Estado3WayMatch.DiscrepanciaCantidad;
-            discrepancias.Add($"Discrepancia física: PO solicitó {cantidadOrdenada} unidades, bodega WMS recibió {cantidadRecibida}.");
+            discrepancias.Add($"Cantidad: PO {cantidadOrdenada}, WMS {cantidadRecibida}, factura {cantidadFacturada}.");
         }
         else if (errorPrecio)
         {
@@ -127,7 +183,10 @@ public class TresWayMatchingService : ITresWayMatchingService
             MontoTotalFactura = montoFactura,
             Resultado = resultado,
             AutorizadoParaPago = autorizado,
-            DetalleDiscrepancias = discrepancias.Count > 0 ? string.Join(" | ", discrepancias) : "Conciliación tridireccional 100% conforme sin discrepancias.",
+            DetalleDiscrepancias = discrepancias.Count > 0
+                ? string.Join(" | ", discrepancias)[..Math.Min(
+                    string.Join(" | ", discrepancias).Length, 1000)]
+                : "Conciliación tridireccional 100% conforme sin discrepancias.",
             Auditor = "Sistema Automático de Conciliación 3-Way Match",
             FechaAuditoria = DateTime.UtcNow
         };

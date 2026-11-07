@@ -117,7 +117,17 @@ public sealed class ConcurrenciaComprasPostgresFin06Tests : IAsyncLifetime
                 NumeroFactura = "CCF-" + Guid.NewGuid().ToString("N"),
                 MontoSubTotal = 100m, MontoIva = 13m, MontoTotal = 113m,
                 FechaEmision = DateTime.UtcNow,
-                FechaVencimiento = DateTime.UtcNow.AddDays(30)
+                FechaVencimiento = DateTime.UtcNow.AddDays(30),
+                Items = new List<ItemFacturaProveedor>
+                {
+                    new()
+                    {
+                        Id = Guid.NewGuid(),
+                        ItemOrdenCompraId = po.Items.Single().Id,
+                        CantidadFacturada = 10,
+                        PrecioUnitarioFacturado = 10m
+                    }
+                }
             });
         }
         await db.SaveChangesAsync();
@@ -237,6 +247,75 @@ public sealed class ConcurrenciaComprasPostgresFin06Tests : IAsyncLifetime
         await using var verify = NewContext();
         Assert.Equal(1, await verify.PartidasContables.CountAsync(x =>
             x.TipoOperacion == "Compra" && x.ReferenciaOrigenId == poId));
+    }
+
+    [Fact]
+    public async Task FIN07_PostgreSQL_DetalleFacturadoPersisteYUnicidadSeCumple()
+    {
+        if (!_created) return;
+        var (poId, invoiceId, _) = await SeedAsync();
+
+        await using var db = NewContext();
+        var factura = await db.FacturasProveedor.AsNoTracking()
+            .Include(f => f.Items)
+            .SingleAsync(f => f.Id == invoiceId);
+        var linea = Assert.Single(factura.Items);
+        Assert.Equal(10, linea.CantidadFacturada);
+        Assert.Equal(10m, linea.PrecioUnitarioFacturado);
+        Assert.Equal(100m, factura.MontoSubTotal);
+
+        db.ItemsFacturaProveedor.Add(new ItemFacturaProveedor
+        {
+            Id = Guid.NewGuid(),
+            FacturaProveedorId = invoiceId,
+            ItemOrdenCompraId = linea.ItemOrdenCompraId,
+            CantidadFacturada = 1,
+            PrecioUnitarioFacturado = 10m
+        });
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+
+        await using var verify = NewContext();
+        Assert.Equal(1, await verify.ItemsFacturaProveedor.CountAsync(
+            x => x.FacturaProveedorId == invoiceId));
+        Assert.Equal(1, await verify.OrdenesCompra.CountAsync(x => x.Id == poId));
+    }
+
+    [Fact]
+    public async Task FIN07_PostgreSQL_FacturaSinDetalleNoSeAutorizaNiCreaAsiento()
+    {
+        if (!_created) return;
+        var (poId, _, _) = await SeedAsync(withInvoice: false);
+        var invoiceId = Guid.NewGuid();
+
+        await using (var db = NewContext())
+        {
+            var po = await db.OrdenesCompra.SingleAsync(x => x.Id == poId);
+            db.FacturasProveedor.Add(new FacturaProveedor
+            {
+                Id = invoiceId, OrdenCompraId = poId, ProveedorId = po.ProveedorId,
+                NumeroFactura = "CCF-LEGACY-" + Guid.NewGuid().ToString("N"),
+                MontoSubTotal = 100m, MontoIva = 13m, MontoTotal = 113m,
+                FechaEmision = DateTime.UtcNow,
+                FechaVencimiento = DateTime.UtcNow.AddDays(30)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = NewContext())
+        {
+            var result = await Controller(db).EjecutarMatch(
+                new(poId, invoiceId, 10), CancellationToken.None);
+            Assert.IsType<BadRequestObjectResult>(result);
+        }
+
+        await using var verify = NewContext();
+        Assert.False((await verify.FacturasProveedor.SingleAsync(
+            x => x.Id == invoiceId)).AprobadaParaPago);
+        Assert.Empty(await verify.MatchesTridireccionales
+            .Where(m => m.OrdenCompraId == poId).ToListAsync());
+        Assert.Empty(await verify.PartidasContables
+            .Where(p => p.TipoOperacion == "Compra" && p.ReferenciaOrigenId == poId)
+            .ToListAsync());
     }
 
     public async Task DisposeAsync()
