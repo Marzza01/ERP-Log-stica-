@@ -276,7 +276,7 @@ public class ComprasController : ControllerBase
         try
         {
             candadoObtenido = await _db.Database.SqlQueryRaw<bool>(
-                    "SELECT pg_try_advisory_lock(hashtext('erp-po-recibir'), hashtext({0})) AS \\"Value\\"",
+                    "SELECT pg_try_advisory_lock(hashtext('erp-po-recibir'), hashtext({0})) AS \"Value\"",
                     id.ToString("N"))
                 .SingleAsync(cancellationToken);
 
@@ -294,7 +294,7 @@ public class ComprasController : ControllerBase
             {
                 if (candadoObtenido)
                     await _db.Database.SqlQueryRaw<bool>(
-                            "SELECT pg_advisory_unlock(hashtext('erp-po-recibir'), hashtext({0})) AS \\"Value\\"",
+                            "SELECT pg_advisory_unlock(hashtext('erp-po-recibir'), hashtext({0})) AS \"Value\"",
                             id.ToString("N"))
                         .SingleAsync(CancellationToken.None);
             }
