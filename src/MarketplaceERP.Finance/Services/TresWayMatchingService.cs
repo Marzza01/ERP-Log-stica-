@@ -32,9 +32,49 @@ public class TresWayMatchingService : ITresWayMatchingService
             .FirstOrDefaultAsync(f => f.Id == request.FacturaProveedorId, cancellationToken)
             ?? throw new InvalidOperationException($"La Factura de Proveedor {request.FacturaProveedorId} no existe.");
 
-        int cantidadOrdenada = po.Items.Sum(i => i.CantidadSolicitada);
-        int cantidadRecibida = request.CantidadRecibidaBodega;
-        int cantidadFacturada = cantidadRecibida; // En facturación standard
+        // La cantidad confirmada debe proceder del estado persistido de la PO,
+        // no de un número presentado por el cliente del endpoint de matching.
+        if (request.OrdenCompraId == Guid.Empty || request.FacturaProveedorId == Guid.Empty)
+            throw new ArgumentException("La orden y la factura deben ser válidas.");
+
+        if (factura.OrdenCompraId != po.Id || factura.ProveedorId != po.ProveedorId)
+            throw new InvalidOperationException(
+                "La factura no pertenece a la orden de compra o al proveedor indicado.");
+
+        if (po.Estado is not (EstadoOrdenCompra.RecibidaParcial or EstadoOrdenCompra.RecibidaCompleta))
+            throw new InvalidOperationException(
+                "La orden debe contar con una recepción WMS antes de ejecutar el 3-Way Match.");
+
+        var cantidadOrdenada = po.Items.Sum(i => i.CantidadSolicitada);
+        var cantidadRecibida = po.Items.Sum(i => i.CantidadRecibida);
+
+        if (cantidadOrdenada <= 0 || cantidadRecibida < 0 ||
+            po.Items.Any(i => i.CantidadSolicitada <= 0 ||
+                              i.CantidadRecibida < 0 ||
+                              i.CantidadRecibida > i.CantidadSolicitada))
+            throw new InvalidOperationException("La orden tiene cantidades de inventario inconsistentes.");
+
+        if (request.CantidadRecibidaBodega != cantidadRecibida)
+            throw new ArgumentException(
+                "La cantidad recibida enviada no coincide con las recepciones WMS persistidas. Recargue la orden.");
+
+        if (po.MontoTotal <= 0m || factura.MontoSubTotal <= 0m ||
+            factura.MontoIva < 0m || factura.MontoTotal <= 0m ||
+            factura.MontoSubTotal + factura.MontoIva != factura.MontoTotal)
+            throw new InvalidOperationException("La orden o factura contiene importes inválidos o descuadrados.");
+
+        // No ejecutar dos autorizaciones sobre el mismo pedido: cada match
+        // conforme disparaba otro asiento de compra desde ComprasController.
+        if (factura.AprobadaParaPago || await _dbContext.MatchesTridireccionales
+            .AnyAsync(m => m.OrdenCompraId == po.Id && m.AutorizadoParaPago,
+                cancellationToken))
+            throw new InvalidOperationException(
+                "La orden ya cuenta con un match autorizado. No se puede autorizar nuevamente.");
+
+        // Este DTO no registra cantidades por línea de factura; solo podemos
+        // verificar la cantidad recibida contra la orden. No inventar una cifra
+        // facturada independiente: la auditoría usa esta cifra provisional.
+        int cantidadFacturada = cantidadRecibida;
 
         decimal montoPO = po.MontoTotal;
         decimal montoFactura = factura.MontoTotal;
@@ -71,11 +111,12 @@ public class TresWayMatchingService : ITresWayMatchingService
             po.FechaRecepcionReal = DateTime.UtcNow;
         }
 
-        string codigoAuditoria = $"3WAY-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+        var auditoriaId = Guid.NewGuid();
+        string codigoAuditoria = $"3WAY-{DateTime.UtcNow:yyyyMMdd}-{auditoriaId:N}";
 
         var match = new MatchTridireccional
         {
-            Id = Guid.NewGuid(),
+            Id = auditoriaId,
             CodigoAuditoria = codigoAuditoria,
             OrdenCompraId = po.Id,
             FacturaProveedorId = factura.Id,
