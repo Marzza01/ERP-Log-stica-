@@ -202,5 +202,52 @@ public class P0ComprasPostgresTests
         Assert.Equal(2, await catalog.MovimientosInventario.CountAsync(
             m => m.TipoMovimiento == TipoMovimientoInventario.RecepcionInbound));
         Assert.False((await verify.FacturasProveedor.SingleAsync()).Pagada);
+
+        // Dos peticiones separadas con distinto OperacionId compiten por una
+        // nueva PO. Solo una puede registrar 10 unidades; la otra debe
+        // recibir 409 incluso si llega inmediatamente después del commit.
+        Assert.IsType<CreatedAtActionResult>(await controller.CrearPO(
+            new CrearPORequest(proveedor.Id, "Proveedor ficticio P0", null,
+                "Concurrencia de prueba", null, false,
+                new List<ItemPORequest> { new("P0-ARROZ", "Arroz demo", 10, 3.55m) }),
+            CancellationToken.None));
+        var poConcurrencia = await finance.OrdenesCompra.Include(x => x.Items)
+            .SingleAsync(x => x.Id != po.Id);
+        Assert.IsType<OkObjectResult>(await controller.EnviarPO(
+            poConcurrencia.Id, CancellationToken.None));
+        var itemConcurrente = poConcurrencia.Items.Single();
+
+        async Task<IActionResult> IntentoSimultaneoAsync(Guid nuevaOperacion)
+        {
+            await using var f = new FinanceDbContext(financeOptions);
+            await using var c = new CatalogDbContext(catalogOptions);
+            await using var k = new CoreDbContext(coreOptions);
+            var inv = (IInventoryService)ActivatorUtilities.CreateInstance(
+                provider, impl, c);
+            var ctrl = new ComprasController(f,
+                new TresWayMatchingService(f, NullLogger<TresWayMatchingService>.Instance),
+                new ContabilidadService(f, NullLogger<ContabilidadService>.Instance),
+                inv, k, NullLogger<ComprasController>.Instance);
+            return await ctrl.RecibirMercaderia(poConcurrencia.Id,
+                new RecibirMercaderiaRequest(new()
+                {
+                    new(itemConcurrente.Id, 10, 10, ubicacion.Id, nuevaOperacion)
+                }, "Carrera de recepción"), CancellationToken.None);
+        }
+
+        var carreras = await Task.WhenAll(
+            IntentoSimultaneoAsync(Guid.NewGuid()),
+            IntentoSimultaneoAsync(Guid.NewGuid()));
+        Assert.Single(carreras.OfType<OkObjectResult>());
+        Assert.Single(carreras.OfType<ConflictObjectResult>());
+
+        await using var finalFinance = new FinanceDbContext(financeOptions);
+        await using var finalCatalog = new CatalogDbContext(catalogOptions);
+        Assert.Equal(10, (await finalFinance.OrdenesCompra
+            .Include(x => x.Items).SingleAsync(x => x.Id == poConcurrencia.Id))
+            .Items.Sum(x => x.CantidadRecibida));
+        Assert.Equal(46, await finalCatalog.StockFisico.SumAsync(x => x.CantidadTotal));
+        Assert.Equal(3, await finalCatalog.MovimientosInventario.CountAsync(
+            x => x.TipoMovimiento == TipoMovimientoInventario.RecepcionInbound));
     }
 }
