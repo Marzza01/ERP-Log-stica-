@@ -19,9 +19,11 @@ No contiene DDL, DML ni credenciales.
 - 10 comprobaciones de PO/factura, split/liquidación, asiento, y cantidades Finance/WMS.
 - 12 comprobaciones de unicidad Checkout, intentos de pago, conciliación, reembolso,
   reservas multiubicación y stock físico.
+- 9 comprobaciones de claves de factura normalizadas, importes de PO/factura/split,
+  huérfanos inbound y desglose de checkout.
 - Conteos de migraciones EF y registros financieros como metadatos.
 
-**Resultado 2026-11-07:** las 22 comprobaciones devolvieron 0 anomalías sobre
+**Resultado 2026-11-07:** las 31 comprobaciones devolvieron 0 anomalías sobre
 la rama de prueba. La aceptación P0 creó dos PO, tres entradas inbound y una
 factura no pagada; ninguna liquidación ni asiento.
 
@@ -62,7 +64,7 @@ parcial de monto, fecha o transacción.
 
 - Pruebas de compilación, JWT, control de accesos, y suites .NET/React en GitHub Actions.
 - Regresión nueva: API no certifica transferencia bancaria para simulación.
-- SQL auditoría de solo lectura con 22 comprobaciones de anomalías = 0 en staging.
+- SQL auditoría de solo lectura con 31 comprobaciones de anomalías = 0 en staging.
 - Sin ejecutar `--execute` de P0 una segunda vez.
 - Sin migraciones ni cambios de datos en staging o producción desde este PR.
 
