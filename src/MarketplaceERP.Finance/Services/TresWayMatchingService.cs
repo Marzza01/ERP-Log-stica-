@@ -164,7 +164,8 @@ public class TresWayMatchingService : ITresWayMatchingService
             autorizado = true;
             factura.AprobadaParaPago = true;
             po.Estado = EstadoOrdenCompra.RecibidaCompleta;
-            po.FechaRecepcionReal = DateTime.UtcNow;
+            // La fecha de recepción pertenece a WMS: no reemplazarla con
+            // el instante del 3-Way Match ni inventar una recepción histórica.
         }
 
         var auditoriaId = Guid.NewGuid();
