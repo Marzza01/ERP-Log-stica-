@@ -27,6 +27,36 @@ internal sealed class InventoryService : IInventoryService
         _logger = logger;
     }
 
+    public async Task<bool> ConfirmarInboundProcesadoAsync(
+        string sku,
+        int cantidad,
+        Guid ubicacionAlmacenId,
+        Guid ordenCompraId,
+        Guid itemOrdenCompraId,
+        Guid operacionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sku) || cantidad <= 0 ||
+            ubicacionAlmacenId == Guid.Empty || ordenCompraId == Guid.Empty ||
+            itemOrdenCompraId == Guid.Empty || operacionId == Guid.Empty)
+            return false;
+
+        var referencia = ConstruirReferencia(operacionId, itemOrdenCompraId);
+
+        // Una coincidencia del token por sí sola no basta: validar todo
+        // el contenido original evita responder éxito a un replay alterado.
+        return await _dbContext.MovimientosInventario
+            .AsNoTracking()
+            .AnyAsync(m =>
+                m.TipoMovimiento == TipoMovimientoInventario.RecepcionInbound &&
+                m.Referencia == referencia &&
+                m.Producto.Sku == sku.Trim() &&
+                m.Cantidad == cantidad &&
+                m.UbicacionDestinoId == ubicacionAlmacenId &&
+                m.OrdenId == ordenCompraId,
+                cancellationToken);
+    }
+
     public async Task<RecepcionInventarioResult> RecibirInboundAsync(
         string sku,
         int cantidad,
