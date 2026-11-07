@@ -96,6 +96,12 @@ jobs:
         with:
           node-version: '24'
 
+      # Contrato P0 del runner externo: nunca ejecuta escrituras en CI.
+      - name: Validate P0 staging acceptance runner
+        run: |
+          node --check scripts/p0-staging-acceptance.mjs
+          node scripts/p0-staging-acceptance.mjs --help
+
       # 8. Instalar dependencias npm
       - name: Install npm dependencies
         working-directory: frontend/marketplace-ui
