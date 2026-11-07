@@ -10,6 +10,7 @@ using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Xunit;
 
@@ -87,11 +88,10 @@ public class P0ComprasPostgresTests
         // su constructor público, sin añadir una API pública solo para tests.
         var impl = typeof(IInventoryService).Assembly.GetType(
             "MarketplaceERP.Catalog.Services.InventoryService", throwOnError: true)!;
-        var container = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
-        Microsoft.Extensions.DependencyInjection.LoggingServiceCollectionExtensions.AddLogging(container);
-        using var provider = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(container);
-        var inventory = (IInventoryService)Microsoft.Extensions.DependencyInjection.ActivatorUtilities
-            .CreateInstance(provider, impl, catalog);
+        var container = new ServiceCollection();
+        container.AddLogging();
+        using var provider = container.BuildServiceProvider();
+        var inventory = (IInventoryService)ActivatorUtilities.CreateInstance(provider, impl, catalog);
 
         var matching = new TresWayMatchingService(
             finance, NullLogger<TresWayMatchingService>.Instance);
