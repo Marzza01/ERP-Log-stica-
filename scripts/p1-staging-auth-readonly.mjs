@@ -68,10 +68,12 @@ try {
     requireStatus(label, await request(label, path, { headers }), 200);
   }
 
-  const chars = token.split('');
-  const i = chars.length - 1;
-  chars[i] = chars[i] === 'A' ? 'B' : 'A';
-  const tampered = chars.join('');
+  const tokenParts = token.split('.');
+  if (tokenParts.length !== 3 || !tokenParts[2])
+    throw new Error('JWT recibido con firma no reconocible.');
+  const signature = tokenParts[2];
+  tokenParts[2] = (signature[0] === 'A' ? 'B' : 'A') + signature.slice(1);
+  const tampered = tokenParts.join('.');
   requireStatus('JWT adulterado rechazado',
     await request('JWT adulterado rechazado', '/api/compras/po',
       { headers: { Authorization: 'Bearer ' + tampered } }), 401);
