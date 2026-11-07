@@ -1,4 +1,6 @@
 using MarketplaceERP.API.Controllers;
+using MarketplaceERP.API.Security;
+using MarketplaceERP.Shared.Settings;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -278,18 +280,13 @@ public class P0ComprasPostgresTests
                         sp, impl, sp.GetRequiredService<CatalogDbContext>()));
                 services.AddScoped<ITresWayMatchingService, TresWayMatchingService>();
                 services.AddScoped<IContabilidadService, ContabilidadService>();
-                services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-                    .AddJwtBearer(o =>
-                    {
-                        o.TokenValidationParameters = new TokenValidationParameters
-                        {
-                            ValidateIssuer = true, ValidIssuer = issuer,
-                            ValidateAudience = true, ValidAudience = issuer,
-                            ValidateIssuerSigningKey = true, IssuerSigningKey = jwtKey,
-                            ValidateLifetime = true, ClockSkew = TimeSpan.Zero
-                        };
-                    });
-                services.AddAuthorization();
+                services.AddMarketplaceSecurity(new JwtSettings
+                {
+                    Key = secret,
+                    Issuer = issuer,
+                    Audience = issuer,
+                    ExpirationMinutes = 5
+                });
                 services.AddControllers()
                     .AddApplicationPart(typeof(ComprasController).Assembly);
             })
