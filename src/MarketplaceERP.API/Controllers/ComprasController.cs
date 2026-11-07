@@ -264,6 +264,51 @@ public class ComprasController : ControllerBase
         if (req.Items.Select(x => x.ItemOrdenCompraId).Distinct().Count() != req.Items.Count)
             return BadRequest(new { mensaje = "No puede enviar el mismo ítem de PO más de una vez en la misma recepción." });
 
+        // Una PO se procesa por una sola petición a la vez en todas las
+        // instancias del API. Abrir explícitamente la conexión fija el candado
+        // de sesión PostgreSQL a la misma conexión hasta terminar la recepción.
+        // Los SaveChanges de cada ítem conservan su commit individual.
+        if (!_db.Database.IsRelational())
+            return await RecibirMercaderiaCore(id, req, cancellationToken);
+
+        await _db.Database.OpenConnectionAsync(cancellationToken);
+        var candadoObtenido = false;
+        try
+        {
+            candadoObtenido = await _db.Database.SqlQueryRaw<bool>(
+                    "SELECT pg_try_advisory_lock(hashtext('erp-po-recibir'), hashtext({0})) AS \\"Value\\"",
+                    id.ToString("N"))
+                .SingleAsync(cancellationToken);
+
+            if (!candadoObtenido)
+                return Conflict(new
+                {
+                    mensaje = "Otra recepción de esta orden está en curso. Refresque la PO e intente nuevamente."
+                });
+
+            return await RecibirMercaderiaCore(id, req, cancellationToken);
+        }
+        finally
+        {
+            try
+            {
+                if (candadoObtenido)
+                    await _db.Database.SqlQueryRaw<bool>(
+                            "SELECT pg_advisory_unlock(hashtext('erp-po-recibir'), hashtext({0})) AS \\"Value\\"",
+                            id.ToString("N"))
+                        .SingleAsync(CancellationToken.None);
+            }
+            finally
+            {
+                await _db.Database.CloseConnectionAsync();
+            }
+        }
+    }
+
+    private async Task<IActionResult> RecibirMercaderiaCore(
+        Guid id, RecibirMercaderiaRequest req, CancellationToken cancellationToken)
+    {
+        // Se consulta Finance después de obtener el candado, nunca antes.
         var po = await _db.OrdenesCompra
             .Include(p => p.Items)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
