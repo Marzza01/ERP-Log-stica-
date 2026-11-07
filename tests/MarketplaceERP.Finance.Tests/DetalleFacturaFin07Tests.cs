@@ -165,6 +165,35 @@ public sealed class DetalleFacturaFin07Tests
     }
 
     [Fact]
+    public async Task RegistroFacturaConDetalle_SeGuardaYConciliacionUsaCantidadesReales()
+    {
+        await using var db = Db();
+        var (po, _) = Crear();
+        db.OrdenesCompra.Add(po);
+        await db.SaveChangesAsync();
+
+        var lineas = po.Items.Select(x =>
+            new LineaFacturaProveedorRequest(x.Id, 2, 10m)).ToList();
+
+        var response = await Controller(db).RegistrarFactura(
+            new RegistrarFacturaRequest(po.Id, "CCF-DETALLE-VERIFICADO",
+                40m, 45.20m, null, null, lineas),
+            CancellationToken.None);
+        Assert.IsType<CreatedAtActionResult>(response);
+
+        var factura = await db.FacturasProveedor.AsNoTracking()
+            .Include(x => x.Items).SingleAsync();
+        Assert.Equal(2, factura.Items.Count);
+        Assert.Equal(4, factura.Items.Sum(x => x.CantidadFacturada));
+        Assert.Equal(40m, factura.Items.Sum(x =>
+            x.CantidadFacturada * x.PrecioUnitarioFacturado));
+
+        var match = await Matching(db).EjecutarMatchAsync(new(po.Id, factura.Id, 4));
+        Assert.True(match.AutorizadoParaPago);
+        Assert.Equal(4, match.CantidadFacturada);
+    }
+
+    [Fact]
     public async Task RegistroFacturas_SinDetalleAceptadoPeroNoAutorizable()
     {
         await using var db = Db();
