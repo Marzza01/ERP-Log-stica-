@@ -116,7 +116,7 @@ public sealed class LiquidacionPostgresFin02Tests : IAsyncLifetime
         }
 
         var resultados = await Task.WhenAll(Intentar(), Intentar());
-        Assert.Single(resultados.Where(x => x));
+        Assert.Single(resultados, x => x);
         await using var verify = NewContext();
         var liquidacion = await verify.Liquidaciones.SingleAsync();
         Assert.Equal(splitId, liquidacion.SplitPagoId);
@@ -149,7 +149,7 @@ public sealed class LiquidacionPostgresFin02Tests : IAsyncLifetime
         }
 
         var resultados = await Task.WhenAll(Procesar(), Procesar());
-        Assert.Single(resultados.Where(x => x));
+        Assert.Single(resultados, x => x);
 
         await using var verify = NewContext();
         var completed = await verify.Liquidaciones.SingleAsync(l => l.Id == liqId);
