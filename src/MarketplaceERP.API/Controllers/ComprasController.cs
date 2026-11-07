@@ -387,7 +387,9 @@ public class ComprasController : ControllerBase
     public async Task<IActionResult> RegistrarFactura(
         [FromBody] RegistrarFacturaRequest req, CancellationToken cancellationToken)
     {
-        var po = await _db.OrdenesCompra.FindAsync([req.OrdenCompraId], cancellationToken);
+        var po = await _db.OrdenesCompra
+            .Include(p => p.Items)
+            .FirstOrDefaultAsync(p => p.Id == req.OrdenCompraId, cancellationToken);
         if (po == null) return NotFound(new { mensaje = $"PO {req.OrdenCompraId} no encontrada." });
 
         var numeroFactura = req.NumeroFactura?.Trim();
@@ -426,9 +428,22 @@ public class ComprasController : ControllerBase
                 cancellationToken))
             return Conflict(new { mensaje = "El proveedor ya tiene registrada una factura con ese número." });
 
+        // Por compatibilidad, las solicitudes anteriores sin líneas aún
+        // registran la factura, pero FIN-07 impide autorizarla con 3-Way.
+        List<ItemFacturaProveedor> detalle;
+        try
+        {
+            detalle = ValidarDetalleFactura(req.Lineas, po, req.SubTotal);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
+
         var factura = new FacturaProveedor
         {
             Id = Guid.NewGuid(),
+            Items = detalle,
             OrdenCompraId = req.OrdenCompraId,
             ProveedorId = po.ProveedorId,
             NumeroFactura = numeroFactura,
@@ -453,7 +468,110 @@ public class ComprasController : ControllerBase
         }
 
         return CreatedAtAction(nameof(ObtenerPO), new { id = po.Id },
-            new { factura.Id, factura.NumeroFactura, factura.MontoTotal, factura.AprobadaParaPago });
+            new { factura.Id, factura.NumeroFactura, factura.MontoTotal, factura.AprobadaParaPago,
+                detalleRegistrado = detalle.Count > 0, cantidadLineas = detalle.Count });
+    }
+
+    // ── POST /api/compras/facturas/{id}/lineas ───────────────────────────────
+    /// <summary>
+    /// Agrega el detalle a una factura heredada sin líneas. No inventa datos,
+    /// no permite modificar documentos ya contabilizados ni sobreescribir líneas.
+    /// </summary>
+    [HttpPost("facturas/{id:guid}/lineas", Name = "CompletarDetalleFacturaProveedor")]
+    public async Task<IActionResult> CompletarDetalleFactura(
+        Guid id, [FromBody] List<LineaFacturaProveedorRequest> lineas,
+        CancellationToken cancellationToken)
+    {
+        var factura = await _db.FacturasProveedor
+            .Include(f => f.Items)
+            .FirstOrDefaultAsync(f => f.Id == id, cancellationToken);
+        if (factura is null) return NotFound(new { mensaje = "Factura no encontrada." });
+
+        if (factura.AprobadaParaPago || factura.Pagada || factura.Items.Count > 0)
+            return Conflict(new { mensaje = "No se puede modificar una factura aprobada, pagada o con detalle existente." });
+
+        var po = await _db.OrdenesCompra
+            .Include(p => p.Items)
+            .FirstOrDefaultAsync(p => p.Id == factura.OrdenCompraId, cancellationToken);
+        if (po is null) return Conflict(new { mensaje = "La orden original de la factura no existe." });
+
+        List<ItemFacturaProveedor> detalle;
+        try
+        {
+            detalle = ValidarDetalleFactura(lineas, po, factura.MontoSubTotal);
+            if (detalle.Count == 0)
+                return BadRequest(new { mensaje = "Para completar la factura debe proporcionar líneas documentales." });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
+
+        factura.Items = detalle;
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg &&
+            pg.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return Conflict(new { mensaje = "El detalle ya fue registrado por otra solicitud. Recargue la factura." });
+        }
+
+        return Ok(new { factura.Id, detalleRegistrado = true, cantidadLineas = detalle.Count });
+    }
+
+    private static List<ItemFacturaProveedor> ValidarDetalleFactura(
+        List<LineaFacturaProveedorRequest>? lineas, OrdenCompra po, decimal subtotal)
+    {
+        if (lineas is null) return new List<ItemFacturaProveedor>();
+
+        if (lineas.Count is < 1 or > 500)
+            throw new ArgumentException("La factura debe tener entre 1 y 500 líneas documentales.");
+
+        var idsPo = po.Items.Select(i => i.Id).ToHashSet();
+        var idsRecibidos = new HashSet<Guid>();
+        var resultado = new List<ItemFacturaProveedor>(lineas.Count);
+        decimal acumulado = 0m;
+
+        foreach (var linea in lineas)
+        {
+            if (linea is null || linea.ItemOrdenCompraId == Guid.Empty ||
+                !idsPo.Contains(linea.ItemOrdenCompraId) ||
+                !idsRecibidos.Add(linea.ItemOrdenCompraId))
+                throw new ArgumentException("La factura contiene ítems repetidos o ajenos a la orden.");
+
+            if (linea.CantidadFacturada <= 0 ||
+                linea.PrecioUnitarioFacturado <= 0m ||
+                !ImporteValido(linea.PrecioUnitarioFacturado))
+                throw new ArgumentException("Cada línea requiere cantidad y precio positivos (máximo dos decimales).");
+
+            try
+            {
+                acumulado = checked(acumulado +
+                    checked(linea.CantidadFacturada * linea.PrecioUnitarioFacturado));
+            }
+            catch (OverflowException)
+            {
+                throw new ArgumentException("Las líneas de factura exceden la precisión monetaria.");
+            }
+
+            if (!ImporteValido(acumulado))
+                throw new ArgumentException("El subtotal de líneas excede numeric(18,2).");
+
+            resultado.Add(new ItemFacturaProveedor
+            {
+                Id = Guid.NewGuid(),
+                ItemOrdenCompraId = linea.ItemOrdenCompraId,
+                CantidadFacturada = linea.CantidadFacturada,
+                PrecioUnitarioFacturado = linea.PrecioUnitarioFacturado
+            });
+        }
+
+        if (acumulado != subtotal)
+            throw new ArgumentException("El subtotal declarado no coincide con cantidades y precios facturados.");
+
+        return resultado;
     }
 
     // ── POST /api/compras/match ───────────────────────────────────────────────
@@ -552,10 +670,16 @@ public record RecibirMercaderiaRequest(
     List<RecibirMercaderiaItemRequest> Items,
     string? Notas);
 
+public record LineaFacturaProveedorRequest(
+    Guid ItemOrdenCompraId,
+    int CantidadFacturada,
+    decimal PrecioUnitarioFacturado);
+
 public record RegistrarFacturaRequest(
     Guid OrdenCompraId,
     string NumeroFactura,
     decimal SubTotal,
     decimal MontoTotal,
     DateTime? FechaEmision,
-    DateTime? FechaVencimiento);
+    DateTime? FechaVencimiento,
+    List<LineaFacturaProveedorRequest>? Lineas = null);
