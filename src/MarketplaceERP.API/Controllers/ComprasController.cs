@@ -25,6 +25,12 @@ namespace MarketplaceERP.API.Controllers;
 [Produces("application/json")]
 public class ComprasController : ControllerBase
 {
+    // finance numeric(18,2): no persistir importes negativos, fracciones de
+    // centavo ni montos que PostgreSQL no pueda representar.
+    private const decimal MontoMaximo = 9999999999999999.99m;
+    private static bool ImporteValido(decimal monto) =>
+        monto >= 0m && monto <= MontoMaximo && decimal.Round(monto, 2) == monto;
+
     private readonly MarketplaceERP.Finance.Data.FinanceDbContext _db;
     private readonly ITresWayMatchingService _matching;
     private readonly IContabilidadService _contabilidad;
@@ -103,6 +109,48 @@ public class ComprasController : ControllerBase
         if (req.ProveedorId == Guid.Empty)
             return BadRequest(new { mensaje = "Debe seleccionar un proveedor del maestro corporativo." });
 
+        if (req.TerminosPago?.Length > 100 || req.Observaciones?.Length > 1000)
+            return BadRequest(new { mensaje = "Términos de pago u observaciones exceden la longitud permitida." });
+
+        decimal subtotal = 0m;
+        foreach (var item in req.Items)
+        {
+            if (item is null || string.IsNullOrWhiteSpace(item.Sku) || item.Sku.Trim().Length > 50 ||
+                string.IsNullOrWhiteSpace(item.NombreProducto) || item.NombreProducto.Trim().Length > 300)
+                return BadRequest(new { mensaje = "Cada ítem requiere SKU (máximo 50) y nombre (máximo 300)." });
+
+            if (item.Cantidad <= 0 || !ImporteValido(item.PrecioUnitario) || item.PrecioUnitario == 0m)
+                return BadRequest(new { mensaje = "La cantidad y el precio unitario deben ser positivos; solo dos decimales." });
+
+            try
+            {
+                var totalLinea = checked(item.Cantidad * item.PrecioUnitario);
+                subtotal = checked(subtotal + totalLinea);
+            }
+            catch (OverflowException)
+            {
+                return BadRequest(new { mensaje = "El importe de la orden supera la precisión monetaria admitida." });
+            }
+
+            if (!ImporteValido(subtotal))
+                return BadRequest(new { mensaje = "El importe de la orden supera el máximo monetario admitido." });
+        }
+
+        decimal iva;
+        decimal montoTotal;
+        try
+        {
+            iva = decimal.Round(checked(subtotal * 0.13m), 2);
+            montoTotal = checked(subtotal + iva);
+        }
+        catch (OverflowException)
+        {
+            return BadRequest(new { mensaje = "El total de la orden supera la precisión monetaria admitida." });
+        }
+
+        if (!ImporteValido(montoTotal))
+            return BadRequest(new { mensaje = "El total de la orden supera el máximo monetario admitido." });
+
         var proveedor = await _coreDb.Proveedores
             .AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == req.ProveedorId && p.Activo, cancellationToken);
@@ -135,25 +183,23 @@ public class ComprasController : ControllerBase
             FechaEntregaEsperada = req.FechaEntregaEsperada ?? DateTime.UtcNow.AddDays(15),
         };
 
-        decimal subtotal = 0m;
         foreach (var item in req.Items)
         {
             po.Items.Add(new ItemOrdenCompra
             {
                 Id = Guid.NewGuid(),
                 OrdenCompraId = po.Id,
-                Sku = item.Sku,
-                NombreProducto = item.NombreProducto,
+                Sku = item.Sku.Trim(),
+                NombreProducto = item.NombreProducto.Trim(),
                 CantidadSolicitada = item.Cantidad,
                 PrecioUnitarioAcordado = item.PrecioUnitario,
                 CantidadRecibida = 0,
             });
-            subtotal += item.Cantidad * item.PrecioUnitario;
         }
 
         po.SubTotal = subtotal;
-        po.ImpuestoIva = Math.Round(subtotal * 0.13m, 2);
-        po.MontoTotal = po.SubTotal + po.ImpuestoIva;
+        po.ImpuestoIva = iva;
+        po.MontoTotal = montoTotal;
 
         _db.OrdenesCompra.Add(po);
 
@@ -343,17 +389,52 @@ public class ComprasController : ControllerBase
         var po = await _db.OrdenesCompra.FindAsync([req.OrdenCompraId], cancellationToken);
         if (po == null) return NotFound(new { mensaje = $"PO {req.OrdenCompraId} no encontrada." });
 
+        var numeroFactura = req.NumeroFactura?.Trim();
+        if (string.IsNullOrWhiteSpace(numeroFactura) || numeroFactura.Length > 50)
+            return BadRequest(new { mensaje = "La factura requiere un número válido de máximo 50 caracteres." });
+
+        if (req.SubTotal <= 0m || !ImporteValido(req.SubTotal) ||
+            !ImporteValido(req.MontoTotal) || req.MontoTotal <= 0m)
+            return BadRequest(new { mensaje = "Los importes de factura deben ser positivos, con máximo dos decimales y dentro de la precisión admitida." });
+
+        decimal montoIva;
+        decimal totalCalculado;
+        try
+        {
+            montoIva = decimal.Round(checked(req.SubTotal * 0.13m), 2);
+            totalCalculado = checked(req.SubTotal + montoIva);
+        }
+        catch (OverflowException)
+        {
+            return BadRequest(new { mensaje = "El IVA o total de factura supera la precisión monetaria admitida." });
+        }
+
+        if (!ImporteValido(totalCalculado) || req.MontoTotal != totalCalculado)
+            return BadRequest(new { mensaje = "El total de la factura debe coincidir exactamente con el subtotal más IVA (13%)." });
+
+        var fechaEmision = req.FechaEmision ?? DateTime.UtcNow;
+        var fechaVencimiento = req.FechaVencimiento ?? fechaEmision.AddDays(30);
+        if (fechaVencimiento < fechaEmision)
+            return BadRequest(new { mensaje = "El vencimiento no puede ser anterior a la emisión de la factura." });
+
+        // Evita repeticiones secuenciales. La protección entre peticiones
+        // exactamente concurrentes requiere una restricción única en PostgreSQL.
+        if (await _db.FacturasProveedor.AnyAsync(f =>
+                f.OrdenCompraId == po.Id && f.NumeroFactura.ToUpper() == numeroFactura.ToUpper(),
+                cancellationToken))
+            return Conflict(new { mensaje = "Ya existe una factura con ese número para esta orden de compra." });
+
         var factura = new FacturaProveedor
         {
             Id = Guid.NewGuid(),
             OrdenCompraId = req.OrdenCompraId,
             ProveedorId = po.ProveedorId,
-            NumeroFactura = req.NumeroFactura,
+            NumeroFactura = numeroFactura,
             MontoSubTotal = req.SubTotal,
-            MontoIva = Math.Round(req.SubTotal * 0.13m, 2),
-            MontoTotal = req.MontoTotal,
-            FechaEmision = req.FechaEmision ?? DateTime.UtcNow,
-            FechaVencimiento = req.FechaVencimiento ?? DateTime.UtcNow.AddDays(30),
+            MontoIva = montoIva,
+            MontoTotal = totalCalculado,
+            FechaEmision = fechaEmision,
+            FechaVencimiento = fechaVencimiento,
             AprobadaParaPago = false,
         };
 
