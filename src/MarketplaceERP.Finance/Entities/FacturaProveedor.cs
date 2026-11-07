@@ -28,6 +28,10 @@ public class FacturaProveedor
     public bool Pagada { get; set; } = false;
     public DateTime? FechaPago { get; set; }
 
+    // Las facturas anteriores pueden carecer de líneas; el 3-Way Match no
+    // las autorizará hasta recibir el detalle documental verificable.
+    public ICollection<ItemFacturaProveedor> Items { get; set; } = new List<ItemFacturaProveedor>();
+
     // Navegación
     public OrdenCompra OrdenCompra { get; set; } = null!;
 }

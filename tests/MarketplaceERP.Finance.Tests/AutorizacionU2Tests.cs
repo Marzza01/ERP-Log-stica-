@@ -224,8 +224,8 @@ public class AutorizacionU2Tests
             }
         }
         Assert.Equal(23, controllers.Length);
-        Assert.Equal(83, actions);
-        Assert.Equal(84, routes); // Productos/GetAlertasStock has two aliases.
+        Assert.Equal(84, actions);
+        Assert.Equal(85, routes); // Productos/GetAlertasStock has two aliases.
     }
 
     [Theory]
