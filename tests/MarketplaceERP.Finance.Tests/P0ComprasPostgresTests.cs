@@ -41,11 +41,30 @@ public class P0ComprasPostgresTests
     {
         var connection = Environment.GetEnvironmentVariable("TEST_PG_CONNECTION");
         if (string.IsNullOrWhiteSpace(connection))
-            return; // CI exige esta variable y PostgreSQL disponible.
+        {
+            if (string.Equals(Environment.GetEnvironmentVariable("CI"),
+                "true", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("P0 requiere PostgreSQL local en CI.");
+            return;
+        }
+
+        // Protección obligatoria: esta prueba CREA su propia base de datos.
+        // Nunca permitir que una variable de conexión apunte por accidente
+        // a Neon, Render o un PostgreSQL de producción.
+        var admin = new NpgsqlConnectionStringBuilder(connection);
+        if (!new[] { "localhost", "127.0.0.1", "::1" }.Contains(
+                admin.Host, StringComparer.OrdinalIgnoreCase) ||
+            admin.Port != 5432 ||
+            !string.Equals(admin.Database, "postgres", StringComparison.Ordinal) ||
+            !string.Equals(admin.Username, "postgres", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "P0 solo puede crear bases efímeras en postgres@localhost:5432/postgres.");
 
         var database = "p0_flow_" + Guid.NewGuid().ToString("N");
-        var admin = new NpgsqlConnectionStringBuilder(connection);
-        var testConnection = new NpgsqlConnectionStringBuilder(connection) { Database = database }.ConnectionString;
+        var testConnection = new NpgsqlConnectionStringBuilder(admin.ConnectionString)
+        {
+            Database = database
+        }.ConnectionString;
 
         await using (var root = new NpgsqlConnection(admin.ConnectionString))
         {
