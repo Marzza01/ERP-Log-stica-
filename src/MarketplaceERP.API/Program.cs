@@ -200,13 +200,13 @@ app.MapGet("/health/ready", async (
         // a representative module table and each EF migration history table.
         coreOk = await coreDb.Database.CanConnectAsync() &&
             await ReadinessSchemaProbe.RequiredTablesExistAsync(
-                coreDb, "core.usuarios", "core.\\"__EFMigrationsHistory\\"");
+                coreDb, "core.usuarios", "core.\"__EFMigrationsHistory\"");
         catalogOk = await catalogDb.Database.CanConnectAsync() &&
             await ReadinessSchemaProbe.RequiredTablesExistAsync(
-                catalogDb, "catalog.productos", "catalog.\\"__EFMigrationsHistory\\"");
+                catalogDb, "catalog.productos", "catalog.\"__EFMigrationsHistory\"");
         financeOk = await financeDb.Database.CanConnectAsync() &&
             await ReadinessSchemaProbe.RequiredTablesExistAsync(
-                financeDb, "finance.ordenes_compra", "finance.\\"__EFMigrationsHistory\\"");
+                financeDb, "finance.ordenes_compra", "finance.\"__EFMigrationsHistory\"");
     }
     catch
     {
