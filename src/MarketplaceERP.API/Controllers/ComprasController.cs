@@ -114,11 +114,17 @@ public class ComprasController : ControllerBase
             return BadRequest(new { mensaje = "Términos de pago u observaciones exceden la longitud permitida." });
 
         decimal subtotal = 0m;
+        // Una PO no puede contener el mismo SKU en varias líneas: al recibir
+        // mercancía se debe poder conciliar una cantidad única por producto.
+        var skusEnOrden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in req.Items)
         {
             if (item is null || string.IsNullOrWhiteSpace(item.Sku) || item.Sku.Trim().Length > 50 ||
                 string.IsNullOrWhiteSpace(item.NombreProducto) || item.NombreProducto.Trim().Length > 300)
                 return BadRequest(new { mensaje = "Cada ítem requiere SKU (máximo 50) y nombre (máximo 300)." });
+
+            if (!skusEnOrden.Add(item.Sku.Trim()))
+                return BadRequest(new { mensaje = "Una orden de compra no puede repetir el mismo SKU en varias líneas." });
 
             if (item.Cantidad <= 0 || !ImporteValido(item.PrecioUnitario) || item.PrecioUnitario == 0m)
                 return BadRequest(new { mensaje = "La cantidad y el precio unitario deben ser positivos; solo dos decimales." });
