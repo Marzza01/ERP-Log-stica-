@@ -130,6 +130,23 @@ public sealed class DetalleFacturaFin07Tests
     }
 
     [Fact]
+    public async Task DescuadreDeUnCentavo_NoSeAutoriza()
+    {
+        await using var db = Db();
+        var (po, factura) = Crear();
+        factura.MontoIva = 5.21m;
+        factura.MontoTotal = 45.21m;
+        db.OrdenesCompra.Add(po);
+        db.FacturasProveedor.Add(factura);
+        await db.SaveChangesAsync();
+
+        var match = await Matching(db).EjecutarMatchAsync(new(po.Id, factura.Id, 4));
+        Assert.Equal(Estado3WayMatch.DiscrepanciaPrecio, match.Resultado);
+        Assert.False(match.AutorizadoParaPago);
+        Assert.False(factura.AprobadaParaPago);
+    }
+
+    [Fact]
     public async Task FacturaHistoricaSinLineas_SeConservaPeroNoAutoriza()
     {
         await using var db = Db();
