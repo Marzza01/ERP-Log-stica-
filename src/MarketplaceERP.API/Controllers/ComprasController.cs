@@ -338,13 +338,40 @@ public class ComprasController : ControllerBase
                 cancellationToken);
 
             if (!inventario.Exitoso)
+            {
+                // Las recepciones anteriores de este lote ya se confirmaron
+                // individualmente en Finance. Informar recepción parcial y
+                // permitir reintentar únicamente las líneas pendientes.
+                if (huboCambios)
+                    return Conflict(new
+                    {
+                        mensaje = "Recepción parcialmente aplicada. Refresque la PO y reintente solo los ítems pendientes.",
+                        detalle = inventario.Mensaje,
+                        sku = item.Sku,
+                        totalRecibido = po.Items.Sum(i => i.CantidadRecibida),
+                        itemsAplicados = resultados
+                    });
+
                 return BadRequest(new { mensaje = inventario.Mensaje, sku = item.Sku });
+            }
 
             // Si Catalog ya había aplicado el movimiento pero Finance no logró guardar,
             // el mismo request repara Finance sin duplicar stock.
             item.ProductoId = inventario.ProductoId;
             item.CantidadRecibida = recibido.CantidadAcumuladaEsperada;
             huboCambios = true;
+
+            // Catalog confirma cada movimiento en su propia transacción.
+            // Guardar inmediatamente el acumulado en Finance antes de
+            // procesar el siguiente ítem evita dejar varias líneas sin
+            // reflejar cuando una recepción posterior falla.
+            var recibidoHastaAhora = po.Items.Sum(i => i.CantidadRecibida);
+            var solicitadoTotal = po.Items.Sum(i => i.CantidadSolicitada);
+            po.Estado = recibidoHastaAhora >= solicitadoTotal
+                ? EstadoOrdenCompra.RecibidaCompleta
+                : EstadoOrdenCompra.RecibidaParcial;
+            po.FechaRecepcionReal = DateTime.UtcNow;
+            await _db.SaveChangesAsync(cancellationToken);
 
             resultados.Add(new
             {
