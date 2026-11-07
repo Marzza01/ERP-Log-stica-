@@ -290,8 +290,13 @@ public class ProductosController : ControllerBase
     [HttpPost("seed-500")]
     [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(ImportResult), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Seed500()
+    public async Task<IActionResult> Seed500([FromServices] IHostEnvironment environment)
     {
+        // El catálogo demo no debe poder sembrarse desde el API de staging
+        // ni producción, incluso con un JWT Admin válido.
+        if (!environment.IsDevelopment())
+            return NotFound(new { mensaje = "El seeding de demostración solo está disponible en Development." });
+
         var defaultVendedorId = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var defaultCategoriaId = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
