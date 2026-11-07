@@ -87,10 +87,11 @@ public class P0ComprasPostgresTests
         // su constructor público, sin añadir una API pública solo para tests.
         var impl = typeof(IInventoryService).Assembly.GetType(
             "MarketplaceERP.Catalog.Services.InventoryService", throwOnError: true)!;
-        var nullLogger = typeof(NullLogger<>).MakeGenericType(impl)
-            .GetProperty("Instance")!.GetValue(null)!;
-        var inventory = (IInventoryService)Activator.CreateInstance(
-            impl, catalog, nullLogger)!;
+        var container = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        Microsoft.Extensions.DependencyInjection.LoggingServiceCollectionExtensions.AddLogging(container);
+        using var provider = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(container);
+        var inventory = (IInventoryService)Microsoft.Extensions.DependencyInjection.ActivatorUtilities
+            .CreateInstance(provider, impl, catalog);
 
         var matching = new TresWayMatchingService(
             finance, NullLogger<TresWayMatchingService>.Instance);
