@@ -175,16 +175,31 @@ public class TresWayMatchingServiceTests
                         PrecioUnitarioAcordado = 10m }
             }
         };
+        // En la factura, los precios y cantidades son evidencia documental
+        // distinta de la PO y de WMS. El total depende del detalle real.
+        var precioFacturado = decimal.Round(montoFactura / 1.13m / cantidadOrdenada, 2);
+        var subtotalFactura = cantidadOrdenada * precioFacturado;
+        var ivaFactura = decimal.Round(subtotalFactura * 0.13m, 2);
         var factura = new FacturaProveedor
         {
             Id = Guid.NewGuid(),
             OrdenCompraId = po.Id,
             ProveedorId = po.ProveedorId,
             NumeroFactura = $"FAC-{Guid.NewGuid():N}",
-            MontoSubTotal = montoFactura / 1.13m,
-            MontoIva = montoFactura - (montoFactura / 1.13m),
-            MontoTotal = montoFactura,
+            MontoSubTotal = subtotalFactura,
+            MontoIva = ivaFactura,
+            MontoTotal = subtotalFactura + ivaFactura,
             FechaEmision = DateTime.UtcNow,
+            Items = new List<ItemFacturaProveedor>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    ItemOrdenCompraId = po.Items.Single().Id,
+                    CantidadFacturada = cantidadOrdenada,
+                    PrecioUnitarioFacturado = precioFacturado
+                }
+            }
         };
         db.OrdenesCompra.Add(po);
         db.FacturasProveedor.Add(factura);
