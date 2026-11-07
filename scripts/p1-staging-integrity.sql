@@ -137,3 +137,63 @@ WITH checks AS (
         OR "CantidadReservada" + "CantidadBloqueada" > "CantidadTotal"
 )
 SELECT check_name, violations FROM checks ORDER BY check_name;
+
+-- Validaciones monetarias y claves canonicas (separadas del conjunto anterior).
+-- IMPORTANTE: el indice real de facturas normaliza con upper(btrim(numero)).
+WITH checks AS (
+    SELECT 'dup_invoice_normalized' AS check_name, COUNT(*) AS violations
+      FROM (SELECT "ProveedorId", UPPER(BTRIM("NumeroFactura")) AS numero
+              FROM finance.facturas_proveedor
+             GROUP BY "ProveedorId", UPPER(BTRIM("NumeroFactura"))
+            HAVING COUNT(*) > 1) duplicates
+    UNION ALL
+    SELECT 'supplier_invoice_subtotal_mismatch', COUNT(*)
+      FROM finance.facturas_proveedor f
+      LEFT JOIN (SELECT "FacturaProveedorId",
+                        SUM("CantidadFacturada" * "PrecioUnitarioFacturado") AS subtotal
+                   FROM finance.items_factura_proveedor GROUP BY "FacturaProveedorId") i
+        ON i."FacturaProveedorId" = f."Id"
+     WHERE i."FacturaProveedorId" IS NULL OR ABS(f."MontoSubTotal" - ROUND(i.subtotal, 2)) > 0.01
+    UNION ALL
+    SELECT 'supplier_invoice_total_mismatch', COUNT(*)
+      FROM finance.facturas_proveedor f
+     WHERE ABS(f."MontoTotal" - (f."MontoSubTotal" + f."MontoIva")) > 0.01
+    UNION ALL
+    SELECT 'purchase_order_subtotal_mismatch', COUNT(*)
+      FROM finance.ordenes_compra po
+      LEFT JOIN (SELECT "OrdenCompraId",
+                        SUM("CantidadSolicitada" * "PrecioUnitarioAcordado") AS subtotal
+                   FROM finance.items_orden_compra GROUP BY "OrdenCompraId") i
+        ON i."OrdenCompraId" = po."Id"
+     WHERE i."OrdenCompraId" IS NULL OR ABS(po."SubTotal" - ROUND(i.subtotal, 2)) > 0.01
+    UNION ALL
+    SELECT 'purchase_order_total_mismatch', COUNT(*)
+      FROM finance.ordenes_compra po
+     WHERE ABS(po."MontoTotal" - (po."SubTotal" + po."ImpuestoIva")) > 0.01
+    UNION ALL
+    SELECT 'split_amount_mismatch', COUNT(*)
+      FROM finance.splits_pago s
+     WHERE ABS(s."MontoTotal" - (s."MontoVendedor" + s."MontoMarketplace")) > 0.01
+        OR s."MontoVendedor" < 0 OR s."MontoMarketplace" < 0
+    UNION ALL
+    SELECT 'orphan_inbound_po_line_reference', COUNT(*)
+      FROM catalog.movimientos_inventario m
+      LEFT JOIN finance.items_orden_compra i
+        ON REPLACE(i."Id"::text, '-', '') =
+           SUBSTRING(m."Referencia" FROM 'ITEM-([a-f0-9]{32})')
+     WHERE m."TipoMovimiento" = 'RecepcionInbound'
+       AND SUBSTRING(m."Referencia" FROM 'ITEM-([a-f0-9]{32})') IS NOT NULL
+       AND i."Id" IS NULL
+    UNION ALL
+    SELECT 'orphan_checkout_items', COUNT(*)
+      FROM finance.items_orden i
+      LEFT JOIN finance.ordenes o ON o."Id" = i."OrdenId"
+     WHERE o."Id" IS NULL
+    UNION ALL
+    SELECT 'checkout_subtotal_mismatch', COUNT(*)
+      FROM finance.ordenes o
+      LEFT JOIN (SELECT "OrdenId", SUM("Cantidad" * "PrecioUnitario") AS subtotal
+                   FROM finance.items_orden GROUP BY "OrdenId") i ON i."OrdenId" = o."Id"
+     WHERE i."OrdenId" IS NULL OR ABS(o."SubTotal" - ROUND(i.subtotal, 2)) > 0.01
+)
+SELECT check_name, violations FROM checks ORDER BY check_name;
