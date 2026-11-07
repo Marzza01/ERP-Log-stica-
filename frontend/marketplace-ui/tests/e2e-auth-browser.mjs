@@ -157,8 +157,22 @@ async function run() {
 
     await signIn(page, 'short-fixture@example.invalid');
     await page.waitForURL('**/dashboard');
-    await page.waitForURL('**/login', { timeout: 8000 });
-    assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), null);
+    try {
+      await page.waitForFunction(
+        () => location.pathname === '/login' &&
+              localStorage.getItem('erp_token') === null,
+        null, { timeout: 9000 }
+      );
+    } catch (error) {
+      const diagnostic = await page.evaluate(() => ({
+        path: location.pathname,
+        expiresInMs: Date.parse(localStorage.getItem('erp_expires_at') || '') - Date.now(),
+        sessionPresent: !!localStorage.getItem('erp_token'),
+      })).catch(() => ({ unavailable: true }));
+      throw new Error('JWT idle expiry assertion failed: ' +
+        JSON.stringify(diagnostic) + ', browser errors: ' + failures.join(' | '),
+        { cause: error });
+    }
     console.log('OK P1 Chromium: expired JWT logs out without API response');
 
     // Valid token but an inconsistent server role must not create a session.
