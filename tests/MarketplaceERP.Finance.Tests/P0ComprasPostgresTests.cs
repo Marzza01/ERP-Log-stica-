@@ -468,5 +468,51 @@ public class P0ComprasPostgresTests
             asientoRecuperado.Lineas.Sum(x => x.Haber));
         Assert.False((await afterRetry.FacturasProveedor.SingleAsync(
             x => x.Id == facturaRollback.Id)).Pagada);
+
+        // P0 HTTP+Postgres: dos peticiones JWT simultáneas sobre una PO nueva.
+        // El segundo token nunca debe crear movimiento extra en WMS.
+        var crearCarreraHttp = await http.PostAsJsonAsync("/api/compras/po",
+            new CrearPORequest(proveedor.Id, proveedor.NombreComercial,
+                null, "P0 HTTP carrera", null, false, new()
+                {
+                    new("P0-ARROZ", "Arroz demo", 5, 3.55m)
+                }));
+        Assert.Equal(HttpStatusCode.Created, crearCarreraHttp.StatusCode);
+        await using var raceRead = new FinanceDbContext(financeOptions);
+        var poRace = await raceRead.OrdenesCompra.Include(x => x.Items)
+            .SingleAsync(x => x.Id != po.Id &&
+                              x.Id != poConcurrencia.Id &&
+                              x.Id != ordenHttp.Id);
+        Assert.Equal(HttpStatusCode.OK, (await http.PostAsync(
+            $"/api/compras/po/{poRace.Id}/enviar", null)).StatusCode);
+        var lineaRace = poRace.Items.Single();
+        Task<HttpResponseMessage> RequestRaceAsync(Guid operationId) =>
+            http.PutAsJsonAsync(
+                $"/api/compras/po/{poRace.Id}/recibir",
+                new RecibirMercaderiaRequest(new()
+                {
+                    new(lineaRace.Id, 5, 5, ubicacion.Id, operationId)
+                }, "HTTP concurrency test"));
+
+        using var responseA = await RequestRaceAsync(Guid.NewGuid());
+        // Lanzar ambas tareas antes de esperarlas, con clientes HTTP reales.
+        var pendientes = await Task.WhenAll(
+            RequestRaceAsync(Guid.NewGuid()), RequestRaceAsync(Guid.NewGuid()));
+        foreach (var response in pendientes) response.Dispose();
+
+        // Ya hubo una recepción HTTP correcta antes de la carrera:
+        // las dos solicitudes posteriores deben rechazar nuevos tokens.
+        Assert.Equal(HttpStatusCode.OK, responseA.StatusCode);
+        Assert.All(pendientes, response =>
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode));
+
+        await using var raceVerify = new FinanceDbContext(financeOptions);
+        Assert.Equal(5, (await raceVerify.OrdenesCompra
+            .Include(x => x.Items).SingleAsync(x => x.Id == poRace.Id))
+            .Items.Sum(x => x.CantidadRecibida));
+        await using var raceCatalog = new CatalogDbContext(catalogOptions);
+        Assert.Equal(87, await raceCatalog.StockFisico.SumAsync(x => x.CantidadTotal));
+        Assert.Equal(6, await raceCatalog.MovimientosInventario.CountAsync(
+            x => x.TipoMovimiento == TipoMovimientoInventario.RecepcionInbound));
     }
 }
