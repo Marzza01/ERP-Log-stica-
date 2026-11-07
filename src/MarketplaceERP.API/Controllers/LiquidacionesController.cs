@@ -12,7 +12,7 @@ namespace MarketplaceERP.API.Controllers;
 
 /// <summary>
 /// Controlador de Liquidaciones a Vendedores — Célula B.
-/// Gestiona el ciclo completo: generación, pago y consulta.
+/// Gestiona generación, registro contable simulado y consulta. No integra transferencias bancarias.
 /// Split 90% vendedor / 10% marketplace. Genera asientos automáticos.
 /// Requisito: PDF1 Módulo de Comisiones y Liquidaciones.
 /// </summary>
@@ -33,7 +33,7 @@ public class LiquidacionesController : ControllerBase
 
     // ── POST /api/liquidaciones/generar ───────────────────────────────────────
     /// <summary>
-    /// Genera la liquidación pendiente para un vendedor.
+    /// Genera un registro interno pendiente para un vendedor, sin desembolso externo.
     /// Agrega todos los SplitPagos no liquidados de órdenes entregadas.
     /// </summary>
     [HttpPost("generar", Name = "GenerarLiquidacion")]
@@ -52,7 +52,8 @@ public class LiquidacionesController : ControllerBase
                 liq.MontoLiquidar,
                 Estado = liq.Estado.ToString(),
                 liq.FechaCreacion,
-                nota = "Liquidación generada. Use POST /procesar-pago/{id} para completar el desembolso."
+                nota = "Liquidación interna generada. El registro contable de prueba no confirma ningún desembolso bancario.",
+                transferenciaBancariaConfirmada = false
             });
         }
         catch (InvalidOperationException ex)
@@ -63,8 +64,8 @@ public class LiquidacionesController : ControllerBase
 
     // ── POST /api/liquidaciones/procesar-pago/{id} ────────────────────────────
     /// <summary>
-    /// Procesa el pago de una liquidación pendiente.
-    /// Genera el asiento contable: DEBE 2108 (Pasivo Vendedores) → HABER 1101 (Caja).
+    /// Registra contablemente una liquidación pendiente en modo de simulación, sin transferir fondos.
+    /// Genera un asiento contable simulado: DEBE 2108 (Pasivo Vendedores) → HABER 1101 (Caja).
     /// </summary>
     [HttpPost("procesar-pago/{id:guid}", Name = "ProcesarPagoLiquidacion")]
     [PaymentOperationsGuard]
@@ -84,7 +85,10 @@ public class LiquidacionesController : ControllerBase
                 Estado = liq.Estado.ToString(),
                 liq.FechaLiquidacion,
                 asientoGenerado = true,
-                detalle = "DEBE: 2108 Pasivo Vendedores | HABER: 1101 Caja"
+                registroContableSimulado = true,
+                transferenciaBancariaConfirmada = false,
+                aviso = "El asiento y el estado Completada corresponden exclusivamente al registro interno de simulación; no acreditan transferencia bancaria.",
+                detalle = "Asiento simulado: DEBE 2108 Pasivo Vendedores | HABER 1101 Caja"
             });
         }
         catch (InvalidOperationException ex)
@@ -97,7 +101,7 @@ public class LiquidacionesController : ControllerBase
 
     // ── GET /api/liquidaciones/historial ──────────────────────────────────────
     /// <summary>
-    /// Historial de liquidaciones. Filtrable por vendedorId.
+    /// Historial de registros contables internos, no de transferencias bancarias confirmadas. Filtrable por vendedorId.
     /// </summary>
     [HttpGet("historial", Name = "HistorialLiquidaciones")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
@@ -114,7 +118,8 @@ public class LiquidacionesController : ControllerBase
             montoLiquidar = l.MontoLiquidar,
             estado = l.Estado.ToString(),
             fechaCreacion = l.FechaCreacion,
-            fechaProcesado = l.FechaLiquidacion
+            fechaProcesado = l.FechaLiquidacion,
+            transferenciaBancariaConfirmada = false
         }).ToList();
         return Ok(result);
     }
@@ -160,7 +165,8 @@ public class LiquidacionesController : ControllerBase
                 montoLiquidar = l.MontoLiquidar,
                 estado = l.Estado.ToString(),
                 fechaCreacion = l.FechaCreacion,
-                fechaProcesado = l.FechaLiquidacion
+                fechaProcesado = l.FechaLiquidacion,
+                transferenciaBancariaConfirmada = false
             }).ToList();
         return Ok(pendientes);
     }
