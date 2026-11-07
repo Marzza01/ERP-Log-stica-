@@ -1,4 +1,15 @@
 using MarketplaceERP.API.Controllers;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Security.Claims;
+using System.Text;
+using System.IdentityModel.Tokens.Jwt;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.IdentityModel.Tokens;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
@@ -248,6 +259,114 @@ public class P0ComprasPostgresTests
             .Items.Sum(x => x.CantidadRecibida));
         Assert.Equal(46, await finalCatalog.StockFisico.SumAsync(x => x.CantidadTotal));
         Assert.Equal(3, await finalCatalog.MovimientosInventario.CountAsync(
+            x => x.TipoMovimiento == TipoMovimientoInventario.RecepcionInbound));
+
+        // Misma base efímera, pero ahora con pipeline HTTP, middleware JWT,
+        // binding de JSON, DI por request y controladores reales.
+        const string issuer = "p0-http-pg-ci";
+        const string secret = "P0-HTTP-POSTGRES-TEST-KEY-NEVER-DEPLOY-TO-PRODUCTION";
+        var jwtKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        using var server = new TestServer(new WebHostBuilder()
+            .ConfigureServices(services =>
+            {
+                services.AddLogging();
+                services.AddDbContext<CoreDbContext>(o => o.UseNpgsql(testConnection));
+                services.AddDbContext<CatalogDbContext>(o => o.UseNpgsql(testConnection));
+                services.AddDbContext<FinanceDbContext>(o => o.UseNpgsql(testConnection));
+                services.AddScoped<IInventoryService>(sp =>
+                    (IInventoryService)ActivatorUtilities.CreateInstance(
+                        sp, impl, sp.GetRequiredService<CatalogDbContext>()));
+                services.AddScoped<ITresWayMatchingService, TresWayMatchingService>();
+                services.AddScoped<IContabilidadService, ContabilidadService>();
+                services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                    .AddJwtBearer(o =>
+                    {
+                        o.TokenValidationParameters = new TokenValidationParameters
+                        {
+                            ValidateIssuer = true, ValidIssuer = issuer,
+                            ValidateAudience = true, ValidAudience = issuer,
+                            ValidateIssuerSigningKey = true, IssuerSigningKey = jwtKey,
+                            ValidateLifetime = true, ClockSkew = TimeSpan.Zero
+                        };
+                    });
+                services.AddAuthorization();
+                services.AddControllers()
+                    .AddApplicationPart(typeof(ComprasController).Assembly);
+            })
+            .Configure(app =>
+            {
+                app.UseRouting();
+                app.UseAuthentication();
+                app.UseAuthorization();
+                app.UseEndpoints(endpoints => endpoints.MapControllers());
+            }));
+
+        var jwt = new JwtSecurityToken(
+            issuer: issuer, audience: issuer,
+            claims: new[]
+            {
+                new Claim(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()),
+                new Claim(ClaimTypes.Role, "Admin")
+            },
+            notBefore: DateTime.UtcNow.AddMinutes(-1),
+            expires: DateTime.UtcNow.AddMinutes(5),
+            signingCredentials: new SigningCredentials(jwtKey, SecurityAlgorithms.HmacSha256));
+        using var http = server.CreateClient();
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer", new JwtSecurityTokenHandler().WriteToken(jwt));
+
+        var crearHttp = await http.PostAsJsonAsync("/api/compras/po",
+            new CrearPORequest(proveedor.Id, proveedor.NombreComercial,
+                null, "Prueba P0 HTTP+PostgreSQL", null, false,
+                new()
+                {
+                    new("P0-ARROZ", "Arroz demo", 24, 3.55m),
+                    new("P0-CAFE", "Café demo", 12, 10.06m)
+                }));
+        Assert.Equal(HttpStatusCode.Created, crearHttp.StatusCode);
+        await using var readHttp = new FinanceDbContext(financeOptions);
+        var ordenHttp = await readHttp.OrdenesCompra.Include(x => x.Items)
+            .SingleAsync(x => x.Id != po.Id && x.Id != poConcurrencia.Id);
+
+        Assert.Equal(HttpStatusCode.OK, (await http.PostAsync(
+            $"/api/compras/po/{ordenHttp.Id}/enviar", null)).StatusCode);
+        var arrozHttp = ordenHttp.Items.Single(x => x.Sku == "P0-ARROZ");
+        var cafeHttp = ordenHttp.Items.Single(x => x.Sku == "P0-CAFE");
+        var recibirHttp = new RecibirMercaderiaRequest(new()
+        {
+            new(arrozHttp.Id, 24, 24, ubicacion.Id, Guid.NewGuid()),
+            new(cafeHttp.Id, 12, 12, ubicacion.Id, Guid.NewGuid())
+        }, "Recepción HTTP");
+        Assert.Equal(HttpStatusCode.OK, (await http.PutAsJsonAsync(
+            $"/api/compras/po/{ordenHttp.Id}/recibir", recibirHttp)).StatusCode);
+        Assert.Equal(82, await finalCatalog.StockFisico.SumAsync(x => x.CantidadTotal));
+
+        var facturaHttpResponse = await http.PostAsJsonAsync(
+            "/api/compras/facturas",
+            new RegistrarFacturaRequest(
+                ordenHttp.Id, "FAC-P0-HTTP", 205.92m, 232.69m, null, null,
+                new()
+                {
+                    new(arrozHttp.Id, 24, 3.55m),
+                    new(cafeHttp.Id, 12, 10.06m)
+                }));
+        Assert.Equal(HttpStatusCode.Created, facturaHttpResponse.StatusCode);
+
+        // El endpoint /match está deliberadamente protegido por un guard
+        // financiero. Se concilia aquí mediante el servicio real SIN pagar.
+        var docHttp = await finance.FacturasProveedor.SingleAsync(
+            f => f.OrdenCompraId == ordenHttp.Id);
+        var matchHttp = await matching.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(ordenHttp.Id, docHttp.Id, 36));
+        Assert.True(matchHttp.AutorizadoParaPago);
+        Assert.Equal(Estado3WayMatch.Conforme, matchHttp.Resultado);
+        var asientoHttp = await ledger.GenerarAsientoCompraAsync(
+            ordenHttp.Id, docHttp.MontoSubTotal, docHttp.MontoIva);
+        Assert.Equal(asientoHttp.TotalDebe, asientoHttp.TotalHaber);
+        Assert.Equal(232.69m, asientoHttp.TotalDebe);
+        Assert.False((await finance.FacturasProveedor.SingleAsync(
+            f => f.Id == docHttp.Id)).Pagada);
+        Assert.Equal(5, await finalCatalog.MovimientosInventario.CountAsync(
             x => x.TipoMovimiento == TipoMovimientoInventario.RecepcionInbound));
     }
 }
