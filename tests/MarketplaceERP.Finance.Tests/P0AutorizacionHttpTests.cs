@@ -95,6 +95,27 @@ public class P0AutorizacionHttpTests
             (await vendedor.PostAsync("/api/compras/po",
                 new StringContent("{}", Encoding.UTF8, "application/json"))).StatusCode);
 
+        // Denegar también el libro contable, el OMS administrativo y
+        // operaciones financieras. El filtro de pago nunca debe activarse
+        // para usuarios sin autorización.
+        foreach (var route in new[]
+        {
+            "/api/contabilidad/libro-diario",
+            "/api/ordenes"
+        })
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized,
+                (await anon.GetAsync(route)).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden,
+                (await vendedor.GetAsync(route)).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await anon.PostAsync("/api/liquidaciones/generar",
+                new StringContent("{}", Encoding.UTF8, "application/json"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await vendedor.PostAsync("/api/liquidaciones/generar",
+                new StringContent("{}", Encoding.UTF8, "application/json"))).StatusCode);
+
         using var admin = server.CreateClient();
         admin.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", CrearJwt("Admin", key));
