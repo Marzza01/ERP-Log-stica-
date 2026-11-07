@@ -46,40 +46,55 @@ public class LiquidacionService : ILiquidacionService
         if (_paymentMode.IsDisabled)
             throw new InvalidOperationException("Liquidaciones deshabilitadas en este entorno.");
 
-        // Obtener splits de este vendedor que aún no tienen liquidación
-        var splitsPendientes = await _db.SplitsPago
-            .Include(s => s.Liquidacion)
-            .Include(s => s.Orden)
+        if (vendedorId == Guid.Empty)
+            throw new ArgumentException("El vendedor de la liquidación es obligatorio.", nameof(vendedorId));
+
+        // Finance almacena una relación Liquidacion <-> SplitPago 1:1. No se puede
+        // agrupar más de un split en MontoLiquidar sin cambiar el modelo y su
+        // migración: los splits no referenciados quedarían disponibles de nuevo.
+        // Emitir una liquidación por split hasta implementar 1:N de forma atómica.
+        var splitPendiente = await _db.SplitsPago
             .Where(s => s.Orden.VendedorId == vendedorId
                      && s.Liquidacion == null
                      && s.Orden.Estado == EstadoOrden.Entregada)
-            .ToListAsync(cancellationToken);
+            .OrderBy(s => s.FechaProcesado)
+            .ThenBy(s => s.Id)
+            .FirstOrDefaultAsync(cancellationToken);
 
-        if (!splitsPendientes.Any())
+        if (splitPendiente is null)
             throw new InvalidOperationException(
                 $"El vendedor {vendedorId} no tiene saldos pendientes de liquidación.");
 
-        decimal montoTotal = splitsPendientes.Sum(s => s.MontoVendedor);
-
-        // Tomar el primer split como referencia (en producción se haría uno por período)
-        var splitRef = splitsPendientes.First();
+        if (splitPendiente.MontoVendedor <= 0m)
+            throw new InvalidOperationException("El split pendiente tiene un monto vendedor inválido.");
 
         var liquidacion = new Liquidacion
         {
             Id = Guid.NewGuid(),
             VendedorId = vendedorId,
-            SplitPagoId = splitRef.Id,
-            MontoLiquidar = montoTotal,
+            SplitPagoId = splitPendiente.Id,
+            MontoLiquidar = splitPendiente.MontoVendedor,
             Moneda = "USD",
             Estado = EstadoLiquidacion.Pendiente,
             FechaCreacion = DateTime.UtcNow,
         };
 
         _db.Liquidaciones.Add(liquidacion);
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            // El índice UNIQUE de finance.liquidaciones.SplitPagoId impide que
+            // dos solicitudes concurrentes liquiden el mismo split en PostgreSQL.
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException pg &&
+            pg.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation)
+        {
+            throw new InvalidOperationException(
+                "El split ya fue reclamado por otra liquidación; consulte el historial antes de reintentar.", ex);
+        }
 
         _logger.LogInformation("Liquidación {Id} generada para vendedor {VendedorId}. Monto={Monto:C}",
-            liquidacion.Id, vendedorId, montoTotal);
+            liquidacion.Id, vendedorId, liquidacion.MontoLiquidar);
 
         return liquidacion;
     }
@@ -91,6 +106,13 @@ public class LiquidacionService : ILiquidacionService
         if (_paymentMode.IsDisabled)
             throw new InvalidOperationException("Desembolsos deshabilitados en este entorno.");
 
+        // En bases relacionales, estado y asiento deben confirmarse juntos.
+        // El UPDATE condicional reclama exclusivamente la liquidación pendiente:
+        // una llamada concurrente no puede ejecutar otro asiento ni otro pago.
+        await using var transaction = _db.Database.IsRelational()
+            ? await _db.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+
         var liquidacion = await _db.Liquidaciones
             .FirstOrDefaultAsync(l => l.Id == liquidacionId, cancellationToken)
             ?? throw new InvalidOperationException($"Liquidación {liquidacionId} no encontrada.");
@@ -99,25 +121,58 @@ public class LiquidacionService : ILiquidacionService
             throw new InvalidOperationException(
                 $"La liquidación {liquidacionId} ya está en estado {liquidacion.Estado}.");
 
-        liquidacion.Estado = EstadoLiquidacion.EnProceso;
-        await _db.SaveChangesAsync(cancellationToken);
+        // Verificar nuevamente el split original antes de contabilizar; los
+        // registros históricos creados con la suma incorrecta quedan bloqueados.
+        var split = await _db.SplitsPago.AsNoTracking()
+            .Where(s => s.Id == liquidacion.SplitPagoId)
+            .Select(s => new
+            {
+                s.MontoVendedor,
+                VendedorId = s.Orden.VendedorId,
+                EstadoOrden = s.Orden.Estado
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (split is null ||
+            split.VendedorId != liquidacion.VendedorId ||
+            split.EstadoOrden != EstadoOrden.Entregada ||
+            split.MontoVendedor <= 0m ||
+            split.MontoVendedor != liquidacion.MontoLiquidar)
+            throw new InvalidOperationException(
+                "Liquidación con split, propietario, estado o importe inconsistentes; requiere revisión manual.");
 
-        // Generar asiento contable de desembolso:
-        // DEBE: 2108 Pasivo Vendedores (se cancela la obligación)
-        // HABER: 1101 Caja (sale el dinero)
+        if (await _db.PartidasContables.AsNoTracking().AnyAsync(p =>
+            p.TipoOperacion == "Liquidacion" && p.ReferenciaOrigenId == liquidacion.Id,
+            cancellationToken))
+            throw new InvalidOperationException(
+                "Ya existe un asiento para esta liquidación; requiere conciliación manual.");
+
+        if (_db.Database.IsRelational())
+        {
+            var reservadas = await _db.Liquidaciones
+                .Where(l => l.Id == liquidacionId && l.Estado == EstadoLiquidacion.Pendiente)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(l => l.Estado, EstadoLiquidacion.EnProceso), cancellationToken);
+            if (reservadas != 1)
+                throw new InvalidOperationException(
+                    "La liquidación está siendo procesada por otra solicitud; consulte su estado.");
+        }
+
+        // Solo la simulación de pagos está habilitada actualmente. Este asiento
+        // no debe interpretarse como evidencia de transferencia bancaria real.
+        var ahora = DateTime.UtcNow;
         var asientoMonto = liquidacion.MontoLiquidar;
         var partida = new PartidaContable
         {
             Id = Guid.NewGuid(),
-            NumeroPartida = $"LIQ-{DateTime.UtcNow:yyyy}-{await _db.PartidasContables.CountAsync(cancellationToken) + 1:D6}",
-            Fecha = DateTime.UtcNow,
+            NumeroPartida = $"LIQ-{ahora:yyyy}-{liquidacion.Id:N}",
+            Fecha = ahora,
             Concepto = $"Liquidación vendedor {liquidacion.VendedorId:N} — Liq#{liquidacion.Id:N}",
             TipoOperacion = "Liquidacion",
             ReferenciaOrigenId = liquidacion.Id,
             DocumentoReferencia = liquidacion.Id.ToString("N"),
             TotalDebe = asientoMonto,
             TotalHaber = asientoMonto,
-            FechaRegistro = DateTime.UtcNow,
+            FechaRegistro = ahora,
             Lineas = new List<LineaPartidaContable>
             {
                 new() { Id = Guid.NewGuid(), CodigoCuenta = PASIVO_VENDEDORES,
@@ -132,12 +187,13 @@ public class LiquidacionService : ILiquidacionService
         };
 
         _db.PartidasContables.Add(partida);
-
         liquidacion.Estado = EstadoLiquidacion.Completada;
-        liquidacion.FechaLiquidacion = DateTime.UtcNow;
+        liquidacion.FechaLiquidacion = ahora;
         await _db.SaveChangesAsync(cancellationToken);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
 
-        _logger.LogInformation("Liquidación {Id} pagada. Asiento={Partida}. Monto={Monto:C}",
+        _logger.LogInformation("Liquidación simulada {Id} completada. Asiento={Partida}. Monto={Monto:C}",
             liquidacion.Id, partida.NumeroPartida, asientoMonto);
 
         return liquidacion;
