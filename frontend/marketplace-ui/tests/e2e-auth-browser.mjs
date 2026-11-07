@@ -129,7 +129,8 @@ async function run() {
     assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), firstToken);
     scenarios.status(401);
     await page.goto(baseUrl + '/ordenes?again=1');
-    await page.waitForURL('**/login');
+    await page.waitForURL('**/login', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: 'Iniciar sesión' }).waitFor();
     assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), null);
     console.log('OK P1 Chromium: 403 preserves session; 401 clears');
 
