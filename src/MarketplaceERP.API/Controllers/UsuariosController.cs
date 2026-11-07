@@ -4,6 +4,7 @@
  */
 
 using System.ComponentModel.DataAnnotations;
+using MarketplaceERP.API.Security;
 using MarketplaceERP.Core.Data;
 using MarketplaceERP.Core.Entities;
 using Microsoft.AspNetCore.Authorization;
@@ -49,13 +50,6 @@ public class UsuariosController : ControllerBase
     private readonly ILogger<UsuariosController> _logger;
     private readonly PasswordHasher<Usuario> _passwordHasher;
 
-    private static readonly HashSet<string> _rolesValidos = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Admin",
-        "Vendedor",
-        "Comprador"
-    };
-
     public UsuariosController(CoreDbContext coreDb, ILogger<UsuariosController> logger)
     {
         _coreDb = coreDb;
@@ -81,8 +75,12 @@ public class UsuariosController : ControllerBase
         if (request.Password.Length < 10)
             return BadRequest(new { mensaje = "La contraseña debe tener al menos 10 caracteres." });
 
-        if (!_rolesValidos.Contains(request.Rol))
+        var rolCanonico = UsuarioRoles.Canonizar(request.Rol);
+        if (rolCanonico is null)
             return BadRequest(new { mensaje = "El rol especificado es inválido. Roles permitidos: Admin, Vendedor, Comprador." });
+
+        if (string.IsNullOrWhiteSpace(request.Nombre))
+            return BadRequest(new { mensaje = "El nombre del usuario es obligatorio." });
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
 
@@ -95,7 +93,7 @@ public class UsuariosController : ControllerBase
 
         // Si el rol es Vendedor, VendedorId es obligatorio y debe existir en core.vendedores
         Guid? vendedorIdAsignado = null;
-        if (request.Rol.Equals("Vendedor", StringComparison.OrdinalIgnoreCase))
+        if (rolCanonico == "Vendedor")
         {
             if (!request.VendedorId.HasValue || request.VendedorId.Value == Guid.Empty)
             {
@@ -116,7 +114,7 @@ public class UsuariosController : ControllerBase
             Id = Guid.NewGuid(),
             Email = normalizedEmail,
             Nombre = request.Nombre.Trim(),
-            Rol = request.Rol.Trim(),
+            Rol = rolCanonico,
             Activo = true,
             VendedorId = vendedorIdAsignado,
             FechaRegistro = DateTime.UtcNow
