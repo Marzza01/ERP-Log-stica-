@@ -11,6 +11,7 @@ using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace MarketplaceERP.API.Controllers;
 
@@ -417,12 +418,13 @@ public class ComprasController : ControllerBase
         if (fechaVencimiento < fechaEmision)
             return BadRequest(new { mensaje = "El vencimiento no puede ser anterior a la emisión de la factura." });
 
-        // Evita repeticiones secuenciales. La protección entre peticiones
-        // exactamente concurrentes requiere una restricción única en PostgreSQL.
+        // Comprobar antes de insertar para dar un error legible. La garantía
+        // real bajo concurrencia reside en el índice UNIQUE de PostgreSQL FIN-06.
         if (await _db.FacturasProveedor.AnyAsync(f =>
-                f.OrdenCompraId == po.Id && f.NumeroFactura.ToUpper() == numeroFactura.ToUpper(),
+                f.ProveedorId == po.ProveedorId &&
+                f.NumeroFactura.ToUpper() == numeroFactura.ToUpper(),
                 cancellationToken))
-            return Conflict(new { mensaje = "Ya existe una factura con ese número para esta orden de compra." });
+            return Conflict(new { mensaje = "El proveedor ya tiene registrada una factura con ese número." });
 
         var factura = new FacturaProveedor
         {
@@ -439,7 +441,16 @@ public class ComprasController : ControllerBase
         };
 
         _db.FacturasProveedor.Add(factura);
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg &&
+            pg.SqlState == PostgresErrorCodes.UniqueViolation &&
+            pg.ConstraintName == "UX_FIN06_facturas_proveedor_numero")
+        {
+            return Conflict(new { mensaje = "La factura ya fue registrada por otra solicitud. Consulte el historial." });
+        }
 
         return CreatedAtAction(nameof(ObtenerPO), new { id = po.Id },
             new { factura.Id, factura.NumeroFactura, factura.MontoTotal, factura.AprobadaParaPago });
@@ -454,10 +465,48 @@ public class ComprasController : ControllerBase
     public async Task<IActionResult> EjecutarMatch(
         [FromBody] Validar3WayMatchRequest req, CancellationToken cancellationToken)
     {
-        MatchTridireccional match;
+        // El servicio 3-Way guarda la autorización ANTES de que Contabilidad
+        // genere el asiento. Ambas escrituras deben confirmarse o deshacerse
+        // juntas. En CI InMemory no hay transacciones; los tests de concurrencia
+        // usan PostgreSQL real con el mismo FinanceDbContext por request.
+        await using var transaction = _db.Database.IsRelational()
+            ? await _db.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+
         try
         {
-            match = await _matching.EjecutarMatchAsync(req, cancellationToken);
+            var match = await _matching.EjecutarMatchAsync(req, cancellationToken);
+
+            if (match.Resultado == Estado3WayMatch.Conforme && match.AutorizadoParaPago)
+            {
+                // Un segundo match no puede producir un segundo asiento:
+                // hay índices parciales únicos tanto para autorizaciones como
+                // para asientos de Compra, además de esta verificación legible.
+                if (await _db.PartidasContables.AsNoTracking().AnyAsync(p =>
+                    p.TipoOperacion == "Compra" && p.ReferenciaOrigenId == req.OrdenCompraId,
+                    cancellationToken))
+                    return Conflict(new { mensaje = "La orden ya tiene un asiento de compra registrado." });
+
+                var po = await _db.OrdenesCompra.FindAsync([req.OrdenCompraId], cancellationToken)
+                    ?? throw new InvalidOperationException("No se encuentra la orden contabilizable.");
+                var factura = await _db.FacturasProveedor.FindAsync([req.FacturaProveedorId], cancellationToken)
+                    ?? throw new InvalidOperationException("No se encuentra la factura contabilizable.");
+
+                await _contabilidad.GenerarAsientoCompraAsync(
+                    po.Id, factura.MontoSubTotal, factura.MontoIva, cancellationToken);
+            }
+
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
+
+            return Ok(match);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg &&
+            pg.SqlState == PostgresErrorCodes.UniqueViolation &&
+            (pg.ConstraintName == "UX_FIN06_match_po_autorizado" ||
+             pg.ConstraintName == "UX_FIN06_asiento_compra_po"))
+        {
+            return Conflict(new { mensaje = "La orden ya fue autorizada o contabilizada por otra solicitud." });
         }
         catch (ArgumentException ex)
         {
@@ -467,20 +516,6 @@ public class ComprasController : ControllerBase
         {
             return BadRequest(new { mensaje = ex.Message });
         }
-
-        // Si el match es conforme, generar asiento contable automático
-        if (match.Resultado == Estado3WayMatch.Conforme && match.AutorizadoParaPago)
-        {
-            var po = await _db.OrdenesCompra.FindAsync([req.OrdenCompraId], cancellationToken);
-            var factura = await _db.FacturasProveedor.FindAsync([req.FacturaProveedorId], cancellationToken);
-            if (po != null && factura != null)
-            {
-                await _contabilidad.GenerarAsientoCompraAsync(
-                    po.Id, factura.MontoSubTotal, factura.MontoIva, cancellationToken);
-            }
-        }
-
-        return Ok(match);
     }
 
     // ── GET /api/compras/match/historial ──────────────────────────────────────
