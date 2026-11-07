@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using MarketplaceERP.Catalog.Data;
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
@@ -47,6 +48,7 @@ public class CheckoutController : ControllerBase
 
     [HttpPost]
     [Authorize(Roles = "Comprador")]
+    [PaymentOperationsGuard]
     [ProducesResponseType(typeof(CheckoutResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

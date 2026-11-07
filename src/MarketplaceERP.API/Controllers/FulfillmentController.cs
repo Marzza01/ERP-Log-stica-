@@ -18,7 +18,7 @@ namespace MarketplaceERP.API.Controllers;
 /// Conecta el WMS (Célula A) con el OMS (Célula B).
 /// </summary>
 [ApiController]
-[Authorize(Roles = "Admin,Vendedor")]
+[Authorize(Roles = "Admin")]
 [Route("api/fulfillment")]
 [Produces("application/json")]
 public class FulfillmentController : ControllerBase

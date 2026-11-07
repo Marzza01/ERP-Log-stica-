@@ -3,12 +3,15 @@
  * Todos los derechos reservados © 2026
  */
 
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Core.Data;
 using MarketplaceERP.Finance.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace MarketplaceERP.API.Controllers;
 
@@ -18,10 +21,17 @@ namespace MarketplaceERP.API.Controllers;
 /// Requisito: PDF1 R-COMP-01 a R-COMP-06
 /// </summary>
 [ApiController]
+[Authorize(Roles = "Admin")]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class ComprasController : ControllerBase
 {
+    // finance numeric(18,2): no persistir importes negativos, fracciones de
+    // centavo ni montos que PostgreSQL no pueda representar.
+    private const decimal MontoMaximo = 9999999999999999.99m;
+    private static bool ImporteValido(decimal monto) =>
+        monto >= 0m && monto <= MontoMaximo && decimal.Round(monto, 2) == monto;
+
     private readonly MarketplaceERP.Finance.Data.FinanceDbContext _db;
     private readonly ITresWayMatchingService _matching;
     private readonly IContabilidadService _contabilidad;
@@ -100,6 +110,48 @@ public class ComprasController : ControllerBase
         if (req.ProveedorId == Guid.Empty)
             return BadRequest(new { mensaje = "Debe seleccionar un proveedor del maestro corporativo." });
 
+        if (req.TerminosPago?.Length > 100 || req.Observaciones?.Length > 1000)
+            return BadRequest(new { mensaje = "Términos de pago u observaciones exceden la longitud permitida." });
+
+        decimal subtotal = 0m;
+        foreach (var item in req.Items)
+        {
+            if (item is null || string.IsNullOrWhiteSpace(item.Sku) || item.Sku.Trim().Length > 50 ||
+                string.IsNullOrWhiteSpace(item.NombreProducto) || item.NombreProducto.Trim().Length > 300)
+                return BadRequest(new { mensaje = "Cada ítem requiere SKU (máximo 50) y nombre (máximo 300)." });
+
+            if (item.Cantidad <= 0 || !ImporteValido(item.PrecioUnitario) || item.PrecioUnitario == 0m)
+                return BadRequest(new { mensaje = "La cantidad y el precio unitario deben ser positivos; solo dos decimales." });
+
+            try
+            {
+                var totalLinea = checked(item.Cantidad * item.PrecioUnitario);
+                subtotal = checked(subtotal + totalLinea);
+            }
+            catch (OverflowException)
+            {
+                return BadRequest(new { mensaje = "El importe de la orden supera la precisión monetaria admitida." });
+            }
+
+            if (!ImporteValido(subtotal))
+                return BadRequest(new { mensaje = "El importe de la orden supera el máximo monetario admitido." });
+        }
+
+        decimal iva;
+        decimal montoTotal;
+        try
+        {
+            iva = decimal.Round(checked(subtotal * 0.13m), 2);
+            montoTotal = checked(subtotal + iva);
+        }
+        catch (OverflowException)
+        {
+            return BadRequest(new { mensaje = "El total de la orden supera la precisión monetaria admitida." });
+        }
+
+        if (!ImporteValido(montoTotal))
+            return BadRequest(new { mensaje = "El total de la orden supera el máximo monetario admitido." });
+
         var proveedor = await _coreDb.Proveedores
             .AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == req.ProveedorId && p.Activo, cancellationToken);
@@ -113,11 +165,15 @@ public class ComprasController : ControllerBase
             ? "Contado"
             : $"Crédito {proveedor.PlazoCreditoDias} días";
 
-        var numeroPO = $"PO-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+        // El número de PO no debe depender de cuatro cifras aleatorias:
+        // existe índice UNIQUE y las colisiones son probables bajo carga.
+        // La referencia pública incluye el mismo GUID persistente de la PO.
+        var poId = Guid.NewGuid();
+        var numeroPO = $"PO-{DateTime.UtcNow:yyyyMMdd}-{poId:N}";
 
         var po = new OrdenCompra
         {
-            Id = Guid.NewGuid(),
+            Id = poId,
             NumeroPO = numeroPO,
             ProveedorId = req.ProveedorId,
             ProveedorNombre = nombreProveedor,
@@ -128,25 +184,23 @@ public class ComprasController : ControllerBase
             FechaEntregaEsperada = req.FechaEntregaEsperada ?? DateTime.UtcNow.AddDays(15),
         };
 
-        decimal subtotal = 0m;
         foreach (var item in req.Items)
         {
             po.Items.Add(new ItemOrdenCompra
             {
                 Id = Guid.NewGuid(),
                 OrdenCompraId = po.Id,
-                Sku = item.Sku,
-                NombreProducto = item.NombreProducto,
+                Sku = item.Sku.Trim(),
+                NombreProducto = item.NombreProducto.Trim(),
                 CantidadSolicitada = item.Cantidad,
                 PrecioUnitarioAcordado = item.PrecioUnitario,
                 CantidadRecibida = 0,
             });
-            subtotal += item.Cantidad * item.PrecioUnitario;
         }
 
         po.SubTotal = subtotal;
-        po.ImpuestoIva = Math.Round(subtotal * 0.13m, 2);
-        po.MontoTotal = po.SubTotal + po.ImpuestoIva;
+        po.ImpuestoIva = iva;
+        po.MontoTotal = montoTotal;
 
         _db.OrdenesCompra.Add(po);
 
@@ -333,53 +387,256 @@ public class ComprasController : ControllerBase
     public async Task<IActionResult> RegistrarFactura(
         [FromBody] RegistrarFacturaRequest req, CancellationToken cancellationToken)
     {
-        var po = await _db.OrdenesCompra.FindAsync([req.OrdenCompraId], cancellationToken);
+        var po = await _db.OrdenesCompra
+            .Include(p => p.Items)
+            .FirstOrDefaultAsync(p => p.Id == req.OrdenCompraId, cancellationToken);
         if (po == null) return NotFound(new { mensaje = $"PO {req.OrdenCompraId} no encontrada." });
+
+        var numeroFactura = req.NumeroFactura?.Trim();
+        if (string.IsNullOrWhiteSpace(numeroFactura) || numeroFactura.Length > 50)
+            return BadRequest(new { mensaje = "La factura requiere un número válido de máximo 50 caracteres." });
+
+        if (req.SubTotal <= 0m || !ImporteValido(req.SubTotal) ||
+            !ImporteValido(req.MontoTotal) || req.MontoTotal <= 0m)
+            return BadRequest(new { mensaje = "Los importes de factura deben ser positivos, con máximo dos decimales y dentro de la precisión admitida." });
+
+        decimal montoIva;
+        decimal totalCalculado;
+        try
+        {
+            montoIva = decimal.Round(checked(req.SubTotal * 0.13m), 2);
+            totalCalculado = checked(req.SubTotal + montoIva);
+        }
+        catch (OverflowException)
+        {
+            return BadRequest(new { mensaje = "El IVA o total de factura supera la precisión monetaria admitida." });
+        }
+
+        if (!ImporteValido(totalCalculado) || req.MontoTotal != totalCalculado)
+            return BadRequest(new { mensaje = "El total de la factura debe coincidir exactamente con el subtotal más IVA (13%)." });
+
+        var fechaEmision = req.FechaEmision ?? DateTime.UtcNow;
+        var fechaVencimiento = req.FechaVencimiento ?? fechaEmision.AddDays(30);
+        if (fechaVencimiento < fechaEmision)
+            return BadRequest(new { mensaje = "El vencimiento no puede ser anterior a la emisión de la factura." });
+
+        // Comprobar antes de insertar para dar un error legible. La garantía
+        // real bajo concurrencia reside en el índice UNIQUE de PostgreSQL FIN-06.
+        if (await _db.FacturasProveedor.AnyAsync(f =>
+                f.ProveedorId == po.ProveedorId &&
+                f.NumeroFactura.ToUpper() == numeroFactura.ToUpper(),
+                cancellationToken))
+            return Conflict(new { mensaje = "El proveedor ya tiene registrada una factura con ese número." });
+
+        // Por compatibilidad, las solicitudes anteriores sin líneas aún
+        // registran la factura, pero FIN-07 impide autorizarla con 3-Way.
+        List<ItemFacturaProveedor> detalle;
+        try
+        {
+            detalle = ValidarDetalleFactura(req.Lineas, po, req.SubTotal);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
 
         var factura = new FacturaProveedor
         {
             Id = Guid.NewGuid(),
+            Items = detalle,
             OrdenCompraId = req.OrdenCompraId,
             ProveedorId = po.ProveedorId,
-            NumeroFactura = req.NumeroFactura,
+            NumeroFactura = numeroFactura,
             MontoSubTotal = req.SubTotal,
-            MontoIva = Math.Round(req.SubTotal * 0.13m, 2),
-            MontoTotal = req.MontoTotal,
-            FechaEmision = req.FechaEmision ?? DateTime.UtcNow,
-            FechaVencimiento = req.FechaVencimiento ?? DateTime.UtcNow.AddDays(30),
+            MontoIva = montoIva,
+            MontoTotal = totalCalculado,
+            FechaEmision = fechaEmision,
+            FechaVencimiento = fechaVencimiento,
             AprobadaParaPago = false,
         };
 
         _db.FacturasProveedor.Add(factura);
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg &&
+            pg.SqlState == PostgresErrorCodes.UniqueViolation &&
+            pg.ConstraintName == "UX_FIN06_facturas_proveedor_numero")
+        {
+            return Conflict(new { mensaje = "La factura ya fue registrada por otra solicitud. Consulte el historial." });
+        }
 
         return CreatedAtAction(nameof(ObtenerPO), new { id = po.Id },
-            new { factura.Id, factura.NumeroFactura, factura.MontoTotal, factura.AprobadaParaPago });
+            new { factura.Id, factura.NumeroFactura, factura.MontoTotal, factura.AprobadaParaPago,
+                detalleRegistrado = detalle.Count > 0, cantidadLineas = detalle.Count });
+    }
+
+    // ── POST /api/compras/facturas/{id}/lineas ───────────────────────────────
+    /// <summary>
+    /// Agrega el detalle a una factura heredada sin líneas. No inventa datos,
+    /// no permite modificar documentos ya contabilizados ni sobreescribir líneas.
+    /// </summary>
+    [HttpPost("facturas/{id:guid}/lineas", Name = "CompletarDetalleFacturaProveedor")]
+    public async Task<IActionResult> CompletarDetalleFactura(
+        Guid id, [FromBody] List<LineaFacturaProveedorRequest> lineas,
+        CancellationToken cancellationToken)
+    {
+        var factura = await _db.FacturasProveedor
+            .Include(f => f.Items)
+            .FirstOrDefaultAsync(f => f.Id == id, cancellationToken);
+        if (factura is null) return NotFound(new { mensaje = "Factura no encontrada." });
+
+        if (factura.AprobadaParaPago || factura.Pagada || factura.Items.Count > 0)
+            return Conflict(new { mensaje = "No se puede modificar una factura aprobada, pagada o con detalle existente." });
+
+        var po = await _db.OrdenesCompra
+            .Include(p => p.Items)
+            .FirstOrDefaultAsync(p => p.Id == factura.OrdenCompraId, cancellationToken);
+        if (po is null) return Conflict(new { mensaje = "La orden original de la factura no existe." });
+
+        List<ItemFacturaProveedor> detalle;
+        try
+        {
+            detalle = ValidarDetalleFactura(lineas, po, factura.MontoSubTotal);
+            if (detalle.Count == 0)
+                return BadRequest(new { mensaje = "Para completar la factura debe proporcionar líneas documentales." });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
+
+        factura.Items = detalle;
+        // Las entidades con GUID explícito se interpretan como existentes
+        // cuando se adjuntan a una factura ya rastreada. Marcar como Added.
+        _db.ItemsFacturaProveedor.AddRange(detalle);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg &&
+            pg.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return Conflict(new { mensaje = "El detalle ya fue registrado por otra solicitud. Recargue la factura." });
+        }
+
+        return Ok(new { factura.Id, detalleRegistrado = true, cantidadLineas = detalle.Count });
+    }
+
+    private static List<ItemFacturaProveedor> ValidarDetalleFactura(
+        List<LineaFacturaProveedorRequest>? lineas, OrdenCompra po, decimal subtotal)
+    {
+        if (lineas is null) return new List<ItemFacturaProveedor>();
+
+        if (lineas.Count is < 1 or > 500)
+            throw new ArgumentException("La factura debe tener entre 1 y 500 líneas documentales.");
+
+        var idsPo = po.Items.Select(i => i.Id).ToHashSet();
+        var idsRecibidos = new HashSet<Guid>();
+        var resultado = new List<ItemFacturaProveedor>(lineas.Count);
+        decimal acumulado = 0m;
+
+        foreach (var linea in lineas)
+        {
+            if (linea is null || linea.ItemOrdenCompraId == Guid.Empty ||
+                !idsPo.Contains(linea.ItemOrdenCompraId) ||
+                !idsRecibidos.Add(linea.ItemOrdenCompraId))
+                throw new ArgumentException("La factura contiene ítems repetidos o ajenos a la orden.");
+
+            if (linea.CantidadFacturada <= 0 ||
+                linea.PrecioUnitarioFacturado <= 0m ||
+                !ImporteValido(linea.PrecioUnitarioFacturado))
+                throw new ArgumentException("Cada línea requiere cantidad y precio positivos (máximo dos decimales).");
+
+            try
+            {
+                acumulado = checked(acumulado +
+                    checked(linea.CantidadFacturada * linea.PrecioUnitarioFacturado));
+            }
+            catch (OverflowException)
+            {
+                throw new ArgumentException("Las líneas de factura exceden la precisión monetaria.");
+            }
+
+            if (!ImporteValido(acumulado))
+                throw new ArgumentException("El subtotal de líneas excede numeric(18,2).");
+
+            resultado.Add(new ItemFacturaProveedor
+            {
+                Id = Guid.NewGuid(),
+                ItemOrdenCompraId = linea.ItemOrdenCompraId,
+                CantidadFacturada = linea.CantidadFacturada,
+                PrecioUnitarioFacturado = linea.PrecioUnitarioFacturado
+            });
+        }
+
+        if (acumulado != subtotal)
+            throw new ArgumentException("El subtotal declarado no coincide con cantidades y precios facturados.");
+
+        return resultado;
     }
 
     // ── POST /api/compras/match ───────────────────────────────────────────────
     /// <summary>Ejecuta el Match Tridireccional (PO - Factura - Bodega WMS).</summary>
     [HttpPost("match", Name = "EjecutarMatch3Way")]
+    [PaymentOperationsGuard]
     [ProducesResponseType(typeof(MatchTridireccional), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> EjecutarMatch(
         [FromBody] Validar3WayMatchRequest req, CancellationToken cancellationToken)
     {
-        var match = await _matching.EjecutarMatchAsync(req, cancellationToken);
+        // El servicio 3-Way guarda la autorización ANTES de que Contabilidad
+        // genere el asiento. Ambas escrituras deben confirmarse o deshacerse
+        // juntas. En CI InMemory no hay transacciones; los tests de concurrencia
+        // usan PostgreSQL real con el mismo FinanceDbContext por request.
+        await using var transaction = _db.Database.IsRelational()
+            ? await _db.Database.BeginTransactionAsync(cancellationToken)
+            : null;
 
-        // Si el match es conforme, generar asiento contable automático
-        if (match.Resultado == Estado3WayMatch.Conforme && match.AutorizadoParaPago)
+        try
         {
-            var po = await _db.OrdenesCompra.FindAsync([req.OrdenCompraId], cancellationToken);
-            var factura = await _db.FacturasProveedor.FindAsync([req.FacturaProveedorId], cancellationToken);
-            if (po != null && factura != null)
+            var match = await _matching.EjecutarMatchAsync(req, cancellationToken);
+
+            if (match.Resultado == Estado3WayMatch.Conforme && match.AutorizadoParaPago)
             {
+                // Un segundo match no puede producir un segundo asiento:
+                // hay índices parciales únicos tanto para autorizaciones como
+                // para asientos de Compra, además de esta verificación legible.
+                if (await _db.PartidasContables.AsNoTracking().AnyAsync(p =>
+                    p.TipoOperacion == "Compra" && p.ReferenciaOrigenId == req.OrdenCompraId,
+                    cancellationToken))
+                    return Conflict(new { mensaje = "La orden ya tiene un asiento de compra registrado." });
+
+                var po = await _db.OrdenesCompra.FindAsync([req.OrdenCompraId], cancellationToken)
+                    ?? throw new InvalidOperationException("No se encuentra la orden contabilizable.");
+                var factura = await _db.FacturasProveedor.FindAsync([req.FacturaProveedorId], cancellationToken)
+                    ?? throw new InvalidOperationException("No se encuentra la factura contabilizable.");
+
                 await _contabilidad.GenerarAsientoCompraAsync(
                     po.Id, factura.MontoSubTotal, factura.MontoIva, cancellationToken);
             }
-        }
 
-        return Ok(match);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
+
+            return Ok(match);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg &&
+            pg.SqlState == PostgresErrorCodes.UniqueViolation &&
+            (pg.ConstraintName == "UX_FIN06_match_po_autorizado" ||
+             pg.ConstraintName == "UX_FIN06_asiento_compra_po"))
+        {
+            return Conflict(new { mensaje = "La orden ya fue autorizada o contabilizada por otra solicitud." });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { mensaje = ex.Message });
+        }
     }
 
     // ── GET /api/compras/match/historial ──────────────────────────────────────
@@ -416,10 +673,16 @@ public record RecibirMercaderiaRequest(
     List<RecibirMercaderiaItemRequest> Items,
     string? Notas);
 
+public record LineaFacturaProveedorRequest(
+    Guid ItemOrdenCompraId,
+    int CantidadFacturada,
+    decimal PrecioUnitarioFacturado);
+
 public record RegistrarFacturaRequest(
     Guid OrdenCompraId,
     string NumeroFactura,
     decimal SubTotal,
     decimal MontoTotal,
     DateTime? FechaEmision,
-    DateTime? FechaVencimiento);
+    DateTime? FechaVencimiento,
+    List<LineaFacturaProveedorRequest>? Lineas = null);

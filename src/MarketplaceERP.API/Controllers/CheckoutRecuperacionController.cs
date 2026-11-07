@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using MarketplaceERP.Core.Interfaces;
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Services;
 using MarketplaceERP.Shared.DTOs;
@@ -67,6 +68,7 @@ public sealed class CheckoutRecuperacionController : ControllerBase
     /// cobro, reembolso, confirmación de pedido ni movimiento de inventario.
     /// </summary>
     [HttpPost("ordenes/{ordenId:guid}/conciliar")]
+    [PaymentOperationsGuard]
     public async Task<IActionResult> Conciliar(Guid ordenId, CancellationToken ct = default)
     {
         if (!EsAdministradorAutenticado()) return Forbid();
@@ -98,6 +100,7 @@ public sealed class CheckoutRecuperacionController : ControllerBase
     /// No existe implementación concreta de proveedor en la aplicación actual.
     /// </summary>
     [HttpPost("ordenes/{ordenId:guid}/reembolsar")]
+    [PaymentOperationsGuard]
     public async Task<IActionResult> Reembolsar(
         Guid ordenId,
         [FromHeader(Name = "X-Confirmacion-Reembolso")] string? confirmacion,

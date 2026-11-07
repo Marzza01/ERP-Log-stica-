@@ -12,7 +12,7 @@ namespace MarketplaceERP.API.Controllers;
 
 [ApiController]
 [Route("api/inventario/ajustes")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class AjustesInventarioController : ControllerBase
 {
     private readonly IAjusteInventarioService _service;
@@ -30,7 +30,7 @@ public class AjustesInventarioController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Crear([FromBody] CrearAjusteInventarioRequest request, CancellationToken cancellationToken)
     {
         var result = await _service.CrearAsync(
@@ -62,7 +62,7 @@ public class AjustesInventarioController : ControllerBase
     }
 
     [HttpPost("{id:guid}/cancelar")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Cancelar(Guid id, CancellationToken cancellationToken)
     {
         var result = await _service.CancelarAsync(id, UsuarioActual(), cancellationToken);

@@ -203,6 +203,41 @@ namespace MarketplaceERP.Finance.Migrations
                     b.ToTable("items_orden", "finance");
                 });
 
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.ItemFacturaProveedor", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CantidadFacturada")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("FacturaProveedorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ItemOrdenCompraId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("PrecioUnitarioFacturado")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FacturaProveedorId", "ItemOrdenCompraId")
+                        .IsUnique();
+
+                    b.HasIndex("ItemOrdenCompraId");
+
+                    b.ToTable("items_factura_proveedor", "finance", t =>
+                        {
+                            t.HasCheckConstraint("CK_FIN07_factura_linea_cantidad",
+                                "\"CantidadFacturada\" > 0");
+                            t.HasCheckConstraint("CK_FIN07_factura_linea_precio",
+                                "\"PrecioUnitarioFacturado\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.ItemOrdenCompra", b =>
                 {
                     b.Property<Guid>("Id")
@@ -783,6 +818,25 @@ namespace MarketplaceERP.Finance.Migrations
                     b.Navigation("OrdenCompra");
                 });
 
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.ItemFacturaProveedor", b =>
+                {
+                    b.HasOne("MarketplaceERP.Finance.Entities.FacturaProveedor", "FacturaProveedor")
+                        .WithMany("Items")
+                        .HasForeignKey("FacturaProveedorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MarketplaceERP.Finance.Entities.ItemOrdenCompra", "ItemOrdenCompra")
+                        .WithMany()
+                        .HasForeignKey("ItemOrdenCompraId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("FacturaProveedor");
+
+                    b.Navigation("ItemOrdenCompra");
+                });
+
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.IntentoPago", b =>
                 {
                     b.HasOne("MarketplaceERP.Finance.Entities.Orden", null)
@@ -870,6 +924,11 @@ namespace MarketplaceERP.Finance.Migrations
                     b.Navigation("Items");
 
                     b.Navigation("SplitPago");
+                });
+
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.FacturaProveedor", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.OrdenCompra", b =>

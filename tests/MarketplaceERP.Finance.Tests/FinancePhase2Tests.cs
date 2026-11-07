@@ -153,11 +153,15 @@ public class TresWayMatchingServiceTests
     }
 
     private static async Task<(OrdenCompra po, FacturaProveedor factura)> CrearPOyFactura(
-        FinanceDbContext db, int cantidadOrdenada, decimal montoFactura)
+        FinanceDbContext db, int cantidadOrdenada, decimal montoFactura, int? cantidadRecibida = null)
     {
+        var recibida = cantidadRecibida ?? cantidadOrdenada;
         var po = new OrdenCompra
         {
             Id = Guid.NewGuid(),
+            Estado = recibida == cantidadOrdenada
+                ? EstadoOrdenCompra.RecibidaCompleta
+                : EstadoOrdenCompra.RecibidaParcial,
             NumeroPO = $"PO-{Guid.NewGuid():N}",
             ProveedorId = Guid.NewGuid(),
             ProveedorNombre = "Proveedor Match Test",
@@ -167,19 +171,35 @@ public class TresWayMatchingServiceTests
             Items = new List<ItemOrdenCompra>
             {
                 new() { Id = Guid.NewGuid(), Sku = "SKU-001", NombreProducto = "Producto A",
-                        CantidadSolicitada = cantidadOrdenada, PrecioUnitarioAcordado = 10m }
+                        CantidadSolicitada = cantidadOrdenada, CantidadRecibida = recibida,
+                        PrecioUnitarioAcordado = 10m }
             }
         };
+        // En la factura, los precios y cantidades son evidencia documental
+        // distinta de la PO y de WMS. El total depende del detalle real.
+        var precioFacturado = decimal.Round(montoFactura / 1.13m / cantidadOrdenada, 2);
+        var subtotalFactura = cantidadOrdenada * precioFacturado;
+        var ivaFactura = decimal.Round(subtotalFactura * 0.13m, 2);
         var factura = new FacturaProveedor
         {
             Id = Guid.NewGuid(),
             OrdenCompraId = po.Id,
             ProveedorId = po.ProveedorId,
             NumeroFactura = $"FAC-{Guid.NewGuid():N}",
-            MontoSubTotal = montoFactura / 1.13m,
-            MontoIva = montoFactura - (montoFactura / 1.13m),
-            MontoTotal = montoFactura,
+            MontoSubTotal = subtotalFactura,
+            MontoIva = ivaFactura,
+            MontoTotal = subtotalFactura + ivaFactura,
             FechaEmision = DateTime.UtcNow,
+            Items = new List<ItemFacturaProveedor>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    ItemOrdenCompraId = po.Items.Single().Id,
+                    CantidadFacturada = cantidadOrdenada,
+                    PrecioUnitarioFacturado = precioFacturado
+                }
+            }
         };
         db.OrdenesCompra.Add(po);
         db.FacturasProveedor.Add(factura);
@@ -207,7 +227,7 @@ public class TresWayMatchingServiceTests
     {
         await using var db = CreateDbContext();
         var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
-        var (po, factura) = await CrearPOyFactura(db, cantidadOrdenada: 10, montoFactura: 113m);
+        var (po, factura) = await CrearPOyFactura(db, cantidadOrdenada: 10, montoFactura: 113m, cantidadRecibida: 8);
 
         var req = new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 8);
         var match = await service.EjecutarMatchAsync(req);
@@ -235,13 +255,101 @@ public class TresWayMatchingServiceTests
     {
         await using var db = CreateDbContext();
         var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
-        var (po, factura) = await CrearPOyFactura(db, cantidadOrdenada: 10, montoFactura: 200m);
+        var (po, factura) = await CrearPOyFactura(db, cantidadOrdenada: 10, montoFactura: 200m, cantidadRecibida: 7);
 
         var req = new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 7);
         var match = await service.EjecutarMatchAsync(req);
 
         match.Resultado.Should().Be(Estado3WayMatch.DiscrepanciaTotal);
         match.AutorizadoParaPago.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Match3Way_CantidadPresentadaNoCoincideConWms_NoAutoriza()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m, cantidadRecibida: 8);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+
+        Assert.False(factura.AprobadaParaPago);
+        Assert.Empty(await db.MatchesTridireccionales.ToListAsync());
+        Assert.Equal(8, po.Items.Single().CantidadRecibida);
+    }
+
+    [Fact]
+    public async Task Match3Way_FacturaDeOtraPo_NoAutoriza()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (poA, facturaA) = await CrearPOyFactura(db, 10, 113m);
+        var (_, facturaB) = await CrearPOyFactura(db, 10, 113m);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(poA.Id, facturaB.Id, CantidadRecibidaBodega: 10)));
+
+        Assert.False(facturaA.AprobadaParaPago);
+        Assert.False(facturaB.AprobadaParaPago);
+        Assert.Empty(await db.MatchesTridireccionales.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Match3Way_FacturaDeOtroProveedor_NoAutoriza()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m);
+        factura.ProveedorId = Guid.NewGuid();
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+        Assert.Empty(await db.MatchesTridireccionales.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Match3Way_POEnBorrador_NoAutorizaAunqueCantidadesCoincidan()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m);
+        po.Estado = EstadoOrdenCompra.Borrador;
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+        Assert.False(factura.AprobadaParaPago);
+    }
+
+    [Fact]
+    public async Task Match3Way_Repetido_NoCreaOtroMatchConforme()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m);
+        var first = await service.EjecutarMatchAsync(new(po.Id, factura.Id, 10));
+        Assert.True(first.AutorizadoParaPago);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+        Assert.Single(await db.MatchesTridireccionales.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Match3Way_FacturaConImporteDescuadrado_NoAutoriza()
+    {
+        await using var db = CreateDbContext();
+        var service = new TresWayMatchingService(db, NullLogger<TresWayMatchingService>.Instance);
+        var (po, factura) = await CrearPOyFactura(db, 10, 113m);
+        factura.MontoTotal = 113.01m;
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EjecutarMatchAsync(
+            new Validar3WayMatchRequest(po.Id, factura.Id, CantidadRecibidaBodega: 10)));
+        Assert.False(factura.AprobadaParaPago);
+        Assert.Empty(await db.MatchesTridireccionales.ToListAsync());
     }
 }
 

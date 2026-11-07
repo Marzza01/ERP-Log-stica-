@@ -29,6 +29,7 @@ public class FinanceDbContext : DbContext
     public DbSet<OrdenCompra> OrdenesCompra => Set<OrdenCompra>();
     public DbSet<ItemOrdenCompra> ItemsOrdenCompra => Set<ItemOrdenCompra>();
     public DbSet<FacturaProveedor> FacturasProveedor => Set<FacturaProveedor>();
+    public DbSet<ItemFacturaProveedor> ItemsFacturaProveedor => Set<ItemFacturaProveedor>();
     public DbSet<MatchTridireccional> MatchesTridireccionales => Set<MatchTridireccional>();
 
     // Contabilidad General (Libro Diario y Mayor)
@@ -270,6 +271,38 @@ public class FinanceDbContext : DbContext
                   .WithMany(p => p.Facturas)
                   .HasForeignKey(f => f.OrdenCompraId)
                   .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ── ItemFacturaProveedor (FIN-07) ─────────────────────────────────────
+        modelBuilder.Entity<ItemFacturaProveedor>(entity =>
+        {
+            entity.ToTable("items_factura_proveedor");
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.Id).ValueGeneratedOnAdd();
+            entity.Property(i => i.CantidadFacturada).IsRequired();
+            entity.Property(i => i.PrecioUnitarioFacturado).HasPrecision(18, 2).IsRequired();
+
+            // No se pueden declarar dos líneas del mismo item PO en una factura.
+            entity.HasIndex(i => new { i.FacturaProveedorId, i.ItemOrdenCompraId })
+                  .IsUnique();
+
+            entity.HasOne(i => i.FacturaProveedor)
+                  .WithMany(f => f.Items)
+                  .HasForeignKey(i => i.FacturaProveedorId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(i => i.ItemOrdenCompra)
+                  .WithMany()
+                  .HasForeignKey(i => i.ItemOrdenCompraId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_FIN07_factura_linea_cantidad",
+                    "\"CantidadFacturada\" > 0");
+                t.HasCheckConstraint("CK_FIN07_factura_linea_precio",
+                    "\"PrecioUnitarioFacturado\" > 0");
+            });
         });
 
         // ── MatchTridireccional ───────────────────────────────────────────────
