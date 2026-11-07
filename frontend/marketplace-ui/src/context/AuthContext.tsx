@@ -45,10 +45,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Registrar callback global para 401 desde el cliente HTTP
   useEffect(() => {
     setUnauthorizedHandler(() => {
+      // ProtectedRoute performs the redirect after logout; a second imperative
+      // window.location navigation races with React Router and aborts tests.
       logout();
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
     });
   }, [logout]);
 
