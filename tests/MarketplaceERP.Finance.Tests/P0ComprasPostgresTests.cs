@@ -25,6 +25,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Moq;
 using Xunit;
 
 namespace MarketplaceERP.Finance.Tests;
@@ -387,5 +388,85 @@ public class P0ComprasPostgresTests
             f => f.Id == docHttp.Id)).Pagada);
         Assert.Equal(5, await finalCatalog.MovimientosInventario.CountAsync(
             x => x.TipoMovimiento == TipoMovimientoInventario.RecepcionInbound));
+
+        // P0 transaccional: una excepción después de autorizar 3-Way,
+        // antes de generar la partida, NO debe dejar aprobado el pago.
+        // Se reutiliza la segunda PO recibida, que aún no tiene factura.
+        Assert.IsType<CreatedAtActionResult>(await controller.RegistrarFactura(
+            new RegistrarFacturaRequest(
+                poConcurrencia.Id, "FAC-P0-ROLLBACK", 35.50m, 40.12m,
+                null, null, new()
+                {
+                    new(itemConcurrente.Id, 10, 3.55m)
+                }), CancellationToken.None));
+        var facturaRollback = await finance.FacturasProveedor
+            .SingleAsync(f => f.OrdenCompraId == poConcurrencia.Id);
+
+        var fallaContable = new Mock<IContabilidadService>();
+        fallaContable.Setup(x => x.GenerarAsientoCompraAsync(
+                poConcurrencia.Id, 35.50m, 4.62m,
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Fallo contable simulado"));
+
+        await using (var falloDb = new FinanceDbContext(financeOptions))
+        {
+            var ctrlFallo = new ComprasController(
+                falloDb,
+                new TresWayMatchingService(
+                    falloDb, NullLogger<TresWayMatchingService>.Instance),
+                fallaContable.Object, inventory, core,
+                NullLogger<ComprasController>.Instance);
+            Assert.IsType<BadRequestObjectResult>(await ctrlFallo.EjecutarMatch(
+                new Validar3WayMatchRequest(
+                    poConcurrencia.Id, facturaRollback.Id, 10),
+                CancellationToken.None));
+        }
+        fallaContable.Verify(x => x.GenerarAsientoCompraAsync(
+            poConcurrencia.Id, 35.50m, 4.62m,
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        await using (var rollbackCheck = new FinanceDbContext(financeOptions))
+        {
+            Assert.False((await rollbackCheck.FacturasProveedor.SingleAsync(
+                x => x.Id == facturaRollback.Id)).AprobadaParaPago);
+            Assert.Empty(await rollbackCheck.MatchesTridireccionales
+                .Where(m => m.OrdenCompraId == poConcurrencia.Id).ToListAsync());
+            Assert.Empty(await rollbackCheck.PartidasContables
+                .Where(p => p.TipoOperacion == "Compra" &&
+                            p.ReferenciaOrigenId == poConcurrencia.Id)
+                .ToListAsync());
+        }
+
+        // Un reintento con el servicio contable real sí debe confirmar
+        // exactamente una autorización y una partida balanceada.
+        await using (var retryDb = new FinanceDbContext(financeOptions))
+        {
+            var retryController = new ComprasController(retryDb,
+                new TresWayMatchingService(
+                    retryDb, NullLogger<TresWayMatchingService>.Instance),
+                new ContabilidadService(
+                    retryDb, NullLogger<ContabilidadService>.Instance),
+                inventory, core, NullLogger<ComprasController>.Instance);
+            Assert.IsType<OkObjectResult>(await retryController.EjecutarMatch(
+                new Validar3WayMatchRequest(
+                    poConcurrencia.Id, facturaRollback.Id, 10),
+                CancellationToken.None));
+        }
+
+        await using var afterRetry = new FinanceDbContext(financeOptions);
+        Assert.Single(await afterRetry.MatchesTridireccionales
+            .Where(m => m.OrdenCompraId == poConcurrencia.Id &&
+                        m.AutorizadoParaPago).ToListAsync());
+        var asientoRecuperado = await afterRetry.PartidasContables
+            .Include(p => p.Lineas)
+            .SingleAsync(p => p.TipoOperacion == "Compra" &&
+                             p.ReferenciaOrigenId == poConcurrencia.Id);
+        Assert.Equal(asientoRecuperado.TotalDebe, asientoRecuperado.TotalHaber);
+        Assert.Equal(asientoRecuperado.TotalDebe,
+            asientoRecuperado.Lineas.Sum(x => x.Debe));
+        Assert.Equal(asientoRecuperado.TotalHaber,
+            asientoRecuperado.Lineas.Sum(x => x.Haber));
+        Assert.False((await afterRetry.FacturasProveedor.SingleAsync(
+            x => x.Id == facturaRollback.Id)).Pagada);
     }
 }
