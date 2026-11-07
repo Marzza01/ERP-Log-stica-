@@ -129,3 +129,32 @@ jobs:
           path: frontend/marketplace-ui/dist/
           retention-days: 7
 
+
+  browser-e2e:
+    name: E2E Browser (isolated Chromium)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install UI dependencies
+        working-directory: frontend/marketplace-ui
+        run: npm ci
+
+      - name: Install isolated browser runner
+        working-directory: frontend/marketplace-ui
+        run: |
+          npm install --no-save --no-package-lock playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Test real browser with mock API only
+        working-directory: frontend/marketplace-ui
+        run: node tests/e2e-auth-browser.mjs
