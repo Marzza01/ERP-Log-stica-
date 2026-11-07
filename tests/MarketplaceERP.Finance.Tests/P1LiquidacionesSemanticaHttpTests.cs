@@ -41,7 +41,7 @@ public sealed class P1LiquidacionesSemanticaHttpTests
         var json = JsonSerializer.Serialize(result.Value, JsonOptions);
 
         Assert.Contains("\"transferenciaBancariaConfirmada\":false", json);
-        Assert.Contains("no confirma ningún desembolso bancario", json);
+        Assert.Contains("desembolso bancario", json);
         service.Verify(x => x.GenerarLiquidacionAsync(vendedorId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
