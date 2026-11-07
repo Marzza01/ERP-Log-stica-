@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using System.IdentityModel.Tokens.Jwt;
@@ -37,6 +38,8 @@ public class P0AutorizacionHttpTests
     {
         var suffix = Guid.NewGuid().ToString("N");
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Secret));
+        var matching = new Mock<ITresWayMatchingService>(MockBehavior.Strict);
+        var liquidaciones = new Mock<ILiquidacionService>(MockBehavior.Strict);
         using var server = new TestServer(new WebHostBuilder()
             .ConfigureServices(services =>
             {
@@ -45,7 +48,9 @@ public class P0AutorizacionHttpTests
                     o.UseInMemoryDatabase("p0-auth-finance-" + suffix));
                 services.AddDbContext<CoreDbContext>(o =>
                     o.UseInMemoryDatabase("p0-auth-core-" + suffix));
-                services.AddSingleton(Mock.Of<ITresWayMatchingService>());
+                services.AddSingleton(matching.Object);
+                services.AddSingleton(liquidaciones.Object);
+                services.AddSingleton(new PaymentOperationsMode(true));
                 services.AddSingleton(Mock.Of<IContabilidadService>());
                 services.AddSingleton(Mock.Of<IInventoryService>());
 
@@ -115,10 +120,33 @@ public class P0AutorizacionHttpTests
         Assert.Equal(HttpStatusCode.OK,
             (await admin.GetAsync("/api/compras/po")).StatusCode);
 
+        // Incluso un JWT Admin válido no puede ejecutar efectos financieros
+        // si el modo de pagos se encuentra deshabilitado.
+        Assert.Equal(HttpStatusCode.ServiceUnavailable,
+            (await admin.PostAsJsonAsync("/api/liquidaciones/generar",
+                new GenerarLiquidacionRequest(Guid.NewGuid()))).StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable,
+            (await admin.PostAsync(
+                "/api/liquidaciones/procesar-pago/" + Guid.NewGuid(), null)).StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable,
+            (await admin.PostAsJsonAsync("/api/compras/match",
+                new Validar3WayMatchRequest(
+                    Guid.NewGuid(), Guid.NewGuid(), 1))).StatusCode);
+
+        matching.Verify(m => m.EjecutarMatchAsync(
+            It.IsAny<Validar3WayMatchRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        liquidaciones.Verify(l => l.GenerarLiquidacionAsync(
+            It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        liquidaciones.Verify(l => l.ProcesarPagoAsync(
+            It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+
         using var scope = server.Services.CreateScope();
         var finance = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
         Assert.Equal(0, await finance.OrdenesCompra.CountAsync());
         Assert.Equal(0, await finance.FacturasProveedor.CountAsync());
+        Assert.Equal(0, await finance.MatchesTridireccionales.CountAsync());
+        Assert.Equal(0, await finance.PartidasContables.CountAsync());
     }
 
     private static string CrearJwt(string rol, SecurityKey key)
