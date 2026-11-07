@@ -116,11 +116,15 @@ public class ComprasController : ControllerBase
             ? "Contado"
             : $"Crédito {proveedor.PlazoCreditoDias} días";
 
-        var numeroPO = $"PO-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+        // El número de PO no debe depender de cuatro cifras aleatorias:
+        // existe índice UNIQUE y las colisiones son probables bajo carga.
+        // La referencia pública incluye el mismo GUID persistente de la PO.
+        var poId = Guid.NewGuid();
+        var numeroPO = $"PO-{DateTime.UtcNow:yyyyMMdd}-{poId:N}";
 
         var po = new OrdenCompra
         {
-            Id = Guid.NewGuid(),
+            Id = poId,
             NumeroPO = numeroPO,
             ProveedorId = req.ProveedorId,
             ProveedorNombre = nombreProveedor,

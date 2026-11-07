@@ -151,6 +151,37 @@ public sealed class AsientoManualPostgresFin01Tests : IAsyncLifetime
         Assert.Equal(12, dbNumeros.Distinct(StringComparer.Ordinal).Count());
     }
 
+    [Fact]
+    public async Task PostgreSql_AsientosVentaYCompraConcurrentes_TienenNumerosUnicos()
+    {
+        if (!Active) return;
+        var numeros = await Task.WhenAll(Enumerable.Range(0, 24)
+            .Select(async i =>
+            {
+                await using var db = NewContext();
+                var contabilidad = Service(db);
+                return i % 2 == 0
+                    ? (await contabilidad.GenerarAsientoVentaAsync(
+                        Guid.NewGuid(), 100m, 13m, "FacturaConsumidorFinal")).NumeroPartida
+                    : (await contabilidad.GenerarAsientoCompraAsync(
+                        Guid.NewGuid(), 100m, 13m)).NumeroPartida;
+            }));
+
+        Assert.Equal(24, numeros.Distinct(StringComparer.Ordinal).Count());
+        await using var db = NewContext();
+        var persisted = await db.PartidasContables.AsNoTracking()
+            .Where(p => p.TipoOperacion == "Venta" || p.TipoOperacion == "Compra")
+            .Select(p => p.NumeroPartida).ToListAsync();
+        Assert.Equal(24, persisted.Count);
+        Assert.Equal(24, persisted.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(persisted, n =>
+        {
+            Assert.True(n.Length <= 50);
+            Assert.True(n.StartsWith("VTA-", StringComparison.Ordinal) ||
+                        n.StartsWith("CMP-", StringComparison.Ordinal));
+        });
+    }
+
     public async Task DisposeAsync()
     {
         if (!_created || _adminConnection is null ||
