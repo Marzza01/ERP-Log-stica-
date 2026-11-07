@@ -117,7 +117,17 @@ public sealed class ConcurrenciaComprasPostgresFin06Tests : IAsyncLifetime
                 NumeroFactura = "CCF-" + Guid.NewGuid().ToString("N"),
                 MontoSubTotal = 100m, MontoIva = 13m, MontoTotal = 113m,
                 FechaEmision = DateTime.UtcNow,
-                FechaVencimiento = DateTime.UtcNow.AddDays(30)
+                FechaVencimiento = DateTime.UtcNow.AddDays(30),
+                Items = new List<ItemFacturaProveedor>
+                {
+                    new()
+                    {
+                        Id = Guid.NewGuid(),
+                        ItemOrdenCompraId = po.Items.Single().Id,
+                        CantidadFacturada = 10,
+                        PrecioUnitarioFacturado = 10m
+                    }
+                }
             });
         }
         await db.SaveChangesAsync();
