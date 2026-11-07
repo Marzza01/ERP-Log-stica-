@@ -40,8 +40,19 @@ async function start() {
   if (process.env.P1_CHROME_CHANNEL === 'chrome') launchOptions.channel = 'chrome';
   browser = await chromium.launch(launchOptions);
   const context = await browser.newContext({
-    viewport: { width: 1365, height: 850 },
-    extraHTTPHeaders: { 'x-vercel-trusted-oidc-idp-token': oidc }
+    viewport: { width: 1365, height: 850 }
+  });
+  // Origin-scoped injection: NEVER forward the Vercel credential to fonts,
+  // telemetry, redirects, or other third-party hosts.
+  await context.route('**/*', async route => {
+    const requested = new URL(route.request().url());
+    if (requested.origin !== origin) return route.continue();
+    return route.continue({
+      headers: {
+        ...route.request().headers(),
+        'x-vercel-trusted-oidc-idp-token': oidc
+      }
+    });
   });
   const page = await context.newPage();
   page.on('pageerror', () => { countBrowserErrors += 1; });
