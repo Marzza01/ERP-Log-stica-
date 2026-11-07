@@ -97,7 +97,15 @@ async function run() {
     const scenarios = await setupApi(page);
 
     await page.goto(baseUrl + '/dashboard');
-    await page.waitForURL('**/login');
+    try {
+      await page.waitForURL('**/login', { timeout: 12000 });
+    } catch (error) {
+      const content = await page.locator('body').innerText().catch(() => '<unavailable>');
+      throw new Error('Initial guest redirect failed; current URL=' + page.url() +
+        '; visible body=' + content.slice(0, 900) +
+        '; errors=' + failures.slice(0, 5).join(' | ') +
+        '; vite=' + serverOutput.slice(-500), { cause: error });
+    }
     console.log('OK P1 Chromium: unauthenticated protected route -> /login');
 
     await signIn(page, 'admin-fixture@example.invalid', 'wrong-password');
