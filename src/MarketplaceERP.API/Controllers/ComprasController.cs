@@ -508,6 +508,9 @@ public class ComprasController : ControllerBase
         }
 
         factura.Items = detalle;
+        // Las entidades con GUID explícito se interpretan como existentes
+        // cuando se adjuntan a una factura ya rastreada. Marcar como Added.
+        _db.ItemsFacturaProveedor.AddRange(detalle);
         try
         {
             await _db.SaveChangesAsync(cancellationToken);
