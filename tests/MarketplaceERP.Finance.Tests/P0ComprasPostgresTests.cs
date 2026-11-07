@@ -186,11 +186,24 @@ public class P0ComprasPostgresTests
                 }), CancellationToken.None));
         var factura = await finance.FacturasProveedor.SingleAsync();
         Assert.False(factura.Pagada);
+        Assert.IsType<ConflictObjectResult>(await controller.RegistrarFactura(
+            new RegistrarFacturaRequest(po.Id, "FAC-P0-DEMO", 205.92m, 232.69m,
+                null, null, new()
+                {
+                    new(arroz.Id, 24, 3.55m),
+                    new(cafe.Id, 12, 10.06m)
+                }), CancellationToken.None));
+        Assert.Equal(1, await finance.FacturasProveedor.CountAsync());
 
         var match = await matching.EjecutarMatchAsync(
             new Validar3WayMatchRequest(po.Id, factura.Id, 36));
         Assert.Equal(Estado3WayMatch.Conforme, match.Resultado);
         Assert.True(match.AutorizadoParaPago); // banderín contable, NO pago ejecutado
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            matching.EjecutarMatchAsync(
+                new Validar3WayMatchRequest(po.Id, factura.Id, 36)));
+        Assert.Single(await finance.MatchesTridireccionales
+            .Where(m => m.OrdenCompraId == po.Id && m.AutorizadoParaPago).ToListAsync());
 
         // Asiento de compra simulado sobre la misma base efímera.
         var asiento = await ledger.GenerarAsientoCompraAsync(
@@ -348,6 +361,15 @@ public class P0ComprasPostgresTests
                     new(cafeHttp.Id, 12, 10.06m)
                 }));
         Assert.Equal(HttpStatusCode.Created, facturaHttpResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await http.PostAsJsonAsync(
+            "/api/compras/facturas",
+            new RegistrarFacturaRequest(
+                ordenHttp.Id, "FAC-P0-HTTP", 205.92m, 232.69m, null, null,
+                new()
+                {
+                    new(arrozHttp.Id, 24, 3.55m),
+                    new(cafeHttp.Id, 12, 10.06m)
+                }))).StatusCode);
 
         // El endpoint /match está deliberadamente protegido por un guard
         // financiero. Se concilia aquí mediante el servicio real SIN pagar.
