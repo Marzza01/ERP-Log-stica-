@@ -316,6 +316,25 @@ public class ComprasController : ControllerBase
 
             if (item.CantidadRecibida == recibido.CantidadAcumuladaEsperada)
             {
+                // Un acumulado igual no prueba por sí solo que este
+                // OperacionId se haya procesado con los mismos datos.
+                // Consultar el ledger WMS sin generar una segunda entrada.
+                var confirmado = await _inventory.ConfirmarInboundProcesadoAsync(
+                    item.Sku,
+                    recibido.CantidadRecibida,
+                    recibido.UbicacionAlmacenId,
+                    po.Id,
+                    item.Id,
+                    recibido.OperacionId,
+                    cancellationToken);
+
+                if (!confirmado)
+                    return Conflict(new
+                    {
+                        mensaje = "El acumulado de la PO ya coincide, pero el OperacionId o los datos del reintento no corresponden a una recepción confirmada. Refresque la PO.",
+                        sku = item.Sku
+                    });
+
                 resultados.Add(new
                 {
                     item.Id,
