@@ -44,7 +44,7 @@ function setupApi(page) {
   let protectedStatus = 200;
   const requests = [];
   const scenarios = { status: code => { protectedStatus = code; }, requests };
-  return page.route('**/api/**', async route => {
+  return page.route(url => url.pathname.startsWith('/api/'), async route => {
     const req = route.request();
     const url = new URL(req.url());
     requests.push({ path: url.pathname, method: req.method() });
