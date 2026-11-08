@@ -102,6 +102,25 @@ Evidencia de código: commit `7c643e0ed8605bd9b12db595765ea9e0457a14f9`, GitHub 
 
 **Siguiente gate de cierre:** ejecutar checkout de ensayo sin pagos reales, recepción PO–factura–match por HTTP con roles y conciliación de asientos, devoluciones RMA con inventario y revisión de la rúbrica; comparar también los 23 archivos locales respaldados.
 
+## 3C. Devolución RMA integrada y corrección de serialización JSON
+
+Se amplió la prueba `FlujoVentaB2B_B2CHttpPostgresTests` (tanto B2C como B2B) para hacer por HTTP lo siguiente:
+
+- `POST /api/rma` antes de que OMS esté `Entregada`: **400**, sin crear una devolución.
+- Transición de OMS a `Entregada` **solo mediante datos sintéticos del test** (no se ejercita un endpoint real de transportista).
+- Solicitud que supera la cantidad vendida: **400**.
+- Solicitud de RMA de 1 unidad de una orden ya entregada: **201**.
+- Inspección `ReStock` con `OperacionId` y ubicación WMS: **200**; devolución al saldo físico.
+- Reintento de inspección con otro `OperacionId`: **200** y **un solo movimiento RmaRestock**.
+- `GET /api/rma`: **200** con contrato JSON plano, sin referencias circulares a `Producto`/`Stock`.
+- Conciliación final: de 12 unidades iniciales, 3 despachadas y 1 devuelta, stock físico **10**, sin reservas, con exactamente un movimiento Outbound y uno RmaRestock.
+
+**Defecto reproducido y corregido:** la API RMA devolvía directamente la entidad `DevolucionRMA` cargada con `Producto`. Al inspeccionar, la serialización circular `Producto.Stock.Producto...` hacía fallar la respuesta HTTP. CI [42530614251](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42530614251) reprodujo los dos fallos de B2B/B2C. `RmaController` devuelve ahora un `RmaResponse` plano con **los mismos campos requeridos por `frontend/marketplace-ui/src/types/index.ts`**. Se aplica a solicitar, inspeccionar y listar, sin modificar el esquema ni el seguimiento EF.
+
+**Validación:** commit `09818e2f5a83c9a2309947dacedebedd7dcc7fe8`, CI [42530926686](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42530926686): **511/511 pruebas .NET aprobadas**, cero fallos (Core 10 + Catalog 79 + Finance 422), frontend y PowerShell aprobados. La ejecución E2E general seguía en curso en la última verificación. Las pruebas cubren exclusivamente datos efímeros y no tienen acceso a Neon.
+
+**Límites aún abiertos:** no se verificó pago ni reembolso; tampoco la entrega física real; la concurrencia de creación de dos RMA para el mismo producto/orden todavía necesita un test que garantice que no se exceda la cantidad vendida; y sigue faltando comparar los 23 archivos de los worktrees locales antes de cualquier fusión.
+
 ## 4. Cobertura que existe y lo que todavía NO demuestra
 
 - `tests/MarketplaceERP.Finance.Tests/FlujoIntegralE2ETests.cs` encadena PO–3Way–venta–Picking–Packing–Despacho–Liquidación y verifica balance, **pero utiliza EF Core InMemory para Core, Catalog y Finance**; no demuestra restricciones de PostgreSQL, integración HTTP/JWT ni consistencia bajo fallos entre DbContext.
