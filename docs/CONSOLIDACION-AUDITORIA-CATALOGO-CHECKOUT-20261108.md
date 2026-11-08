@@ -73,7 +73,8 @@ La comparación PowerShell entregó **32 registros**: **9** idénticos a consoli
 
 - La simulación CSV solo valida datos, no constraints ni concurrencia PostgreSQL.
 - La importación simultánea de dos archivos que contienen el mismo SKU aún requiere pruebas de concurrencia sobre índices e idempotencia.
-- El reconocimiento de formatos decimales mixtos puede ser ambiguo (`NumberStyles.Any`); endurecer sin alterar silenciosamente valores legítimos.
+- **CAT-02, formatos decimales endurecidos**: se eliminó `NumberStyles.Any` que podía interpretar `1,25` como `125`. Ahora solo se admiten importes sin separadores de miles, hasta dos decimales, con `.` o `,` como separador decimal; valores ambiguos como `1,234` se rechazan. `CatalogImportPreservesWmsTests.ImportarDecimalConComa_NoInterpretaComoMilesYRechazaFormatoAmbiguo` comprueba el caso con formato de coma y el rechazo.
+- **Evidencia de esta validación**: GitHub Actions [42525923754](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42525923754), commit `0bdbb0c63f0546a9ab190580ca7a82207748b3e7`. `dotnet test` aprobó **502/502** (Core 10 + Catalog 76 + Finance 416), frontend y comprobador Windows correctos. El E2E Browser estaba en curso al consultar el registro.
 - Si se escribe al esquema o datos fuera del `CatalogDbContext` durante importación mediante futuras llamadas, el rollback debe reevaluarse. Hoy se ha comprobado una operación Catalog que persiste con un único `SaveChanges`.
 - Revisar antes de desplegar el servicio histórico `ControlledCatalogImportService` de los 23 archivos locales respaldados, su compatibilidad y los límites operativos (importador Admin en producción).
 - Ninguna de estas pruebas sustituye el respaldo independiente de Neon producción ni las pruebas empresariales B2B/B2C end-to-end.
