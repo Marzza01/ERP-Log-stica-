@@ -121,6 +121,19 @@ Se amplió la prueba `FlujoVentaB2B_B2CHttpPostgresTests` (tanto B2C como B2B) p
 
 **Límites aún abiertos:** no se verificó pago ni reembolso; tampoco la entrega física real; la concurrencia de creación de dos RMA para el mismo producto/orden todavía necesita un test que garantice que no se exceda la cantidad vendida; y sigue faltando comparar los 23 archivos de los worktrees locales antes de cualquier fusión.
 
+## 3D. Concurrencia de devoluciones RMA y doble inspección — bloque P0
+
+**Problema auditado:** `RmaController.SolicitarDevolucion` comprobaba cantidad vendida y cantidad ya solicitada sin una sección crítica transaccional. Dos administradores podían consultar el mismo saldo de una orden antes de registrar sus devoluciones.
+
+**Prueba reproducible HTTP + PostgreSQL 15 local:** se modificó `FlujoVentaB2B_B2CHttpPostgresTests` para los dos tipos de cliente. Con una venta sintética de **3 unidades**, de las que 1 ya está devuelta, se retiene desde otra conexión un `pg_advisory_xact_lock(6173153, hashOrden)`; se lanzan dos solicitudes simultáneas de **2 unidades cada una** y se inspeccionan las esperas reales con `pg_locks`.
+
+- **Antes de corregir**, CI [42532241393](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42532241393) falló en ambos escenarios porque las solicitudes **no esperaban el bloqueo**. Esto prueba falta de serialización, no que efectivamente se hayan persistido RMAs en exceso en esa ejecución.
+- **Corrección candidata** en `RmaController.cs`: abrir transacción Catalog en PostgreSQL, tomar candado por `OrdenId`, consultar la orden y saldo remanente y **guardar el RMA antes del commit**, de forma que el segundo intento vea lo escrito por el primero. La llave pertenece al namespace de locks de RMA y no interfiere con picking o importación.
+- **Después de corregir**, CI [42532510687](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42532510687) pasó **511/511 tests .NET** y los cuatro trabajos de GitHub Actions. La prueba espera que solo una solicitud devuelva **201** y la otra **400**, con exactamente **3 unidades** acumuladas y sin cambio de stock al solicitar devolución.
+- **Inspección simultánea de un mismo RMA**: se amplió el test para enviar dos dictámenes `ReStock` con distintos `OperacionId`; valida exactamente **un movimiento RmaRestock** de 2 unidades, stock final de **12 unidades** (12 originales − 3 despachadas + 1 + 2 devueltas), y RMA `Completado`. CI [42532801090](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42532801090): **511/511 tests .NET**, frontend y comprobador Windows aprobados. El job E2E general estaba en curso al documentarlo.
+
+**Restricciones de la solución**: el bloqueo por orden solo protege **peticiones que pasan por este controlador y respetan la transacción**, no inserciones directas por SQL u otros servicios. No hay garantía global de unicidad de `NumeroRMA` con la generación aleatoria histórica, ni prueba de pagos/reembolsos, ni de una autorización real sobre la orden entregada distinta del rol Admin. Se recomienda auditar ambas limitaciones antes de publicar.
+
 ## 4. Cobertura que existe y lo que todavía NO demuestra
 
 - `tests/MarketplaceERP.Finance.Tests/FlujoIntegralE2ETests.cs` encadena PO–3Way–venta–Picking–Packing–Despacho–Liquidación y verifica balance, **pero utiliza EF Core InMemory para Core, Catalog y Finance**; no demuestra restricciones de PostgreSQL, integración HTTP/JWT ni consistencia bajo fallos entre DbContext.
