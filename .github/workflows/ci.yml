@@ -106,6 +106,7 @@ jobs:
         run: |
           node --check scripts/p1-staging-auth-readonly.mjs
           node scripts/p1-staging-auth-readonly.mjs --help
+          node --check frontend/marketplace-ui/tests/e2e-staging-preview.mjs
 
       # 8. Instalar dependencias npm
       - name: Install npm dependencies
