@@ -46,9 +46,14 @@ public class FulfillmentController : ControllerBase
         if (orden is null)
             return NotFound(new { mensaje = $"Orden con ID {ordenId} no encontrada." });
 
+        // Solo una orden aprobada puede entrar a preparación. Evita reactivar canceladas
+        // o entregadas y rechaza solicitudes repetidas sobre EnProceso.
+        if (orden.Estado != EstadoOrden.Aprobada)
+            return Conflict(new { mensaje = "Solo una orden aprobada puede generar una PickList." });
+
         var itemsSolicitud = orden.Items.Select(i => new ItemPickingSolicitud(
             ProductoId: i.ProductoId,
-            Sku: $"SKU-{i.ProductoId.ToString()[..8].ToUpper()}",
+            Sku: i.SkuReferencia,
             NombreProducto: i.NombreProducto,
             Cantidad: i.Cantidad
         )).ToList();
@@ -118,6 +123,16 @@ public class FulfillmentController : ControllerBase
         var orden = await _financeDb.Ordenes.FindAsync(new object[] { ordenId }, cancellationToken);
         if (orden is null)
             return NotFound(new { mensaje = "Orden no encontrada." });
+
+        // El identificador del cuerpo nunca debe dirigir WMS a otra orden.
+        if (request.OrdenId != ordenId)
+            return BadRequest(new { mensaje = "OrdenId del cuerpo no coincide con la ruta." });
+
+        if (request.NumeroOrden != orden.NumeroOrden)
+            return BadRequest(new { mensaje = "NumeroOrden del cuerpo no coincide con la orden." });
+
+        if (orden.Estado != EstadoOrden.EnProceso)
+            return Conflict(new { mensaje = "Solo una orden en preparación puede empacarse." });
 
         var paquete = await _fulfillmentService.EmpacarYRotularAsync(request, cancellationToken);
 
