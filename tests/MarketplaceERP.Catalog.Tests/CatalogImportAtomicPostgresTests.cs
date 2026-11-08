@@ -173,11 +173,15 @@ public sealed class CatalogImportAtomicPostgresTests : IAsyncLifetime
             var ambosBloqueados = false;
             for (int intento = 0; intento < 100; intento++)
             {
+                // pg_locks expone esperas reales de heavyweight locks; evitar
+                // snapshots de pg_stat_activity dentro de la transacción larga.
                 await using var count = new NpgsqlCommand("""
-                    SELECT count(*) FROM pg_stat_activity
-                    WHERE datname = current_database()
-                      AND wait_event_type = 'Lock'
-                      AND wait_event = 'advisory'
+                    SELECT count(*) FROM pg_locks
+                    WHERE locktype = 'advisory'
+                      AND NOT granted
+                      AND database = (
+                          SELECT oid FROM pg_database WHERE datname = current_database()
+                      )
                     """, bloqueo, transaccionBloqueo);
                 var esperando = (long)(await count.ExecuteScalarAsync())!;
                 if (esperando >= 2)
