@@ -63,6 +63,8 @@ Se añadió `tests/MarketplaceERP.Finance.Tests/FulfillmentOmsRecoveryPostgresTe
 
 **Herramienta de diagnóstico:** `scripts/diagnosticar-divergencias-fulfillment.sql` es solo `SELECT` y busca listas duplicadas, PickLists sin avance OMS, guías desajustadas, paquetes duplicados, despachos sin estado OMS y paquetes huérfanos. **Aún no se ha ejecutado contra los datos del usuario y sus resultados requieren interpretación.**
 
+**Guardia adicional de duplicados históricos:** `FulfillmentService.GenerarPickListAsync` comprueba hasta dos listas por `OrdenId` antes de reutilizar una. Si encuentra más de una, **detiene la operación** y exige conciliación manual sin borrar datos; también rechaza un reintento con SKU/producto/cantidad distintos. Dos pruebas `FulfillmentServiceTests.GenerarPickList_ConDuplicadosHistoricos_RechazaSinBorrarListas` y `GenerarPickList_RetryConCantidadDistinta_NoReutilizaUnaListaIncompatible` cubren ambos casos. CI [42529565282](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42529565282): **509 pruebas .NET aprobadas** (Core 10, Catalog 79, Finance 420), cero fallos; frontend y PowerShell aprobados, E2E Browser en curso al documentarlo.
+
 **Límites críticos:**
 
 - El diseño **todavía NO tiene una transacción distribuida** entre Catalog y Finance. Se ha comprobado recuperación por reintento en circunstancias específicas, **NO recuperación automática** si el usuario nunca reintenta.
