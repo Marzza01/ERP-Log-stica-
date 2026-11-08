@@ -72,6 +72,36 @@ Se añadió `tests/MarketplaceERP.Finance.Tests/FulfillmentOmsRecoveryPostgresTe
 - No se han probado todas las fallas concurrentes ni las entregas en el mundo real. El test B2B/B2C integral actual es principalmente EF InMemory y necesita corroboración HTTP/API + PostgreSQL con datos sintéticos.
 - Quedan pendientes los 23 archivos locales de recuperación, incluido el importador controlado y modificaciones de frontend.
 
+## 3B. Recorrido HTTP/PostgreSQL de venta aprobada B2B y B2C — validado
+
+**Nuevas pruebas**: `tests/MarketplaceERP.Finance.Tests/FlujoVentaB2B_B2CHttpPostgresTests.cs`, dos casos xUnit (`TipoCliente.B2C` y `TipoCliente.B2B`).
+
+La prueba crea su propia base `ci_venta_integral_*` exclusivamente en `postgres@localhost:5432/postgres`, ejecuta las migraciones de Core, Catalog y Finance, y no conecta a Neon ni realiza pagos. Los tres contextos usan **la misma base física temporal**, con esquemas separados.
+
+| Comprobación | Resultado |
+|---|---|
+| Core | Proveedor sintético activo persistido, consultado al finalizar |
+| Catalog | Producto sintético, ubicación WMS, 12 unidades iniciales y reserva confirmada de 3 |
+| Finance | Orden sintética `Aprobada` con tipo B2B/B2C, IVA del 13 %, comprobante correcto y partida de venta balanceada |
+| Autenticación | `POST /api/fulfillment/ordenes/{id}/generar-picklist` sin JWT devuelve `401` |
+| API real | `TestServer` ASP.NET + JWT Admin; HTTP para crear PickList, confirmar picking, empacar y despachar |
+| OMS | Orden avanza a `Enviada`, conserva misma guía y registra `FechaEnvio` |
+| WMS | Una PickList completada, un paquete despachado, 9 unidades restantes y cero reservadas |
+| Recuperación | Doble llamada HTTP a despacho genera **un solo movimiento físico Outbound** |
+| Finance | Partida de venta con `Debe=Haber`, detalle contabilizado y destino de cuenta correcto: Caja/Bancos para B2C y Cuentas por Cobrar para B2B |
+
+Evidencia de código: commit `7c643e0ed8605bd9b12db595765ea9e0457a14f9`, GitHub Actions [42530293455](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42530293455): **511/511 pruebas .NET, cero fallidas**, compilación frontend y prueba PowerShell aprobadas. La ejecución E2E general de Chromium continuaba en curso al redactar.
+
+**Límites de la prueba, para no sobredimensionar la certificación:**
+
+- El flujo arranca con una orden `Aprobada` construida por datos sintéticos: **no ejecuta CheckoutController, no autoriza ni cobra pagos, no prueba webhooks ni reembolsos**.
+- La vinculación del proveedor Core con el producto Catalog se prueba como datos sintéticos coherentes, **no como integridad referencial cross-schema**.
+- No equivale a un recorrido B2B comercial completo de cotización, crédito, 3-way match o liquidación, cubiertos parcialmente por otras pruebas.
+- No prueba que el navegador frontend ejecute exactamente esos endpoints ni que los despliegues Render/Vercel/Neon tengan el mismo commit.
+- La validación de RMA/recepción inversa, retiros reales, concurrencia de asientos y conciliación post-fallo entre todos los módulos sigue pendiente.
+
+**Siguiente gate de cierre:** ejecutar checkout de ensayo sin pagos reales, recepción PO–factura–match por HTTP con roles y conciliación de asientos, devoluciones RMA con inventario y revisión de la rúbrica; comparar también los 23 archivos locales respaldados.
+
 ## 4. Cobertura que existe y lo que todavía NO demuestra
 
 - `tests/MarketplaceERP.Finance.Tests/FlujoIntegralE2ETests.cs` encadena PO–3Way–venta–Picking–Packing–Despacho–Liquidación y verifica balance, **pero utiliza EF Core InMemory para Core, Catalog y Finance**; no demuestra restricciones de PostgreSQL, integración HTTP/JWT ni consistencia bajo fallos entre DbContext.
