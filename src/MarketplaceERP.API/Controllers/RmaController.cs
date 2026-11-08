@@ -69,6 +69,21 @@ public class RmaController : ControllerBase
     {
         try
         {
+            // Serializar por OrdenId en PostgreSQL antes de consultar las unidades
+            // vendidas y las ya solicitadas. El check del saldo y el INSERT RMA
+            // deben permanecer en la MISMA transacción hasta el commit.
+            // La clave está separada del espacio de advisory locks del picking.
+            await using var transaccion = _catalogDb.Database.ProviderName ==
+                "Npgsql.EntityFrameworkCore.PostgreSQL"
+                    ? await _catalogDb.Database.BeginTransactionAsync()
+                    : null;
+            if (transaccion is not null)
+            {
+                var claveOrden = BitConverter.ToInt32(request.OrdenId.ToByteArray(), 0);
+                await _catalogDb.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(6173153, {claveOrden})");
+            }
+
             // Una devolucion solo puede referirse a una venta real y entregada.
             // Validar antes de crear el documento de Catalog; no se confia en IDs del cliente.
             var orden = await _financeDb.Ordenes.AsNoTracking()
@@ -94,6 +109,9 @@ public class RmaController : ControllerBase
                 return BadRequest(new { mensaje = "La cantidad excede el saldo disponible para devolucion." });
 
             var rma = await _rmaService.RegistrarSolicitudRmaAsync(request);
+            if (transaccion is not null)
+                await transaccion.CommitAsync();
+
             return CreatedAtAction(nameof(Listar), new { id = rma.Id }, Mapear(rma));
         }
         catch (InvalidOperationException ex)
