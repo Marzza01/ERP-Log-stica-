@@ -62,5 +62,10 @@ Se creó una **segunda rama desechable** `br-crimson-hat-bbmx0mpt`, nombre `p2-r
 
 **Limitación explícita:** duplicar mediante branching en Neon es recuperación de un punto de ramificación y verifica identidad de datos en ese instante, **no** es una restauración de backup/snapshot independiente, no prueba procedimiento de desastre ni que la aplicación web pueda reconstruir sus servicios. El intento de snapshot de rama hija recibió HTTP 400 (snapshot no disponible para rama no raíz). Mantener pendiente la aceptación de restore independiente.
 
+## Evidencia adicional P2 — Vercel y recuperación
+- Vercel `erp-log-stica`: `get_runtime_errors` para 24 h devolvió **sin errores reportados**; `get_runtime_logs` Preview, severidades error/fatal, ventana 30 minutos, devolvió **sin registros**. La consulta inicial a 24 h de logs individuales fue rechazada por límite de retención del plan. Esto no demuestra ausencia de errores más antiguos o en Render.
+- Segunda rama `p2-recuperacion-copia-verificada-20261108` confirmó 37/37 tablas idénticas al clon de staging. Consulta SQL reproducible: `scripts/p2-huellas-37-tablas-readonly.sql`. No equivale a restaurar desde snapshot independiente.
+- `main...staging`: 138 commits adelante, 0 detrás, 134 archivos distintos; 36 API, 11 Finance lógica, 3 migraciones Finance, 3 migraciones Catalog, 42 tests, 12 frontend, 12 docs y otras modificaciones. Requiere revisión completa del candidato y no solo recuento.
+
 ## Decisión
 **P2 no se certifica al 100 %.** Este documento aporta auditoría verificable y una lista de puertas de salida. No autoriza escribir datos persistentes en staging ni modificar producción.
