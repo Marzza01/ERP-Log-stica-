@@ -133,6 +133,9 @@ jobs:
         working-directory: frontend/marketplace-ui
         run: npm run test:p3
 
+      - name: Lint frontend
+        working-directory: frontend/marketplace-ui
+        run: npm run lint
       - name: Validate P5 backup script syntax (no database access)
         shell: pwsh
         run: |
@@ -140,7 +143,6 @@ jobs:
           $parseErrors = $null
           [System.Management.Automation.Language.Parser]::ParseFile('scripts/p5-backup-restore-safe.ps1', [ref]$tokens, [ref]$parseErrors) | Out-Null
           if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
-
       - name: Build frontend
         working-directory: frontend/marketplace-ui
         run: npm run build

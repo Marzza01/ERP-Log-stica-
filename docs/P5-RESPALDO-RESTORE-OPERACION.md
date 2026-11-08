@@ -1,5 +1,13 @@
 # P5 — Recuperación independiente antes de cualquier despliegue
 
+## Actualización de ejecución verificada (2026-11-08 UTC)
+
+> Esta sección prevalece sobre las puertas pendientes descritas más abajo, que son el registro histórico previo a la ejecución. Se completó respaldo externo y restauración independiente: SHA-256 AAE667CE6F36D06C703CE1D53226EBD2F60B784DEC0DE6114D8131A45C575E11; 37/37 huellas coincidentes; 500 productos y 2/6/6 historiales de migraciones EF verificados en el proyecto Neon independiente round-star-34135497. Render staging se desplegó LIVE en d9e907c0, endpoints health/ready HTTP 200 y E2E real Admin con completed=true. El archivo privado no reside en GitHub. El resultado NO representa validación de pagos, latencia/SLO ni release de producción.
+
+> Acciones pendientes de aceptación productiva: métricas HTTP, advertencias DataProtection efímeras, riesgo dev minimatch (#51), auditoría de producción/main y rollback de base. Ver Issue #57.
+
+---
+
 ## Resultado de la inspección real
 
 Neon proyecto `square-lake-18241058`: **0 snapshots** disponibles y **ninguna programación automática** de snapshots en la rama raíz. La base de evaluación `marketplaceerp_test` está en una rama secundaria `br-delicate-bar-bbjeww67` que no permite el snapshot del proveedor; el intento anterior devolvió `not allowed to snapshot non-root branch`. Un branch clone con 37/37 hashes iguales NO equivale a un backup lógico restaurable.
