@@ -103,7 +103,7 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
         var numeroOrden = "QA-" + tipoCliente + "-" + Guid.NewGuid().ToString("N")[..10];
         var sku = "QA-" + tipoCliente + "-" + Guid.NewGuid().ToString("N")[..10];
         var ubicacionCodigo = "PAS-QA-RCK-01-NIV-01-POS-01";
-        var unitPrice = tipoCliente == TipoCliente.B2B ? 200m : 25m;
+        var unitPrice = tipoCliente == TipoCliente.B2B ? 200m : 225m;
         const int quantity = 3;
         var subTotal = unitPrice * quantity;
         var iva = decimal.Round(subTotal * .13m, 2);
@@ -126,7 +126,7 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
                 Id = productId, Sku = sku, Nombre = "Producto sintético de evaluación",
                 VendedorId = vendorId, CategoriaId = Guid.NewGuid(),
                 CategoriaNombre = "Pruebas QA", Subcategoria = "Flujo integrado",
-                PrecioB2C = 25m, PrecioB2B = 200m,
+                PrecioB2C = 225m, PrecioB2B = 200m,
                 StockInicial = 12, StockMinimo = 2, Moneda = "USD",
                 ProveedorNombre = "Proveedor QA", PaisOrigen = "El Salvador",
                 PesoKg = 1m, DimensionesCm = "10x10x10",
