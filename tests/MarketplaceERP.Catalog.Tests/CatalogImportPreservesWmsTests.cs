@@ -184,4 +184,58 @@ public class CatalogImportPreservesWmsTests
     }
 
 
+
+    [Fact]
+    public async Task ValidarCsv_DosFilasCorrectas_NoCreaDatosNiAdjuntaEntidades()
+    {
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase($"CatalogDryRun_{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new CatalogDbContext(options);
+        var service = new CatalogImportService(db, NullLogger<CatalogImportService>.Instance);
+        const string category = "Electrónica y Tecnología";
+
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(
+            Header + "\n" +
+            Row("DRY-001", category, 20, 4, 25m) + "\n" +
+            Row("DRY-002", category, 30, 5, 40m) + "\n"));
+
+        var result = await service.ValidarCatalogoCsvAsync(input);
+
+        result.TotalProcesados.Should().Be(2);
+        result.Exitosos.Should().Be(2);
+        result.Errores.Should().Be(0);
+        db.ChangeTracker.Entries().Should().BeEmpty();
+        (await db.Productos.CountAsync()).Should().Be(0);
+        (await db.StockFisico.CountAsync()).Should().Be(0);
+        (await db.UbicacionesAlmacen.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ValidarCsv_PrecioInvalido_ReportarErrorSinPersistirFilasValidas()
+    {
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase($"CatalogDryRunInvalid_{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new CatalogDbContext(options);
+        var service = new CatalogImportService(db, NullLogger<CatalogImportService>.Instance);
+
+        const string category = "Electrónica y Tecnología";
+        var invalido = Row("DRY-ERR", category, 10, 3, 20m).Replace("\"16.00\"", "\"incorrecto\"");
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(
+            Header + "\n" +
+            Row("DRY-GOOD", category, 20, 4, 25m) + "\n" +
+            invalido + "\n"));
+
+        var result = await service.ValidarCatalogoCsvAsync(input);
+
+        result.TotalProcesados.Should().Be(2);
+        result.Exitosos.Should().Be(1);
+        result.Errores.Should().Be(1);
+        db.ChangeTracker.Entries().Should().BeEmpty();
+        (await db.Productos.CountAsync()).Should().Be(0);
+        (await db.StockFisico.CountAsync()).Should().Be(0);
+        (await db.UbicacionesAlmacen.CountAsync()).Should().Be(0);
+    }
+
 }
