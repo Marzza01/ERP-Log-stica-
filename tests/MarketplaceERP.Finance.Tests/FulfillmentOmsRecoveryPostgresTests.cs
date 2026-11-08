@@ -172,6 +172,130 @@ public sealed class FulfillmentOmsRecoveryPostgresTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task FallaFinanceTrasGenerarPickList_ReintentoNoDebeDuplicarLista()
+    {
+        if (!_created) return;
+
+        var ordenId = Guid.NewGuid();
+        var productoId = Guid.NewGuid();
+        var numero = "ORD-PICK-" + Guid.NewGuid().ToString("N")[..10];
+        const string sku = "SKU-PICK-QA";
+        const string ubicacionCodigo = "PAS-A-RCK-01-NIV-01-POS-01";
+
+        await using (var finance = Finance())
+        {
+            finance.Ordenes.Add(new Orden
+            {
+                Id = ordenId, NumeroOrden = numero, Estado = EstadoOrden.Aprobada,
+                CompradorId = Guid.NewGuid(), VendedorId = Guid.NewGuid(),
+                Items = new List<ItemOrden>
+                {
+                    new()
+                    {
+                        Id = Guid.NewGuid(), OrdenId = ordenId,
+                        ProductoId = productoId, SkuReferencia = sku,
+                        NombreProducto = "Producto test picking", Cantidad = 2,
+                        PrecioUnitario = 25m
+                    }
+                }
+            });
+            await finance.SaveChangesAsync();
+        }
+
+        await using (var catalog = Catalog())
+        {
+            var producto = new Producto
+            {
+                Id = productoId, Sku = sku, Nombre = "Producto test picking",
+                CategoriaNombre = "Electrónica y Tecnología", Subcategoria = "Pruebas",
+                PrecioB2C = 25m, PrecioB2B = 20m, StockInicial = 10, StockMinimo = 2,
+                ProveedorNombre = "QA", PesoKg = 1m, DimensionesCm = "10x10x10",
+                UnidadMedida = "Unidad", EstadoProducto = "Activo", CodigoEAN = null,
+                Descripcion = "Prueba WMS", VendedorId = Guid.NewGuid(),
+                CategoriaId = Guid.NewGuid()
+            };
+            var ubicacion = new UbicacionAlmacen
+            {
+                Id = Guid.NewGuid(), Codigo = ubicacionCodigo, Pasillo = "A",
+                Rack = "01", Nivel = 1, Posicion = "01", EstaOcupada = true
+            };
+            catalog.Productos.Add(producto);
+            catalog.UbicacionesAlmacen.Add(ubicacion);
+            catalog.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(), ProductoId = productoId, UbicacionAlmacenId = ubicacion.Id,
+                UbicacionCodigo = ubicacionCodigo, CantidadTotal = 10
+            });
+            await catalog.SaveChangesAsync();
+
+            var reservas = new StockService(catalog, NullLogger<StockService>.Instance);
+            var reserva = await reservas.ReservarStockAsync(productoId, 2, ordenId);
+            Assert.True(reserva.Exitoso, reserva.Mensaje);
+            await reservas.ConfirmarReservaAsync(reserva.ReservaId);
+        }
+
+        await SqlAsync("""
+            CREATE FUNCTION finance.ci_fail_pick() RETURNS trigger
+            LANGUAGE plpgsql AS $
+            BEGIN
+                IF NEW."Estado" = 'EnProceso' AND OLD."Estado" = 'Aprobada' THEN
+                    RAISE EXCEPTION 'Fallo OMS simulado tras guardar PickList WMS';
+                END IF;
+                RETURN NEW;
+            END $;
+            CREATE TRIGGER ci_fail_pick
+              BEFORE UPDATE ON finance.ordenes
+              FOR EACH ROW EXECUTE FUNCTION finance.ci_fail_pick();
+            """);
+
+        try
+        {
+            await using var finance = Finance();
+            await using var catalog = Catalog();
+            var controller = new FulfillmentController(Service(catalog), finance);
+            await Assert.ThrowsAsync<DbUpdateException>(() =>
+                controller.GenerarPickList(ordenId, "Operador QA", CancellationToken.None));
+        }
+        finally
+        {
+            await SqlAsync("DROP TRIGGER IF EXISTS ci_fail_pick ON finance.ordenes");
+            await SqlAsync("DROP FUNCTION IF EXISTS finance.ci_fail_pick()");
+        }
+
+        await using (var finance = Finance())
+        await using (var catalog = Catalog())
+        {
+            Assert.Equal(EstadoOrden.Aprobada,
+                (await finance.Ordenes.AsNoTracking().SingleAsync()).Estado);
+            Assert.Equal(1, await catalog.PickLists.CountAsync());
+            Assert.Equal(2, (await catalog.PickLists.Include(p => p.Items).SingleAsync())
+                .Items.Sum(i => i.CantidadSolicitada));
+        }
+
+        // El estado OMS sigue Aprobada; la solicitud se reintenta.
+        // Debe reconciliar la primera PickList, no emitir otra.
+        await using (var finance = Finance())
+        await using (var catalog = Catalog())
+        {
+            var controller = new FulfillmentController(Service(catalog), finance);
+            var response = await controller.GenerarPickList(ordenId, "Operador QA", CancellationToken.None);
+            Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(response);
+        }
+        await using (var finance = Finance())
+        await using (var catalog = Catalog())
+        {
+            Assert.Equal(1, await catalog.PickLists.CountAsync());
+            Assert.Equal(EstadoOrden.EnProceso,
+                (await finance.Ordenes.AsNoTracking().SingleAsync()).Estado);
+            var stock = await catalog.StockFisico.AsNoTracking().SingleAsync();
+            Assert.Equal(10, stock.CantidadTotal);
+            Assert.Equal(2, stock.CantidadReservada);
+            Assert.Equal(0, await catalog.MovimientosInventario
+                .CountAsync(m => m.TipoMovimiento == TipoMovimientoInventario.DespachoOutbound));
+        }
+    }
+
     private async Task SqlAsync(string sql)
     {
         await using var connection = new NpgsqlConnection(_ephemeral!);
