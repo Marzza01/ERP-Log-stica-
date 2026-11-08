@@ -308,37 +308,37 @@ public class CatalogLogisticsTests
             CatalogDataGenerator.GenerarCsv(rutaCsv);
 
             var defaultVendedorId = Guid.NewGuid();
-        var defaultCategoriaId = Guid.NewGuid();
+            var defaultCategoriaId = Guid.NewGuid();
 
-        // Act
-        var result = await service.ImportarCatalogoDesdeArchivoAsync(rutaCsv!, defaultVendedorId, defaultCategoriaId);
+            // Act
+            var result = await service.ImportarCatalogoDesdeArchivoAsync(rutaCsv!, defaultVendedorId, defaultCategoriaId);
 
-        // Assert
-        result.TotalProcesados.Should().Be(500);
-        result.Exitosos.Should().Be(500);
-        result.Errores.Should().Be(0);
+            // Assert
+            result.TotalProcesados.Should().Be(500);
+            result.Exitosos.Should().Be(500);
+            result.Errores.Should().Be(0);
 
-        var totalEnBd = await dbContext.Productos.CountAsync();
-        totalEnBd.Should().Be(500);
+            var totalEnBd = await dbContext.Productos.CountAsync();
+            totalEnBd.Should().Be(500);
 
-        var categorias = await dbContext.Productos.Select(p => p.CategoriaNombre).Distinct().ToListAsync();
-        categorias.Should().HaveCount(6);
-        categorias.Should().Contain(new[]
-        {
-            "Electrónica y Tecnología",
-            "Ropa y Accesorios",
-            "Alimentos y Bebidas",
-            "Ferretería e Industria",
-            "Hogar y Decoración",
-            "Salud y Cuidado Personal"
-        });
+            var categorias = await dbContext.Productos.Select(p => p.CategoriaNombre).Distinct().ToListAsync();
+            categorias.Should().HaveCount(6);
+            categorias.Should().Contain(new[]
+            {
+                "Electrónica y Tecnología",
+                "Ropa y Accesorios",
+                "Alimentos y Bebidas",
+                "Ferretería e Industria",
+                "Hogar y Decoración",
+                "Salud y Cuidado Personal"
+            });
 
-        // Verificar que todos tienen stock físico y código de ubicación WMS
-        var sinStock = await dbContext.Productos.Where(p => !p.Stocks.Any()).CountAsync();
-        sinStock.Should().Be(0);
+            // Verificar que todos tienen stock físico y código de ubicación WMS
+            var sinStock = await dbContext.Productos.Where(p => !p.Stocks.Any()).CountAsync();
+            sinStock.Should().Be(0);
 
-        var ubicacionesGeneradas = await dbContext.UbicacionesAlmacen.CountAsync();
-        ubicacionesGeneradas.Should().BeGreaterThan(0);
+            var ubicacionesGeneradas = await dbContext.UbicacionesAlmacen.CountAsync();
+            ubicacionesGeneradas.Should().BeGreaterThan(0);
         }
         finally
         {
