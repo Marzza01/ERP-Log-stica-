@@ -137,6 +137,31 @@ try {
   assert.equal(createBuyerStatus, 201, 'P2 buyer fixture must be created through authorized API');
   console.log('OK P2 local full-stack: created disposable Comprador via Admin API');
 
+  const sellerEmail = 'p2-seller-' + randomUUID() + '@erp.invalid';
+  const sellerPassword = randomBytes(24).toString('base64url');
+  const sellerFixture = await page.evaluate(async ({ email, password }) => {
+    const jwt = localStorage.getItem('erp_token');
+    const company = await fetch('/api/vendedores', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombreEmpresa: 'Vendedor P2 CI', email,
+        telefono: '0000-0000' }),
+    });
+    if (company.status !== 201) return { companyStatus: company.status, userStatus: null };
+    const vendedor = await company.json();
+    const user = await fetch('/api/usuarios', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, rol: 'Vendedor',
+        nombre: 'Vendedor P2 CI', vendedorId: vendedor.id }),
+    });
+    return { companyStatus: company.status, userStatus: user.status };
+  }, { email: sellerEmail, password: sellerPassword });
+  assert.deepEqual(sellerFixture, { companyStatus: 201, userStatus: 201 },
+    'P2 seller fixture must be created through authorized API');
+  console.log('OK P2 local full-stack: created disposable Vendedor via Admin API');
+
+
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
   await page.waitForURL('**/login', { timeout: 15000 });
   assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), null);
@@ -153,6 +178,20 @@ try {
   assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), null);
   console.log('P2_LOCAL_BUYER_EVIDENCE=' + JSON.stringify({
     completed: true, realJwt: true, buyerUiRoute: '/checkout',
+    adminRouteDenied: true, fixture: 'disposable-postgresql-only',
+    payments: 'not-executed', stagingTouched: false, productionTouched: false,
+  }));
+  await page.getByPlaceholder('nombre@ejemplo.com').fill(sellerEmail);
+  await page.locator('input[type=password]').fill(sellerPassword);
+  await page.getByRole('button', { name: 'Ingresar al sistema' }).click();
+  await page.waitForURL('**/ordenes', { timeout: 15000 });
+  await page.goto(origin + '/wms', { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: 'Acceso no autorizado' }).waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Cerrar sesión' }).click();
+  await page.waitForURL('**/login', { timeout: 15000 });
+  assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), null);
+  console.log('P2_LOCAL_SELLER_EVIDENCE=' + JSON.stringify({
+    completed: true, realJwt: true, sellerUiRoute: '/ordenes',
     adminRouteDenied: true, fixture: 'disposable-postgresql-only',
     payments: 'not-executed', stagingTouched: false, productionTouched: false,
   }));
