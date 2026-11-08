@@ -23,6 +23,9 @@
 2. `FulfillmentController.GenerarPickList` exige estado `Aprobada` y usa `SkuReferencia` real, no un SKU inventado a partir del GUID.
 3. `FulfillmentService.ConfirmarPickingAsync` rechaza modificar cantidades de una lista ya completada.
 4. `FulfillmentService.EmpacarYRotularAsync` no crea otro paquete cuando ya existe uno despachado para esa orden.
+5. `RmaController.SolicitarDevolucion` exige venta entregada, producto efectivamente vendido y saldo suficiente antes de registrar un RMA; queda pendiente el control atómico frente a RMAs concurrentes.
+6. `ContabilidadService.GenerarAsientoVentaAsync` devuelve un asiento anterior si importes y distribución contable coinciden, y rechaza importes incompatibles; la protección frente a escrituras simultáneas necesita un índice parcial único en una migración prevalidada.
+7. `.gitignore` evita nuevos archivos `__pycache__` y `.pyc`; no se ha eliminado ningún archivo histórico.
 
 **Alcance limitado:** no resuelve doble solicitud simultánea, inconsistencias Catalog/Finance en fallo parcial ni despacho directo de órdenes terminales. No establecer restricciones UNIQUE(OrdenId) sin decidir antes si se permiten múltiples bultos físicos. Las regresiones de punto 3/4 son de EF InMemory y no certifican concurrencia PostgreSQL.
 
