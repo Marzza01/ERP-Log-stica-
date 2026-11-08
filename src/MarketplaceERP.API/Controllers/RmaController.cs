@@ -4,6 +4,10 @@
  */
 
 using MarketplaceERP.Catalog.Entities;
+using MarketplaceERP.Catalog.Data;
+using MarketplaceERP.Finance.Data;
+using MarketplaceERP.Finance.Entities;
+using Microsoft.EntityFrameworkCore;
 using MarketplaceERP.Catalog.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -21,11 +25,19 @@ public class RmaController : ControllerBase
 {
     private readonly IRmaService _rmaService;
     private readonly ILogger<RmaController> _logger;
+    private readonly FinanceDbContext _financeDb;
+    private readonly CatalogDbContext _catalogDb;
 
-    public RmaController(IRmaService rmaService, ILogger<RmaController> logger)
+    public RmaController(
+        IRmaService rmaService,
+        ILogger<RmaController> logger,
+        FinanceDbContext financeDb,
+        CatalogDbContext catalogDb)
     {
         _rmaService = rmaService;
         _logger = logger;
+        _financeDb = financeDb;
+        _catalogDb = catalogDb;
     }
 
     /// <summary>
@@ -37,6 +49,30 @@ public class RmaController : ControllerBase
     {
         try
         {
+            // Una devolucion solo puede referirse a una venta real y entregada.
+            // Validar antes de crear el documento de Catalog; no se confia en IDs del cliente.
+            var orden = await _financeDb.Ordenes.AsNoTracking()
+                .Include(o => o.Items)
+                .FirstOrDefaultAsync(o => o.Id == request.OrdenId);
+            if (orden is null || orden.Estado != EstadoOrden.Entregada)
+                return BadRequest(new { mensaje = "La devolucion requiere una orden entregada existente." });
+
+            var cantidadVendida = orden.Items
+                .Where(i => i.ProductoId == request.ProductoId)
+                .Sum(i => i.Cantidad);
+            if (request.Cantidad <= 0 || cantidadVendida == 0 || request.Cantidad > cantidadVendida)
+                return BadRequest(new { mensaje = "Producto o cantidad no corresponden a la venta." });
+
+            // Excluir RMAs rechazados del saldo solicitado. Una comprobacion concurrente
+            // necesita una garantia transaccional adicional en PostgreSQL.
+            var cantidadDevuelta = await _catalogDb.DevolucionesRMA.AsNoTracking()
+                .Where(r => r.OrdenId == request.OrdenId &&
+                            r.ProductoId == request.ProductoId &&
+                            r.Estado != EstadoRMA.Rechazado)
+                .SumAsync(r => (int?)r.Cantidad) ?? 0;
+            if (request.Cantidad > cantidadVendida - cantidadDevuelta)
+                return BadRequest(new { mensaje = "La cantidad excede el saldo disponible para devolucion." });
+
             var rma = await _rmaService.RegistrarSolicitudRmaAsync(request);
             return CreatedAtAction(nameof(Listar), new { id = rma.Id }, rma);
         }
