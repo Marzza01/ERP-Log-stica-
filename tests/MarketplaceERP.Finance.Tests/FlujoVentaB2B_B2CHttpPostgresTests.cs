@@ -433,27 +433,65 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
         // sus recursos y evitar tareas pendientes durante el teardown.
         var concurrent = await Task.WhenAll(first, second)
             .WaitAsync(TimeSpan.FromSeconds(30));
+        Guid pendingRmaId;
         try
         {
             Assert.True(twoWaiting,
                 "Ambas solicitudes RMA deben esperar el bloqueo por OrdenId.");
-            Assert.Single(concurrent.Where(x => x.StatusCode == HttpStatusCode.Created));
+            var accepted = Assert.Single(concurrent.Where(x =>
+                x.StatusCode == HttpStatusCode.Created));
             Assert.Single(concurrent.Where(x => x.StatusCode == HttpStatusCode.BadRequest));
+            using var acceptedJson = JsonDocument.Parse(
+                await accepted.Content.ReadAsStringAsync());
+            pendingRmaId = acceptedJson.RootElement.GetProperty("id").GetGuid();
         }
         finally
         {
             foreach (var response in concurrent) response.Dispose();
         }
 
-        await using var raceCatalog = Catalog();
-        var returns = await raceCatalog.DevolucionesRMA.AsNoTracking()
-            .Where(r => r.OrdenId == orderId && r.ProductoId == productId &&
-                        r.Estado != EstadoRMA.Rechazado)
-            .ToListAsync();
-        Assert.Equal(2, returns.Count);
-        Assert.Equal(quantity, returns.Sum(r => r.Cantidad));
-        Assert.Equal(10, (await raceCatalog.StockFisico.AsNoTracking()
+        await using (var raceCatalog = Catalog())
+        {
+            var returns = await raceCatalog.DevolucionesRMA.AsNoTracking()
+                .Where(r => r.OrdenId == orderId && r.ProductoId == productId &&
+                            r.Estado != EstadoRMA.Rechazado)
+                .ToListAsync();
+            Assert.Equal(2, returns.Count);
+            Assert.Equal(quantity, returns.Sum(r => r.Cantidad));
+            Assert.Equal(10, (await raceCatalog.StockFisico.AsNoTracking()
+                .SingleAsync()).CantidadTotal);
+        }
+
+        // Otra carrera: inspeccionar la MISMA devolución desde dos sesiones.
+        // Solo se permite un movimiento de reintegro de sus 2 unidades,
+        // incluso cuando cada petición proporciona un OperacionId diferente.
+        Task<HttpResponseMessage> InspectAsync() =>
+            http.PostAsJsonAsync($"/api/rma/{pendingRmaId}/inspeccionar",
+                new DictaminarRmaRequest(
+                    ClasificacionRMA.ReStock, "Inspector QA", "Unidad apta",
+                    UbicacionDestinoId: locationId, OperacionId: Guid.NewGuid()));
+
+        var inspections = await Task.WhenAll(InspectAsync(), InspectAsync())
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        try
+        {
+            Assert.All(inspections, res => Assert.Equal(HttpStatusCode.OK, res.StatusCode));
+        }
+        finally
+        {
+            foreach (var response in inspections) response.Dispose();
+        }
+
+        await using var inspectionCheck = Catalog();
+        Assert.Equal(12, (await inspectionCheck.StockFisico.AsNoTracking()
             .SingleAsync()).CantidadTotal);
+        Assert.Equal(1, await inspectionCheck.MovimientosInventario.CountAsync(m =>
+            m.RmaId == pendingRmaId && m.TipoMovimiento == TipoMovimientoInventario.RmaRestock));
+        Assert.Equal(2, await inspectionCheck.MovimientosInventario.CountAsync(m =>
+            m.TipoMovimiento == TipoMovimientoInventario.RmaRestock));
+        Assert.Equal(EstadoRMA.Completado,
+            (await inspectionCheck.DevolucionesRMA.AsNoTracking()
+                .SingleAsync(r => r.Id == pendingRmaId)).Estado);
     }
 
     public async Task DisposeAsync()
