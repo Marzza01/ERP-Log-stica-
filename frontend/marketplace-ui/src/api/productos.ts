@@ -47,6 +47,39 @@ export interface AlertasStockResponse {
   }>;
 }
 
+/** La API expone Stocks por ubicación; la UI usa el resumen stock por SKU. */
+export function normalizarProducto(producto: Producto & {
+  stocks?: Array<{ cantidadTotal?: number; cantidadReservada?: number; cantidadBloqueada?: number; puntoReorden?: number }>;
+}): Producto {
+  if (!Array.isArray(producto.stocks)) return producto;
+  const totals = producto.stocks.reduce((acc, stock) => ({
+    total: acc.total + (Number(stock.cantidadTotal) || 0),
+    reserved: acc.reserved + (Number(stock.cantidadReservada) || 0),
+    blocked: acc.blocked + (Number(stock.cantidadBloqueada) || 0),
+  }), { total: 0, reserved: 0, blocked: 0 });
+  const disponible = Math.max(0, totals.total - totals.reserved - totals.blocked);
+  const { stocks: _stocks, ...rest } = producto;
+  void _stocks;
+  return {
+    ...rest,
+    stock: {
+      id: producto.id,
+      productoId: producto.id,
+      cantidadTotal: totals.total,
+      cantidadReservada: totals.reserved,
+      cantidadDisponible: disponible,
+      puntoReorden: producto.stockMinimo,
+      esBajoMinimo: disponible <= producto.stockMinimo,
+      ubicacionCodigo: producto.stocks.length > 1 ? 'Varias ubicaciones' : '',
+      ultimaActualizacion: producto.fechaCreacion,
+    },
+  };
+}
+
+export function normalizarPaginaProductos(response: ProductosResponse): ProductosResponse {
+  return { ...response, items: (response.items ?? []).map(normalizarProducto) };
+}
+
 const DEFAULT_VENDEDOR_ID = '11111111-1111-1111-1111-111111111111';
 const DEFAULT_CATEGORIA_ID = '22222222-2222-2222-2222-222222222222';
 
@@ -63,7 +96,7 @@ const toBackendProducto = (req: CrearProductoRequest) => ({
 
 export const productosApi = {
   listar: (pagina = 1, tamano = 50) =>
-    apiClient.get<ProductosResponse>(`/api/productos?pagina=${pagina}&tamano=${tamano}`),
+    apiClient.get<ProductosResponse>(`/api/productos?pagina=${pagina}&tamano=${tamano}`).then(normalizarPaginaProductos),
 
   buscar: (params: {
     q?: string;
@@ -84,7 +117,7 @@ export const productosApi = {
     if (params.soloConStock !== undefined) q.set('soloConStock', String(params.soloConStock));
     if (params.pagina) q.set('pagina', String(params.pagina));
     if (params.tamano) q.set('tamano', String(params.tamano));
-    return apiClient.get<ProductosResponse>(`/api/productos/buscar?${q.toString()}`);
+    return apiClient.get<ProductosResponse>(`/api/productos/buscar?${q.toString()}`).then(normalizarPaginaProductos);
   },
 
   obtener: (id: string) =>
