@@ -34,6 +34,77 @@ public class FulfillmentService : IFulfillmentService
     {
         if (request.OrdenId == Guid.Empty)
             throw new ArgumentException("OrdenId es obligatorio.", nameof(request));
+        if (request.Items is null || request.Items.Count == 0)
+            throw new InvalidOperationException("La orden no contiene items para picking.");
+
+        await using var transaccion = await BeginTransactionIfRelationalAsync(cancellationToken);
+        try
+        {
+            if (_db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            {
+                // Candado estable por orden: evita que dos peticiones simultáneas
+                // creen dos PickLists para el mismo pedido. Solo dentro de la
+                // transacción Catalog; no interviene Finance ni pagos.
+                long llave = BitConverter.ToInt64(request.OrdenId.ToByteArray(), 0);
+                await _db.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock({llave})", cancellationToken);
+            }
+
+            // Reintento tras fallo en Finance: la PickList puede existir en WMS
+            // aunque la orden siga Aprobada en el OMS. No crear una segunda.
+            var existente = await _db.PickLists
+                .Include(p => p.Items)
+                .FirstOrDefaultAsync(p => p.OrdenId == request.OrdenId, cancellationToken);
+            if (existente is not null)
+            {
+                if (existente.Estado == EstadoPicking.Cancelado ||
+                    !CoincideContenidoPickList(existente, request))
+                    throw new InvalidOperationException(
+                        "La orden ya tiene una PickList que no coincide con este pedido.");
+
+                await CommitIfNeededAsync(transaccion, cancellationToken);
+                return existente;
+            }
+
+            var nueva = await GenerarPickListNuevaAsync(request, cancellationToken);
+            await CommitIfNeededAsync(transaccion, cancellationToken);
+            return nueva;
+        }
+        catch
+        {
+            await RollbackIfNeededAsync(transaccion, cancellationToken);
+            if (transaccion is not null)
+                _db.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    private static bool CoincideContenidoPickList(
+        PickList existente, GenerarPickListRequest solicitud)
+    {
+        if (!string.Equals(existente.NumeroOrden, solicitud.NumeroOrden,
+                StringComparison.Ordinal) ||
+            solicitud.Items.Any(x => x.ProductoId == Guid.Empty || x.Cantidad <= 0))
+            return false;
+
+        var solicitado = solicitud.Items
+            .GroupBy(x => (x.ProductoId, x.Sku))
+            .ToDictionary(g => g.Key, g => g.Sum(i => i.Cantidad));
+        var guardado = existente.Items
+            .GroupBy(x => (x.ProductoId, x.Sku))
+            .ToDictionary(g => g.Key, g => g.Sum(i => i.CantidadSolicitada));
+
+        return solicitado.Count == guardado.Count &&
+               solicitado.All(kv => guardado.TryGetValue(kv.Key, out var cantidad) &&
+                                    cantidad == kv.Value);
+    }
+
+    private async Task<PickList> GenerarPickListNuevaAsync(
+        GenerarPickListRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.OrdenId == Guid.Empty)
+            throw new ArgumentException("OrdenId es obligatorio.", nameof(request));
 
         if (request.Items.Count == 0)
             throw new InvalidOperationException("La orden no contiene items para picking.");
