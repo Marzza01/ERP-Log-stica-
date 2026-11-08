@@ -113,6 +113,11 @@ jobs:
         working-directory: frontend/marketplace-ui
         run: npm ci
 
+      # P1: clasificar dependencias runtime vs dev con auditoria de solo lectura.
+      # No hacer npm audit fix, ni bloquear el CI sin revisar los advisories.
+      - name: Classify npm security advisories (non-mutating)
+        run: node scripts/p1-audit-dependencies.mjs
+
       # 9. Verificar contratos de autenticacion y checkout
       - name: Test frontend auth
         working-directory: frontend/marketplace-ui
