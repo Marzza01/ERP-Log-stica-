@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using FluentAssertions;
 using MarketplaceERP.Catalog.Data;
@@ -18,7 +19,7 @@ public class CatalogImportPreservesWmsTests
         "\"SKU\",\"Nombre del Producto\",\"Categoría\",\"Subcategoría\",\"Precio B2C ($)\",\"Precio B2B ($)\",\"Stock Inicial\",\"Stock Mínimo\",\"Proveedor\",\"País Origen\",\"Peso (kg)\",\"Dimensiones (cm)\",\"Unidad de Medida\",\"Estado\",\"Código EAN\",\"Descripción Corta\"";
 
     private static string Row(string sku, string category, int initialStock, int minimumStock, decimal price) =>
-        $"\"{sku}\",\"Producto {sku}\",\"{category}\",\"General\",\"{price:0.00}\",\"{price * .8m:0.00}\",\"{initialStock}\",\"{minimumStock}\",\"Proveedor\",\"El Salvador\",\"1.0\",\"20x10x5 cm\",\"Unidad\",\"Activo\",\"\",\"Ficha técnica\"";
+        $"\"{sku}\",\"Producto {sku}\",\"{category}\",\"General\",\"{price.ToString("0.00", CultureInfo.InvariantCulture)}\",\"{(price * .8m).ToString("0.00", CultureInfo.InvariantCulture)}\",\"{initialStock}\",\"{minimumStock}\",\"Proveedor\",\"El Salvador\",\"1.0\",\"20x10x5 cm\",\"Unidad\",\"Activo\",\"\",\"Ficha técnica\"";
 
     [Fact]
     public async Task ReimportarEnOrdenInverso_NoMueveStockNiCreaUbicacionesFantasma()
