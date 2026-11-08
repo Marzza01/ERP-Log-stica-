@@ -265,6 +265,32 @@ public class ProductosController : ControllerBase
     }
 
     /// <summary>
+    /// Revisa el esquema y valores del CSV sin guardar productos ni tocar el WMS.
+    /// La simulación no comprueba constraints de PostgreSQL ni reserva inventario.
+    /// </summary>
+    [HttpPost("validar-csv")]
+    [Authorize(Roles = "Admin")]
+    [RequestSizeLimit(10_000_000)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ValidarCsv(
+        IFormFile archivo, CancellationToken cancellationToken)
+    {
+        if (archivo is null || archivo.Length == 0 || archivo.Length > 8_000_000)
+            return BadRequest(new { mensaje = "El CSV debe contener entre 1 byte y 8 MB." });
+
+        using var stream = archivo.OpenReadStream();
+        var resultado = await _importService.ValidarCatalogoCsvAsync(stream, cancellationToken);
+        return Ok(new
+        {
+            Modo = "SoloValidacion",
+            NoModificaDatos = true,
+            Advertencia = "Solo se validan encabezados y campos CSV; no se comprueban restricciones o concurrencia de la base de datos.",
+            Resultado = resultado
+        });
+    }
+
+    /// <summary>
     /// Carga masiva de los 500 productos mediante archivo CSV multipart (PDF 2 - Sección 3).
     /// </summary>
     [HttpPost("importar-csv")]
