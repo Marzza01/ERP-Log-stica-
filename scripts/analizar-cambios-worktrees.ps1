@@ -43,9 +43,16 @@ function Try-Blob([string]$Ref,[string]$Path) {
     if ($LASTEXITCODE -ne 0) { return $null }
     return ($result | Select-Object -First 1).Trim()
 }
-function Git-Safe([string]$Worktree,[string[]]$Args) {
-    $r = @(& git -C $Worktree @Args)
-    if ($LASTEXITCODE -ne 0) { throw "Git fallo en $Worktree : $($Args -join ' ')" }
+function Git-Safe([string]$Worktree,[string[]]$GitArguments) {
+    # $Args es una variable automatica especial de PowerShell.
+    # Usar ese nombre como parametro provocaba que git se ejecutara sin subcomando.
+    if ($null -eq $GitArguments -or $GitArguments.Count -eq 0) {
+        throw "Git-Safe recibio una lista vacia de argumentos para $Worktree"
+    }
+    $r = @(& git -c core.quotepath=false -C $Worktree @GitArguments)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git fallo en ${Worktree}: $($GitArguments -join ' ')"
+    }
     return $r
 }
 $worktrees = @(Git-Safe $root @('worktree','list','--porcelain') |
