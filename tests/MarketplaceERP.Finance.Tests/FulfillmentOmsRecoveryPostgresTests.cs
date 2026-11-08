@@ -2,6 +2,7 @@ using MarketplaceERP.API.Controllers;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
+using MarketplaceERP.Core.Interfaces;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
 using Microsoft.EntityFrameworkCore;
