@@ -43,11 +43,16 @@ public class RmaService : IRmaService
         if (!productoExiste)
             throw new InvalidOperationException($"El producto {request.ProductoId} no existe en catálogo.");
 
-        string numeroRma = $"RMA-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+        // NumeroRMA tiene índice UNIQUE en PostgreSQL. Cuatro dígitos
+        // aleatorios provocaban colisiones con cargas moderadas de devoluciones.
+        // Derivarlo del propio Id garantiza correspondencia y evita una carrera
+        // entre SELECT de disponibilidad e INSERT. 45 caracteres <= varchar(50).
+        var rmaId = Guid.NewGuid();
+        string numeroRma = $"RMA-{DateTime.UtcNow:yyyyMMdd}-{rmaId:N}";
 
         var rma = new DevolucionRMA
         {
-            Id = Guid.NewGuid(),
+            Id = rmaId,
             NumeroRMA = numeroRma,
             OrdenId = request.OrdenId,
             ProductoId = request.ProductoId,
