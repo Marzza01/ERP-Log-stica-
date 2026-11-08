@@ -48,8 +48,17 @@ public class CatalogImportService : ICatalogImportService
         return await ImportarCatalogoCsvAsync(fileStream, defaultVendedorId, defaultCategoriaId, cancellationToken);
     }
 
-    public async Task<ImportResult> ImportarCatalogoCsvAsync(
-        Stream csvStream, Guid defaultVendedorId, Guid defaultCategoriaId, CancellationToken cancellationToken = default)
+    public Task<ImportResult> ImportarCatalogoCsvAsync(
+        Stream csvStream, Guid defaultVendedorId, Guid defaultCategoriaId, CancellationToken cancellationToken = default) =>
+        ProcesarCatalogoCsvAsync(csvStream, defaultVendedorId, defaultCategoriaId, soloValidar: false, cancellationToken);
+
+    public Task<ImportResult> ValidarCatalogoCsvAsync(
+        Stream csvStream, CancellationToken cancellationToken = default) =>
+        ProcesarCatalogoCsvAsync(csvStream, Guid.Empty, Guid.Empty, soloValidar: true, cancellationToken);
+
+    private async Task<ImportResult> ProcesarCatalogoCsvAsync(
+        Stream csvStream, Guid defaultVendedorId, Guid defaultCategoriaId,
+        bool soloValidar, CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(csvStream, System.Text.Encoding.UTF8);
         var errores = new List<string>();
@@ -166,6 +175,14 @@ public class CatalogImportService : ICatalogImportService
                 string estado = fields[13].Trim();
                 string ean = fields[14].Trim();
                 string descripcion = fields[15].Trim();
+
+                // Simulación: SOLO validación estructural. Se detiene antes de
+                // cualquier acceso o mutación del DbContext y nunca persiste.
+                if (soloValidar)
+                {
+                    exitosos++;
+                    continue;
+                }
 
                 // Localizar primero el producto. Importar datos maestros NUNCA debe
                 // mover stock físico existente ni marcar ubicaciones nuevas ocupadas.
@@ -306,9 +323,11 @@ public class CatalogImportService : ICatalogImportService
             }
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("Importación de catálogo finalizada. Total={Total}, Exitosos={Exitosos}, Errores={Errores}",
-            total, exitosos, errores.Count);
+        if (!soloValidar)
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("Catálogo CSV procesado. SoloValidar={SoloValidar}, Total={Total}, Exitosos={Exitosos}, Errores={Errores}",
+            soloValidar, total, exitosos, errores.Count);
 
         return new ImportResult(total, exitosos, errores.Count, errores);
     }
