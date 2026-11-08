@@ -378,6 +378,82 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
             m.RmaId == rmaId && m.TipoMovimiento == TipoMovimientoInventario.RmaRestock));
         Assert.Equal(1, await finalCatalog.MovimientosInventario.CountAsync(m =>
             m.OrdenId == orderId && m.TipoMovimiento == TipoMovimientoInventario.DespachoOutbound));
+
+        // Escenario de carrera: se vendieron 3 unidades y una ya fue devuelta.
+        // Dos solicitudes simultáneas por 2 unidades deben dar 201 + 400,
+        // nunca 201 + 201 (lo que devolvería 5 unidades sobre una venta de 3).
+        // El test retiene el lock de la orden ANTES de enviar ambas solicitudes.
+        // Esto fuerza un punto de sincronización reproducible y falla si el
+        // controlador no adquiere el bloqueo transaccional previsto.
+        var orderKey = BitConverter.ToInt32(orderId.ToByteArray(), 0);
+        await using var blocker = new NpgsqlConnection(_connection!);
+        await blocker.OpenAsync();
+        await using var hold = await blocker.BeginTransactionAsync();
+        await using (var lockCommand = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(6173153, @orderKey)", blocker, hold))
+        {
+            lockCommand.Parameters.AddWithValue("orderKey", orderKey);
+            await lockCommand.ExecuteNonQueryAsync();
+        }
+
+        Task<HttpResponseMessage> SendConcurrentAsync(string attempt) =>
+            http.PostAsJsonAsync("/api/rma",
+                new RegistrarRmaRequest(orderId, productId, 2, "QA concurrente " + attempt));
+
+        var first = SendConcurrentAsync("A");
+        var second = SendConcurrentAsync("B");
+        var twoWaiting = false;
+        try
+        {
+            for (var probe = 0; probe < 80; probe++)
+            {
+                await using var query = new NpgsqlCommand("""
+                    SELECT count(*) FROM pg_locks
+                    WHERE locktype = 'advisory' AND NOT granted
+                      AND database = (
+                          SELECT oid FROM pg_database WHERE datname = current_database()
+                      )
+                    """, blocker, hold);
+                var waiting = (long)(await query.ExecuteScalarAsync())!;
+                if (waiting >= 2)
+                {
+                    twoWaiting = true;
+                    break;
+                }
+                if (first.IsCompleted || second.IsCompleted) break;
+                await Task.Delay(100);
+            }
+        }
+        finally
+        {
+            await hold.CommitAsync();
+        }
+
+        // Esperar las respuestas aun si no se observó el lock, para liberar
+        // sus recursos y evitar tareas pendientes durante el teardown.
+        var concurrent = await Task.WhenAll(first, second)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        try
+        {
+            Assert.True(twoWaiting,
+                "Ambas solicitudes RMA deben esperar el bloqueo por OrdenId.");
+            Assert.Single(concurrent.Where(x => x.StatusCode == HttpStatusCode.Created));
+            Assert.Single(concurrent.Where(x => x.StatusCode == HttpStatusCode.BadRequest));
+        }
+        finally
+        {
+            foreach (var response in concurrent) response.Dispose();
+        }
+
+        await using var raceCatalog = Catalog();
+        var returns = await raceCatalog.DevolucionesRMA.AsNoTracking()
+            .Where(r => r.OrdenId == orderId && r.ProductoId == productId &&
+                        r.Estado != EstadoRMA.Rechazado)
+            .ToListAsync();
+        Assert.Equal(2, returns.Count);
+        Assert.Equal(quantity, returns.Sum(r => r.Cantidad));
+        Assert.Equal(10, (await raceCatalog.StockFisico.AsNoTracking()
+            .SingleAsync()).CantidadTotal);
     }
 
     public async Task DisposeAsync()
