@@ -90,4 +90,38 @@ public class CatalogImportPreservesWmsTests
         products["ELC-0001"].StockMinimo.Should().Be(22);
         products["ROP-0001"].StockMinimo.Should().Be(19);
     }
+    [Fact]
+    public async Task Importacion_RechazaPreciosYStockInvalidosSinValoresPorDefecto()
+    {
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase($"CatalogBadImport_{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new CatalogDbContext(options);
+        var service = new CatalogImportService(db, NullLogger<CatalogImportService>.Instance);
+
+        static string CambiarCampo(string row, int index, string value)
+        {
+            var fields = row.Split(',');
+            fields[index] = "\"" + value + "\"";
+            return string.Join(",", fields);
+        }
+
+        const string cat = "Electrónica y Tecnología";
+        var precioRoto = CambiarCampo(Row("ERR-PRECIO", cat, 20, 4, 25m), 4, "sin-precio");
+        var stockRoto = CambiarCampo(Row("ERR-STOCK", cat, 20, 4, 25m), 6, "muchos");
+        var valido = Row("SKU-VALIDO", cat, 20, 4, 25m);
+
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(
+            Header + "\n" + precioRoto + "\n" + stockRoto + "\n" + valido + "\n"));
+        var result = await service.ImportarCatalogoCsvAsync(input, Guid.NewGuid(), Guid.NewGuid());
+
+        result.TotalProcesados.Should().Be(3);
+        result.Exitosos.Should().Be(1);
+        result.Errores.Should().Be(2);
+        (await db.Productos.CountAsync()).Should().Be(1);
+        (await db.StockFisico.CountAsync()).Should().Be(1);
+        (await db.UbicacionesAlmacen.CountAsync()).Should().Be(1);
+        (await db.Productos.SingleAsync()).Sku.Should().Be("SKU-VALIDO");
+    }
+
 }
