@@ -298,20 +298,16 @@ public class CatalogLogisticsTests
         using var dbContext = CreateInMemoryDbContext();
         var service = new CatalogImportService(dbContext, NullLogger<CatalogImportService>.Instance);
 
-        var posiblesRutas = new[]
+        // Esta prueba NUNCA debe generar ni sobrescribir el CSV real del proyecto.
+        // Cada ejecución usa un directorio temporal distinto y lo elimina al finalizar.
+        var carpetaTemporal = Path.Combine(Path.GetTempPath(), "MarketplaceERP.Catalog.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(carpetaTemporal);
+        try
         {
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "docs", "data", "Catalogo_500_Productos.csv"),
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "MarketplaceERP.Catalog", "SeedData", "Catalogo_500_Productos.csv"),
-            Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..", "..", "..", "docs", "data", "Catalogo_500_Productos.csv")
-        };
+            var rutaCsv = Path.Combine(carpetaTemporal, "Catalogo_500_Productos.csv");
+            CatalogDataGenerator.GenerarCsv(rutaCsv);
 
-        string? rutaCsv = posiblesRutas.FirstOrDefault(File.Exists) 
-            ?? Path.Combine(AppContext.BaseDirectory, "Catalogo_500_Productos.csv");
-
-        // Asegurar que el archivo tenga codificación UTF-8 pura
-        CatalogDataGenerator.GenerarCsv(rutaCsv);
-
-        var defaultVendedorId = Guid.NewGuid();
+            var defaultVendedorId = Guid.NewGuid();
         var defaultCategoriaId = Guid.NewGuid();
 
         // Act
@@ -343,7 +339,14 @@ public class CatalogLogisticsTests
 
         var ubicacionesGeneradas = await dbContext.UbicacionesAlmacen.CountAsync();
         ubicacionesGeneradas.Should().BeGreaterThan(0);
+        }
+        finally
+        {
+            if (Directory.Exists(carpetaTemporal))
+                Directory.Delete(carpetaTemporal, recursive: true);
+        }
     }
+
     [Fact]
     public void StockFisico_CantidadDisponible_RestaReservadoYBloqueado()
     {
