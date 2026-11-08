@@ -3,7 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
@@ -16,6 +16,7 @@ import DashboardConfigModal from '../../components/ui/DashboardConfigModal';
 import type { StatCardKey } from '../../constants/kpiDetails';
 import { ALL_DASHBOARD_CARD_KEYS } from '../../constants/kpiDetails';
 import { kpisApi } from '../../api/kpis';
+import { crearReporteKpisCsv } from '../../utils/kpiReport';
 import type { DashboardKpis, ModeloFinanciero } from '../../types';
 import useDashboardKpiVisibility from '../../hooks/useDashboardKpiVisibility';
 
@@ -32,26 +33,46 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<SelectedKpiItem | null>(null);
+  const currentRequest = useRef(0);
   const visibility = useDashboardKpiVisibility();
 
   const load = async () => {
+    const requestId = ++currentRequest.current;
     setLoading(true);
     setError(null);
     try {
       const [d, m] = await Promise.all([kpisApi.getDashboard(period), kpisApi.getModeloFinanciero()]);
+      if (requestId !== currentRequest.current) return;
       setData(d);
       setModelo(m);
     } catch (err: unknown) {
+      if (requestId !== currentRequest.current) return;
       setData(null);
       setModelo(null);
       const msg = err instanceof Error ? err.message : 'Error de comunicación';
       setError(`No se pudo obtener información del servidor API: ${msg}. Verifique la conexión con el backend.`);
     } finally {
-      setLoading(false);
+      if (requestId === currentRequest.current) setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, [period]);
+  useEffect(() => {
+    void load();
+    return () => { currentRequest.current++; };
+  }, [period]);
+
+  const descargarKpis = () => {
+    if (!data) return;
+    const blob = new Blob([crearReporteKpisCsv(data)], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `LOGIMKT-KPIs-${period}dias.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const res = data?.resumenEjecutivo;
   const hasOrders = (res?.totalOrdenes ?? 0) > 0;
@@ -132,6 +153,10 @@ export default function DashboardPage() {
           <span className="dash-config-counter">
             Mostrando {visibility.visibleCount} de {ALL_DASHBOARD_CARD_KEYS.length}
           </span>
+          <button type="button" className="btn btn-secondary" onClick={descargarKpis} disabled={!data || loading}
+            title="Descargar indicadores disponibles; no incluye proyecciones presentadas como resultados reales">
+            Exportar KPIs CSV
+          </button>
           <button className="btn btn-secondary" onClick={load} disabled={loading}>
             <RefreshCw size={13} className={loading ? 'spin' : ''} />
             {loading ? 'Cargando...' : 'Actualizar'}

@@ -3,7 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ShoppingBag, Search, Plus, Filter, AlertCircle, RefreshCw, Edit2, Trash2 } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
@@ -17,6 +17,11 @@ export default function ProductosPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCat, setSelectedCat] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const lastRequest = useRef(0);
+  const PAGE_SIZE = 50;
   const [errorCarga, setErrorCarga] = useState('');
 
   // Modal
@@ -43,30 +48,33 @@ export default function ProductosPage() {
   // Confirm delete
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
   const loadData = useCallback(async () => {
+    const requestId = ++lastRequest.current;
     setLoading(true);
     setErrorCarga('');
     try {
-      const res = await productosApi.listar(1, 100);
+      const res = debouncedSearch || selectedCat
+        ? await productosApi.buscar({ q: debouncedSearch || undefined, categoria: selectedCat || undefined, pagina: page, tamano: PAGE_SIZE })
+        : await productosApi.listar(page, PAGE_SIZE);
+      if (requestId !== lastRequest.current) return;
       setProductos(res.items ?? []);
+      setTotal(res.total ?? 0);
     } catch (error) {
+      if (requestId !== lastRequest.current) return;
       setProductos([]);
+      setTotal(0);
       setErrorCarga(error instanceof Error ? error.message : 'No se pudo cargar el catálogo desde la API.');
     } finally {
-      setLoading(false);
+      if (requestId === lastRequest.current) setLoading(false);
     }
-  }, []);
+  }, [debouncedSearch, selectedCat, page]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const filtered = productos.filter(p => {
-    const matchSearch = p.nombre.toLowerCase().includes(search.toLowerCase()) ||
-                        p.sku.toLowerCase().includes(search.toLowerCase());
-    const matchCat = selectedCat ? p.categoriaNombre === selectedCat : true;
-    return matchSearch && matchCat;
-  });
+  useEffect(() => { void loadData(); return () => { lastRequest.current++; }; }, [loadData]);
 
   const totalDisponibles = productos.reduce((acc, p) => acc + (p.stock?.cantidadDisponible ?? 0), 0);
   const totalReservados = productos.reduce((acc, p) => acc + (p.stock?.cantidadReservada ?? 0), 0);
@@ -164,7 +172,7 @@ export default function ProductosPage() {
             Catálogo de Productos & SKUs
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>
-            Control de catálogo maestro de 500 SKUs, especificaciones logísticas (peso/volumen) y disponibilidad en bodega.
+            Catálogo paginado. Las existencias mostradas corresponden únicamente a los productos de esta página.
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
@@ -215,13 +223,13 @@ export default function ProductosPage() {
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Total SKUs Registrados</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '0.35rem' }}>
-            {productos.length}
+            {total}
           </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--accent)', marginTop: '0.25rem' }}>Catálogo Activo</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--accent)', marginTop: '0.25rem' }}>Productos publicados según filtros</div>
         </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Stock Físico Disponible</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Stock Disponible (página)</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--green)', marginTop: '0.35rem' }}>
             {totalDisponibles.toLocaleString()} unid.
           </div>
@@ -229,7 +237,7 @@ export default function ProductosPage() {
         </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Stock Reservado (OMS)</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Stock Reservado (página)</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--yellow)', marginTop: '0.35rem' }}>
             {totalReservados.toLocaleString()} unid.
           </div>
@@ -237,7 +245,7 @@ export default function ProductosPage() {
         </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Alertas de Reorden</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Bajo 10 unidades (página)</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: skusCriticos > 0 ? 'var(--red)' : 'var(--green)', marginTop: '0.35rem' }}>
             {skusCriticos} SKUs
           </div>
@@ -253,7 +261,7 @@ export default function ProductosPage() {
             type="text"
             placeholder="Buscar por SKU o nombre de producto..."
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); setPage(1); }}
             style={{
               width: '100%',
               padding: '0.55rem 0.75rem 0.55rem 2.2rem',
@@ -268,25 +276,18 @@ export default function ProductosPage() {
         </div>
 
         <div style={{ width: '220px' }}>
-          <select
+          <input
+            type="search"
+            aria-label="Filtrar por categoría exacta"
+            placeholder="Categoría exacta (opcional)"
             value={selectedCat}
-            onChange={e => setSelectedCat(e.target.value)}
+            onChange={e => { setSelectedCat(e.target.value); setPage(1); }}
             style={{
-              width: '100%',
-              padding: '0.55rem 0.75rem',
-              borderRadius: '8px',
-              border: '1px solid var(--border)',
-              background: 'var(--bg-surface)',
-              color: 'var(--text-primary)',
-              fontSize: '0.875rem',
-              boxSizing: 'border-box',
+              width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px',
+              border: '1px solid var(--border)', background: 'var(--bg-surface)',
+              color: 'var(--text-primary)', fontSize: '0.875rem', boxSizing: 'border-box',
             }}
-          >
-            <option value="">Todas las Categorías</option>
-            {Array.from(new Set(productos.map(p => p.categoriaNombre))).filter(Boolean).sort().map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
+          />
         </div>
       </div>
 
@@ -385,9 +386,11 @@ export default function ProductosPage() {
             ),
           },
         ]}
-        data={filtered}
+        data={productos}
         keyExtractor={(item) => item.id}
         loading={loading}
+        pageSize={PAGE_SIZE}
+        serverPagination={{ page, total, onPageChange: setPage }}
         emptyText="No se encontraron productos coincidentes."
       />
 
