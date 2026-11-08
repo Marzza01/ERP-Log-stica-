@@ -52,9 +52,18 @@ public class FulfillmentService : IFulfillmentService
 
             // Reintento tras fallo en Finance: la PickList puede existir en WMS
             // aunque la orden siga Aprobada en el OMS. No crear una segunda.
-            var existente = await _db.PickLists
+            var encontrados = await _db.PickLists
                 .Include(p => p.Items)
-                .FirstOrDefaultAsync(p => p.OrdenId == request.OrdenId, cancellationToken);
+                .Where(p => p.OrdenId == request.OrdenId)
+                .OrderBy(p => p.FechaCreacion)
+                .Take(2)
+                .ToListAsync(cancellationToken);
+
+            if (encontrados.Count > 1)
+                throw new InvalidOperationException(
+                    "Existen múltiples PickLists históricas para esta orden; requieren conciliación manual antes de continuar.");
+
+            var existente = encontrados.SingleOrDefault();
             if (existente is not null)
             {
                 if (existente.Estado == EstadoPicking.Cancelado ||
