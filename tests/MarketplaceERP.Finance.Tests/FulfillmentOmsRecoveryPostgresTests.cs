@@ -231,7 +231,7 @@ public sealed class FulfillmentOmsRecoveryPostgresTests : IAsyncLifetime
 
             var reservas = new StockService(catalog, NullLogger<StockService>.Instance);
             var reserva = await reservas.ReservarStockAsync(productoId, 2, ordenId);
-            Assert.True(reserva.Exitoso, reserva.Mensaje);
+            Assert.True(reserva.Exitoso, reserva.MensajeError);
             await reservas.ConfirmarReservaAsync(reserva.ReservaId);
         }
 
