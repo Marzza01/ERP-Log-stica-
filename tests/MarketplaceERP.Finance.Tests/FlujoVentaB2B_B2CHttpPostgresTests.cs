@@ -198,6 +198,12 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
                     new FulfillmentService(sp.GetRequiredService<CatalogDbContext>(),
                         sp.GetRequiredService<IStockService>(),
                         sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FulfillmentService>>()));
+                services.AddScoped<IInventoryService>(sp =>
+                    (IInventoryService)ActivatorUtilities.CreateInstance(sp,
+                        typeof(IInventoryService).Assembly.GetType(
+                            "MarketplaceERP.Catalog.Services.InventoryService", throwOnError: true)!,
+                        sp.GetRequiredService<CatalogDbContext>()));
+                services.AddScoped<IRmaService, RmaService>();
                 services.AddMarketplaceSecurity(new JwtSettings
                 {
                     Key = secret, Issuer = issuer, Audience = issuer,
@@ -306,6 +312,58 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
         Assert.Equal(partida.TotalHaber, partida.Lineas.Sum(x => x.Haber));
         Assert.Single(partida.Lineas.Where(x => x.CodigoCuenta ==
             (tipoCliente == TipoCliente.B2B ? "1105" : "1101")));
+
+        // La devolucion exige una venta entregada. Antes, responder 400 sin
+        // crear un RMA; ni el comprador ni la fecha se infieren del request.
+        using (var invalidBeforeDelivery = await http.PostAsJsonAsync("/api/rma",
+            new RegistrarRmaRequest(orderId, productId, 1, "RMA prematuro")))
+            Assert.Equal(HttpStatusCode.BadRequest, invalidBeforeDelivery.StatusCode);
+
+        // Entrega confirmada sintéticamente: esta transición NO representa
+        // una prueba de transportista ni un endpoint de última milla.
+        await using (var delivered = Finance())
+        {
+            var entity = await delivered.Ordenes.SingleAsync(x => x.Id == orderId);
+            entity.Estado = EstadoOrden.Entregada;
+            entity.FechaEntregaReal = DateTime.UtcNow;
+            await delivered.SaveChangesAsync();
+        }
+
+        using (var tooMany = await http.PostAsJsonAsync("/api/rma",
+            new RegistrarRmaRequest(orderId, productId, quantity + 1, "Excede venta")))
+            Assert.Equal(HttpStatusCode.BadRequest, tooMany.StatusCode);
+
+        using var requestRma = await http.PostAsJsonAsync("/api/rma",
+            new RegistrarRmaRequest(orderId, productId, 1, "Devolución QA de una unidad"));
+        Assert.Equal(HttpStatusCode.Created, requestRma.StatusCode);
+        using var rmaPayload = JsonDocument.Parse(await requestRma.Content.ReadAsStringAsync());
+        var rmaId = rmaPayload.RootElement.GetProperty("id").GetGuid();
+
+        var inspection = new DictaminarRmaRequest(
+            ClasificacionRMA.ReStock, "Inspector QA", "Unidad apta para reventa",
+            UbicacionDestinoId: locationId, OperacionId: Guid.NewGuid());
+        using (var inspect = await http.PostAsJsonAsync(
+            $"/api/rma/{rmaId}/inspeccionar", inspection))
+            Assert.Equal(HttpStatusCode.OK, inspect.StatusCode);
+
+        // Un reintento con nueva OperacionId mantiene un solo retorno al WMS.
+        using (var retryInspect = await http.PostAsJsonAsync(
+            $"/api/rma/{rmaId}/inspeccionar",
+            inspection with { OperacionId = Guid.NewGuid() }))
+            Assert.Equal(HttpStatusCode.OK, retryInspect.StatusCode);
+
+        await using var finalCatalog = Catalog();
+        var finalStock = await finalCatalog.StockFisico.AsNoTracking().SingleAsync();
+        Assert.Equal(10, finalStock.CantidadTotal);
+        Assert.Equal(0, finalStock.CantidadReservada);
+        var completedRma = await finalCatalog.DevolucionesRMA.AsNoTracking().SingleAsync();
+        Assert.Equal(rmaId, completedRma.Id);
+        Assert.Equal(EstadoRMA.Completado, completedRma.Estado);
+        Assert.Equal(ClasificacionRMA.ReStock, completedRma.Clasificacion);
+        Assert.Equal(1, await finalCatalog.MovimientosInventario.CountAsync(m =>
+            m.RmaId == rmaId && m.TipoMovimiento == TipoMovimientoInventario.RmaRestock));
+        Assert.Equal(1, await finalCatalog.MovimientosInventario.CountAsync(m =>
+            m.OrdenId == orderId && m.TipoMovimiento == TipoMovimientoInventario.DespachoOutbound));
     }
 
     public async Task DisposeAsync()
