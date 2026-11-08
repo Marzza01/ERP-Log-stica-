@@ -58,6 +58,26 @@ La comparación PowerShell entregó **32 registros**: **9** idénticos a consoli
 - **CI de código**: el commit `cb9f0b332b51bc4d261dd16ee9e1323b934b3556` probó los cambios: **498 tests .NET, cero fallos** (Core 10, Catalog 72, Finance 416), además de frontend y test Windows correctos. El E2E Browser seguía en ejecución al registrar este dato. Esta evidencia no autoriza su despliegue.
 - **No resueltos**: normalización ambigua de formatos decimales, escritura parcial de filas válidas al importar un CSV con filas inválidas, falta de transacción/dry-run completo con constraints reales, control de acceso a la importación en entornos desplegados, validación de límites por campo y concurrencia multi-importación. La simulación no sustituye un ensayo transaccional aislado en PostgreSQL. Debe revisarse asimismo el contenido de los 23 archivos locales aún no adjuntados.
 
+## 6. Importación CSV todo-o-nada y recuperación en PostgreSQL aislado
+
+**Implementado únicamente en la rama candidata / PR borrador #64.**
+
+1. `CatalogImportService.ImportarCatalogoCsvAsync` copia la entrada hasta un límite de 8 MB en memoria para admitir streams no-seekable. Hace una **primera pasada estrictamente de validación sin acceder ni modificar DbContext**. Si cualquier fila no supera validaciones de formato/campos/duplicado, retorna `Exitosos=0` y **ningún producto, stock o ubicación es modificado**. Esto cambia intencionalmente la semántica anterior de aceptación parcial.
+2. Con entrada sintácticamente válida, reinicia el buffer y procesa el lote completo. La persistencia continúa como **una sola llamada final a `SaveChangesAsync`**, transaccional en PostgreSQL. Una excepción de preparación por fila **aborta la importación** en lugar de continuar y guardar datos anteriores. La cancelación explícita respeta el token.
+3. `StreamReader` utiliza `leaveOpen:true` para permitir ambas pasadas sobre el buffer; el propio método libera el buffer al salir.
+4. Pruebas EF InMemory: errores en filas posteriores no deben modificar siquiera productos existentes. Tests actualizados en `CatalogImportPreservesWmsTests.cs`.
+5. **Pruebas reales PostgreSQL 15**, `tests/MarketplaceERP.Catalog.Tests/CatalogImportAtomicPostgresTests.cs`: crea BD temporal `ci_catalog_import_*` y solo acepta `postgres@localhost:5432/postgres`; valida un lote con una fila errónea sin escrituras y después inyecta un trigger que hace fallar un INSERT durante `SaveChangesAsync` para comprobar rollback completo de productos, saldos y ubicaciones. Elimina la BD al finalizar. **No usa Neon**.
+6. **Evidencia**: GitHub Actions ejecución [42525538455](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42525538455), commit `9d710b642f6e434b283234bb6a8a7aa83777a8ae`. Build y `dotnet test` aprobados: **Core 10, Catalog 75, Finance 416 = 501/501**, 0 fallos. Frontend y comparador Windows aprobados. Al redactar, E2E Browser todavía en ejecución.
+
+**Límites aún no cerrados:**
+
+- La simulación CSV solo valida datos, no constraints ni concurrencia PostgreSQL.
+- La importación simultánea de dos archivos que contienen el mismo SKU aún requiere pruebas de concurrencia sobre índices e idempotencia.
+- El reconocimiento de formatos decimales mixtos puede ser ambiguo (`NumberStyles.Any`); endurecer sin alterar silenciosamente valores legítimos.
+- Si se escribe al esquema o datos fuera del `CatalogDbContext` durante importación mediante futuras llamadas, el rollback debe reevaluarse. Hoy se ha comprobado una operación Catalog que persiste con un único `SaveChanges`.
+- Revisar antes de desplegar el servicio histórico `ControlledCatalogImportService` de los 23 archivos locales respaldados, su compatibilidad y los límites operativos (importador Admin en producción).
+- Ninguna de estas pruebas sustituye el respaldo independiente de Neon producción ni las pruebas empresariales B2B/B2C end-to-end.
+
 ## 4. Decisión de esta auditoría
 
 - **Aprobado solo para diagnóstico:** lectura de código remoto, documentar riesgos y diseñar pruebas seguras.
