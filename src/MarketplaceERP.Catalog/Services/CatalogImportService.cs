@@ -75,6 +75,44 @@ public class CatalogImportService : ICatalogImportService
         }
 
         copia.Position = 0;
+
+        // Un UNIQUE(Sku) evita dos INSERT iguales, pero no impide que dos
+        // importaciones simultáneas consulten el mismo catálogo desactualizado.
+        // En PostgreSQL serializar SOLO los lotes de importación mediante un
+        // advisory lock transaccional, adquirido antes de consultar los SKU.
+        // El candado se libera automáticamente al confirmar/revertir la transacción.
+        if (_dbContext.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+        {
+            if (_dbContext.Database.CurrentTransaction is not null)
+                throw new InvalidOperationException(
+                    "La importación necesita una transacción independiente para garantizar la serialización.");
+
+            await using var transaccion = await _dbContext.Database
+                .BeginTransactionAsync(cancellationToken);
+            try
+            {
+                // Números reservados para las importaciones de Catalog del ERP.
+                // La prueba de concurrencia bloquea este mismo par en PostgreSQL.
+                await _dbContext.Database.ExecuteSqlRawAsync(
+                    "SELECT pg_advisory_xact_lock(6173152, 20261108)", cancellationToken);
+
+                var resultado = await ProcesarCatalogoCsvAsync(
+                    copia, defaultVendedorId, defaultCategoriaId, soloValidar: false, cancellationToken);
+
+                await transaccion.CommitAsync(cancellationToken);
+                return resultado;
+            }
+            catch
+            {
+                // Al salir sin Commit, PostgreSQL revierte todo el lote.
+                // Evitar cambios rastreados que se puedan guardar accidentalmente
+                // si el contexto sigue vivo tras el fallo.
+                _dbContext.ChangeTracker.Clear();
+                throw;
+            }
+        }
+
+        // EF InMemory solo se utiliza en los tests unitarios; no tiene locks SQL.
         return await ProcesarCatalogoCsvAsync(
             copia, defaultVendedorId, defaultCategoriaId, soloValidar: false, cancellationToken);
     }
