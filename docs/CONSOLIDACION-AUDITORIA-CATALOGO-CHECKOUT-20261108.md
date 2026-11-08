@@ -46,6 +46,14 @@ La comparación PowerShell entregó **32 registros**: **9** idénticos a consoli
 
 **Importante:** los 23 archivos no están publicados en la rama remota. No subir el ZIP ni la matriz con posibles datos confidenciales a un repositorio público sin revisar su contenido.
 
+## 5. Correcciones implementadas y probadas (solo PR borrador #64)
+
+- **CAT-07 — corregido en rama candidata.** `CatalogLogisticsTests.cs` ahora genera el CSV de 500 SKUs exclusivamente en un directorio temporal único y lo elimina en `finally`. CI comprueba con `git diff --exit-code` que ninguna prueba haya modificado `docs/data/Catalogo_500_Productos.csv`.
+- **CAT-03 — mitigación funcional del traslado invisible.** `CatalogImportService.cs` busca el producto por SKU antes de crear o asignar una ubicación. Cuando hay saldos WMS existentes, la reimportación preserva ubicación y cantidades y solo modifica el umbral de reposición y datos maestros. La prueba `CatalogImportPreservesWmsTests.ReimportarEnOrdenInverso_NoMueveStockNiCreaUbicacionesFantasma` comprueba inversión de filas, importación de nuevo stock inicial ficticio (sin aplicarlo), saldos y ubicaciones estables.
+- **CAT-02 — validación de numéricos defectuosos.** Ahora se rechazan filas con precio B2C/B2B inválido o no positivo, B2B mayor que B2C, stock inicial/mínimo no entero o negativo y peso no numérico o negativo. Un CSV de 17 o más columnas también se rechaza. La prueba `CatalogImportPreservesWmsTests.Importacion_RechazaPreciosYStockInvalidosSinValoresPorDefecto` cubre errores y fila válida intercalados.
+- **Evidencia CI de los cambios de código**: `42522872216`, commit `db73dfca4c7b1216f7039b6bcf58688de38ceb99`; **494 pruebas .NET aprobadas (Core 10, Catalog 68, Finance 416), 0 fallidas**; frontend y comparador Windows aprobados. La prueba E2E Browser estaba en curso en el momento de redactar esta anotación. Este estado no implica aprobación para desplegar.
+- **No resueltos**: coincidencia exacta de los encabezados de CSV, normalización ambigua de formatos de decimales, varias escrituras a lote sin dry-run/rollback fila por fila, control de acceso al importador en entornos desplegados y deduplicación de SKU dentro de un mismo CSV. Estos requieren pruebas adicionales y contraste con los 23 archivos locales.
+
 ## 4. Decisión de esta auditoría
 
 - **Aprobado solo para diagnóstico:** lectura de código remoto, documentar riesgos y diseñar pruebas seguras.
