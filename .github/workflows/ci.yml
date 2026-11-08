@@ -157,6 +157,41 @@ jobs:
             if ($parseErrors.Count -gt 0) { throw "$path : $($parseErrors | Out-String)" }
           }
 
+      - name: Smoke-test local worktree comparison in disposable Git repo
+        shell: pwsh
+        run: |
+          $base = Join-Path $env:RUNNER_TEMP ('erp-worktrees-' + [Guid]::NewGuid().ToString('N'))
+          $testRepo = Join-Path $base 'repo'
+          $testOutput = Join-Path $base 'output'
+          $secondWorktree = Join-Path $base 'linked'
+          New-Item -ItemType Directory -Path $base, $testOutput -Force | Out-Null
+          git init $testRepo | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
+          git -C $testRepo config user.email 'ci@erp.invalid'
+          git -C $testRepo config user.name 'CI worktree smoke'
+          'original' | Set-Content (Join-Path $testRepo 'tracked.txt')
+          git -C $testRepo add tracked.txt
+          git -C $testRepo commit -m 'smoke baseline' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'baseline commit failed' }
+          git -C $testRepo branch candidate
+          git -C $testRepo branch staging
+          git -C $testRepo worktree add -b second-worktree $secondWorktree HEAD | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'linked worktree failed' }
+          'local changed content' | Set-Content (Join-Path $testRepo 'tracked.txt')
+          'new only local' | Set-Content (Join-Path $secondWorktree 'local_only.txt')
+          & ./scripts/analizar-cambios-worktrees.ps1 -Repo $testRepo -Destino $testOutput -RamaCandidata 'candidate' -RamaStaging 'staging'
+          if (-not $?) { throw 'comparison script failed' }
+          $reportDir = @(Get-ChildItem -LiteralPath $testOutput -Directory | Sort-Object Name -Descending)[0].FullName
+          $files = @(Import-Csv (Join-Path $reportDir 'Archivos_Comparados.csv'))
+          $summary = @(Import-Csv (Join-Path $reportDir 'Resumen_Worktrees.csv'))
+          if ($summary.Count -ne 2) { throw "Expected 2 worktrees; got $($summary.Count)" }
+          if (@($files | Where-Object { $_.RutaRelativa -eq 'tracked.txt' -and $_.Estado -eq 'Diferente de ambas' }).Count -ne 1) {
+            throw 'Modified tracked file was not classified correctly'
+          }
+          if (@($files | Where-Object { $_.RutaRelativa -eq 'local_only.txt' -and $_.Estado -eq 'Nuevo en ambas' }).Count -ne 1) {
+            throw 'Untracked local file was not classified correctly'
+          }
+
       - name: Build frontend
         working-directory: frontend/marketplace-ui
         run: npm run build
