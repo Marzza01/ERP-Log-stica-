@@ -124,4 +124,64 @@ public class CatalogImportPreservesWmsTests
         (await db.Productos.SingleAsync()).Sku.Should().Be("SKU-VALIDO");
     }
 
+
+    [Fact]
+    public async Task Importacion_EncabezadoDesordenado_RechazaArchivoAntesDeEscribir()
+    {
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase($"CatalogBadHeader_{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new CatalogDbContext(options);
+        var service = new CatalogImportService(db, NullLogger<CatalogImportService>.Instance);
+
+        // Las columnas siguen siendo 16, pero el orden del contrato ya no es válido.
+        var headerAlterado = Header.Replace(
+            "\"SKU\",\"Nombre del Producto\"",
+            "\"Nombre del Producto\",\"SKU\"");
+
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(
+            headerAlterado + "\n" + Row("SKU-001", "Electrónica y Tecnología", 20, 5, 25m) + "\n"));
+
+        var result = await service.ImportarCatalogoCsvAsync(input, Guid.NewGuid(), Guid.NewGuid());
+
+        result.Exitosos.Should().Be(0);
+        result.Errores.Should().Be(1);
+        result.MensajesError.Should().ContainSingle(m => m.Contains("Encabezado"));
+        (await db.Productos.CountAsync()).Should().Be(0);
+        (await db.StockFisico.CountAsync()).Should().Be(0);
+        (await db.UbicacionesAlmacen.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Importacion_SkuDuplicadoConDistintaCapitalizacion_NoEscribeNingunaFila()
+    {
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase($"CatalogDuplicateSku_{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new CatalogDbContext(options);
+        var service = new CatalogImportService(db, NullLogger<CatalogImportService>.Instance);
+
+        const string category = "Electrónica y Tecnología";
+        var rows = new[]
+        {
+            Row("SKU-DUP", category, 40, 10, 30m),
+            Row("SKU-OK", category, 40, 10, 30m),
+            Row("sku-dup", category, 40, 10, 30m)
+        };
+
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(
+            Header + "\n" + string.Join("\n", rows) + "\n"));
+
+        var result = await service.ImportarCatalogoCsvAsync(input, Guid.NewGuid(), Guid.NewGuid());
+
+        result.TotalProcesados.Should().Be(3);
+        result.Exitosos.Should().Be(0);
+        result.Errores.Should().Be(1);
+        result.MensajesError.Should().ContainSingle(m => m.Contains("duplicado"));
+        (await db.Productos.CountAsync()).Should().Be(0);
+        (await db.StockFisico.CountAsync()).Should().Be(0);
+        (await db.UbicacionesAlmacen.CountAsync()).Should().Be(0);
+    }
+
+
 }
