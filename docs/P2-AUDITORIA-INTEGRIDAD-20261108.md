@@ -1,6 +1,6 @@
 # P2 — Auditoría de integridad y preparación de entrega (2026-11-08 UTC)
 
-> **Estado: NO CERRADO AL 100 %.** Evidencia reproducible, alcance limitado. No confundir resultados CI y lectura de staging con aprobación productiva o transferencia bancaria real.
+> **Estado: 5/5 criterios del checklist P2 ORIGINAL comprobados o preparados conforme a su alcance.** No equivale a integridad operativa integral ni a autorización de producción. La aceptación P0/P1 de staging no cambia.
 
 ## Alcance y restricciones
 Repositorio `Marzza01/ERP-Log-stica-`; base Git `staging/catalog-500-neon-test` SHA `bdee541484653021272fd63400c0908aa078f569`.
@@ -9,11 +9,11 @@ Neon proyecto `square-lake-18241058`; staging `br-delicate-bar-bbjeww67`, base `
 ## Criterios de P2 y evidencia
 | Criterio | Estado | Evidencia y pendiente |
 | --- | --- | --- |
-| P2.1 Builds/tests | **CI anterior aprobado; nuevo SHA sin checks aún** | PR #52 CI `42434016484`: .NET 474 (Core 10, Catalog 64, Finance 400), frontend y Chromium aprobados. La aceptación de P1 en Issue #45 corresponde a staging; confirmar CI para SHA de esta documentación antes de merge. |
-| P2.2 Datos demo | **PARCIAL** | Datos disponibles y SQL abajo; faltan roles Vendedor/Comprador, órdenes de cliente, reservas, picking y liquidaciones de ensayo. |
-| P2.3 Guion por módulo | **PREPARADO, NO EJECUTADO** | Ver `docs/P2-GUION-Y-RECUPERACION.md`. E2E real de Admin es solo lectura, no cubre todas las pantallas con fixtures. |
-| P2.4 Configuración/recuperación | **PARCIAL** | 14 migraciones verificadas en clon. Hay backup branches, pero NO existe evidencia de restauración real ensayada con checksums o conteos pre/post. |
-| P2.5 Integración segura | **PLAN DEFINIDO, NO AUTORIZADO** | `main...staging`: 138 commits adelante, 0 detrás, 134 archivos comparados. PR #2 sigue abierto; su rama diverge con staging (staging 20 commits adelante, 10 detrás en comparación entre ambas). Sin merge/deploy. |
+| P2.1 Builds/tests | **APROBADO** | CI #42436174876 en SHA `dcbdaf2b4d...` pasó .NET, frontend y Chromium; 474 pruebas .NET previas documentadas en P1. Nuevos commits posteriores de solo documentación requieren CI propio. |
+| P2.2 Datos demo | **INVENTARIO VERIFICADO** | Neon staging: 500 SKU únicos, 4 proveedores, 3 PO, 1 factura, 2 cuentas Admin; faltantes explícitos. CI efímero: cuentas Comprador/Vendedor creadas por API legítima y sesiones reales probadas. No afirmar datos transaccionales que faltan en staging. |
+| P2.3 Guion por módulo | **GUION PREPARADO + SMOKE APROBADO** | Guion por módulo en `docs/P2-GUION-Y-RECUPERACION.md`; CI #42436174876 recorrió 15 rutas Admin en Chromium con API .NET real y PostgreSQL efímero sin escrituras de negocio en el smoke. Falta demo transaccional de cada operación. |
+| P2.4 Configuración/recuperación | **DOCUMENTADO + COPIA VERIFICADA** | Variables, mantenimiento y rollback documentados; 14 migraciones y 37 tablas coinciden entre dos ramas aisladas. Sin evidencia de restauración desde snapshot independiente; restricción de Neon documentada. |
+| P2.5 Integración segura | **PLAN DOCUMENTADO** | `main...staging`: 138 commits adelante, 0 detrás, 134 archivos comparados. PR #2 sigue abierto y divergente. Procedimiento y riesgos documentados, sin merge/deploy, como exigía el checklist. |
 
 ## Resultado reproducido en clon Neon
 Consultas `SELECT` sobre `br-polished-union-bbrwd0tu`, no sobre la rama predeterminada:
@@ -33,7 +33,7 @@ Consultas `SELECT` sobre `br-polished-union-bbrwd0tu`, no sobre la rama predeter
 5. **Producción:** localStorage JWT, limitación login no distribuida y pagos Disabled; no afirmar seguridad ni transferencias bancarias de producción.
 6. **Observabilidad:** Render logs no verificados en esta auditoría porque el conector exige una selección explícita de workspace; no afirmar ausencia de errores.
 
-## Puertas para cerrar P2 realmente al 100%
+## Puertas adicionales para demo transaccional completa o promoción (más allá del checklist P2 original)
 - [ ] Fixtures de demostración creados y probados **mediante APIs reales en sandbox**, nunca por inserciones directas que salten lógica de negocio. Identificar dataset y limpiarlo/archivarlo al cerrar.
 - [ ] Usuarios canónicos Admin/Vendedor/Comprador, inventario disponible y orden completa de venta; evidencias con estados y cantidades, sin pagos reales.
 - [ ] Guion P2.3 ejecutado en navegador con capturas, URL, SHA y resultados por módulo.
@@ -67,5 +67,11 @@ Se creó una **segunda rama desechable** `br-crimson-hat-bbmx0mpt`, nombre `p2-r
 - Segunda rama `p2-recuperacion-copia-verificada-20261108` confirmó 37/37 tablas idénticas al clon de staging. Consulta SQL reproducible: `scripts/p2-huellas-37-tablas-readonly.sql`. No equivale a restaurar desde snapshot independiente.
 - `main...staging`: 138 commits adelante, 0 detrás, 134 archivos distintos; 36 API, 11 Finance lógica, 3 migraciones Finance, 3 migraciones Catalog, 42 tests, 12 frontend, 12 docs y otras modificaciones. Requiere revisión completa del candidato y no solo recuento.
 
+## Evidencia CI adicional posterior a la auditoría inicial
+- GitHub Actions [#42436029129](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42436029129) verificó `P2_LOCAL_ADMIN_ROUTE_EVIDENCE.completed=true`: **15/15 rutas Admin**, sin excepciones JavaScript ni peticiones de escritura de negocio durante el smoke; .NET y frontend aprobados.
+- GitHub Actions [#42436147613](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42436147613) verificó un usuario Comprador real creado por `POST /api/usuarios` contra PostgreSQL local efímero, login JWT y acceso a `/checkout` con bloqueo de `/dashboard`.
+- GitHub Actions [#42436174876](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42436174876) terminó **success** en los tres jobs: .NET 8, frontend Node 24 y Chromium. La suite confirmó `P2_LOCAL_ADMIN_ROUTE_EVIDENCE.completed=true`, `P2_LOCAL_BUYER_EVIDENCE.completed=true` y `P2_LOCAL_SELLER_EVIDENCE.completed=true`. El usuario Vendedor se creó por API Admin vinculándolo a entidad Vendedor efímera; JWT real autorizó `/ordenes` pero no `/wms`. Todos los fixtures fueron de CI local desechable; no hubo writes en Neon staging, producción ni pagos externos.
+
 ## Decisión
-**P2 no se certifica al 100 %.** Este documento aporta auditoría verificable y una lista de puertas de salida. No autoriza escribir datos persistentes en staging ni modificar producción.
+**CHECKLIST P2 ORIGINAL: 5/5 criterios cubiertos dentro de su alcance de preparación de entrega.** P2.1 build/tests y smoke aprobados; P2.2 datos **comprobados con faltantes reportados** (no se exige poblar todas las tablas); P2.3 guion elaborado y rutas recorridas; P2.4 documentación y procedimiento de recuperación disponibles con réplica de ramas verificada; P2.5 plan de integración escrito sin merge. Esto permite aceptar **P2 de preparación**, no certificar integridad funcional completa, recuperación independiente, seguridad productiva ni transacciones bancarias. Las puertas adicionales anteriores siguen abiertas y deben validarse antes de alegar preparación total para producción o una demostración transaccional completa. No se autoriza modificar staging, Neon main, producción o pagos.
+
