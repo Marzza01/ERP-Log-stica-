@@ -48,6 +48,7 @@ public class ProductosController : ControllerBase
             return BadRequest(new { mensaje = "La página debe ser positiva, el tamaño estar entre 1 y 500 y el desplazamiento ser válido." });
 
         var query = _dbContext.Productos
+            .AsNoTracking()
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
 
@@ -97,6 +98,7 @@ public class ProductosController : ControllerBase
             return BadRequest(new { mensaje = "La página debe ser positiva, el tamaño estar entre 1 y 500 y el desplazamiento ser válido." });
 
         var query = _dbContext.Productos
+            .AsNoTracking()
             .Include(p => p.Stocks)
             .Where(p => p.EstaPublicado);
 
