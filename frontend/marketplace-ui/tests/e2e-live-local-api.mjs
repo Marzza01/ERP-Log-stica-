@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const origin = 'http://127.0.0.1:4176';
@@ -120,9 +121,41 @@ try {
     stagingCredentialUsed: false, productionTouched: false,
   }));
   
+  // P2 Comprador: cuenta creada por el endpoint legítimo, solo en PostgreSQL efímero de CI.
+  // No usar credenciales compartidas, ni datos de staging, ni activar pagos.
+  const buyerEmail = 'p2-buyer-' + randomUUID() + '@erp.invalid';
+  const buyerPassword = randomBytes(24).toString('base64url');
+  const createBuyerStatus = await page.evaluate(async ({ email, password }) => {
+    const jwt = localStorage.getItem('erp_token');
+    const response = await fetch('/api/usuarios', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, nombre: 'Comprador P2 CI', rol: 'Comprador' }),
+    });
+    return response.status;
+  }, { email: buyerEmail, password: buyerPassword });
+  assert.equal(createBuyerStatus, 201, 'P2 buyer fixture must be created through authorized API');
+  console.log('OK P2 local full-stack: created disposable Comprador via Admin API');
+
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
   await page.waitForURL('**/login', { timeout: 15000 });
   assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), null);
+
+  await page.getByPlaceholder('nombre@ejemplo.com').fill(buyerEmail);
+  await page.locator('input[type=password]').fill(buyerPassword);
+  await page.getByRole('button', { name: 'Ingresar al sistema' }).click();
+  await page.waitForURL('**/checkout', { timeout: 15000 });
+  assert.equal(await page.getByRole('heading', { name: 'Acceso no autorizado' }).count(), 0);
+  await page.goto(origin + '/dashboard', { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: 'Acceso no autorizado' }).waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Cerrar sesión' }).click();
+  await page.waitForURL('**/login', { timeout: 15000 });
+  assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), null);
+  console.log('P2_LOCAL_BUYER_EVIDENCE=' + JSON.stringify({
+    completed: true, realJwt: true, buyerUiRoute: '/checkout',
+    adminRouteDenied: true, fixture: 'disposable-postgresql-only',
+    payments: 'not-executed', stagingTouched: false, productionTouched: false,
+  }));
   assert.equal(errors.length, 0, 'Browser errors: ' + errors.join(' | '));
   assert.ok(requests.some(r => r.path === '/api/auth/login' && r.method === 'POST'));
   console.log('P1_LOCAL_REAL_E2E=' + JSON.stringify({
