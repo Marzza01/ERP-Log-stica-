@@ -86,44 +86,50 @@ public class CatalogImportService : ICatalogImportService
                 string ean = fields[14].Trim();
                 string descripcion = fields[15].Trim();
 
-                // Ubicación WMS según categoría y SKU
-                string pasilloLetra = ObtenerPasilloPorCategoria(categoria);
-                int skuNum = total;
-                int rackNum = ((skuNum - 1) % 10) + 1;
-                int nivelNum = (((skuNum - 1) / 10) % 5) + 1;
-                int posNum = (((skuNum - 1) / 50) % 10) + 1;
-                string wmsCodigo = $"PAS-{pasilloLetra}-RCK-{rackNum:D2}-NIV-{nivelNum:D2}-POS-{posNum:D2}";
-
-                // Buscar o crear la ubicación de almacén WMS
-                var ubicacion = await _dbContext.UbicacionesAlmacen
-                    .FirstOrDefaultAsync(u => u.Codigo == wmsCodigo, cancellationToken);
-
-                if (ubicacion is null)
-                {
-                    ubicacion = new UbicacionAlmacen
-                    {
-                        Id = Guid.NewGuid(),
-                        Codigo = wmsCodigo,
-                        Pasillo = $"Pasillo {pasilloLetra}",
-                        Rack = $"Rack {rackNum:D2}",
-                        Nivel = nivelNum,
-                        Posicion = $"Posición {posNum:D2}",
-                        CapacidadMaxima = 1500,
-                        EstaOcupada = true,
-                        Zona = "AlmacenamientoGeneral",
-                        FechaCreacion = DateTime.UtcNow
-                    };
-                    _dbContext.UbicacionesAlmacen.Add(ubicacion);
-                }
-                else
-                {
-                    ubicacion.EstaOcupada = true;
-                }
-
-                // Verificar si el producto ya existe por SKU
+                // Localizar primero el producto. Importar datos maestros NUNCA debe
+                // mover stock físico existente ni marcar ubicaciones nuevas ocupadas.
                 var producto = await _dbContext.Productos
                     .Include(p => p.Stocks)
                     .FirstOrDefaultAsync(p => p.Sku == sku, cancellationToken);
+
+                // Solo se genera ubicación inicial cuando aún no existe saldo WMS.
+                // Un traslado posterior debe pasar por InventoryService y quedar auditado.
+                UbicacionAlmacen? ubicacion = null;
+                string? wmsCodigo = null;
+                if (producto is null || !producto.Stocks.Any())
+                {
+                    string pasilloLetra = ObtenerPasilloPorCategoria(categoria);
+                    int skuNum = total;
+                    int rackNum = ((skuNum - 1) % 10) + 1;
+                    int nivelNum = (((skuNum - 1) / 10) % 5) + 1;
+                    int posNum = (((skuNum - 1) / 50) % 10) + 1;
+                    wmsCodigo = $"PAS-{pasilloLetra}-RCK-{rackNum:D2}-NIV-{nivelNum:D2}-POS-{posNum:D2}";
+
+                    ubicacion = await _dbContext.UbicacionesAlmacen
+                        .FirstOrDefaultAsync(u => u.Codigo == wmsCodigo, cancellationToken);
+
+                    if (ubicacion is null)
+                    {
+                        ubicacion = new UbicacionAlmacen
+                        {
+                            Id = Guid.NewGuid(),
+                            Codigo = wmsCodigo,
+                            Pasillo = $"Pasillo {pasilloLetra}",
+                            Rack = $"Rack {rackNum:D2}",
+                            Nivel = nivelNum,
+                            Posicion = $"Posición {posNum:D2}",
+                            CapacidadMaxima = 1500,
+                            EstaOcupada = true,
+                            Zona = "AlmacenamientoGeneral",
+                            FechaCreacion = DateTime.UtcNow
+                        };
+                        _dbContext.UbicacionesAlmacen.Add(ubicacion);
+                    }
+                    else
+                    {
+                        ubicacion.EstaOcupada = true;
+                    }
+                }
 
                 if (producto is null)
                 {
@@ -161,7 +167,7 @@ public class CatalogImportService : ICatalogImportService
                         CantidadReservada = 0,
                         CantidadBloqueada = 0,
                         PuntoReorden = stockMinimo,
-                        UbicacionAlmacenId = ubicacion.Id,
+                        UbicacionAlmacenId = ubicacion!.Id,
                         UbicacionCodigo = wmsCodigo,
                         UltimaActualizacion = DateTime.UtcNow
                     });
@@ -190,9 +196,9 @@ public class CatalogImportService : ICatalogImportService
                     var stockPrincipal = producto.Stocks.FirstOrDefault();
                     if (stockPrincipal is not null)
                     {
+                        // Solo cambia el umbral de reposición. No mutar ubicación ni saldo:
+                        // el orden de filas CSV no debe desencadenar un traslado WMS.
                         stockPrincipal.PuntoReorden = stockMinimo;
-                        stockPrincipal.UbicacionAlmacenId = ubicacion.Id;
-                        stockPrincipal.UbicacionCodigo = wmsCodigo;
                     }
                     else
                     {
@@ -204,7 +210,7 @@ public class CatalogImportService : ICatalogImportService
                             CantidadReservada = 0,
                             CantidadBloqueada = 0,
                             PuntoReorden = stockMinimo,
-                            UbicacionAlmacenId = ubicacion.Id,
+                            UbicacionAlmacenId = ubicacion!.Id,
                             UbicacionCodigo = wmsCodigo,
                             UltimaActualizacion = DateTime.UtcNow
                         });
