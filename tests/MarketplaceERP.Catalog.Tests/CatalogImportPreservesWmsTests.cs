@@ -290,4 +290,43 @@ public class CatalogImportPreservesWmsTests
     }
 
 
+
+    [Fact]
+    public async Task ImportarDecimalConComa_NoInterpretaComoMilesYRechazaFormatoAmbiguo()
+    {
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase($"CatalogDecimalStrict_{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new CatalogDbContext(options);
+        var service = new CatalogImportService(db, NullLogger<CatalogImportService>.Instance);
+        const string category = "Electrónica y Tecnología";
+        var vendor = Guid.NewGuid();
+        var catId = Guid.NewGuid();
+
+        var filaComa = Row("DEC-001", category, 10, 3, 25m)
+            .Replace("\"25.00\"", "\"1,25\"")
+            .Replace("\"20.00\"", "\"1,00\"");
+        using (var input = new MemoryStream(Encoding.UTF8.GetBytes(
+            Header + "\n" + filaComa + "\n")))
+        {
+            var result = await service.ImportarCatalogoCsvAsync(input, vendor, catId);
+            result.Exitosos.Should().Be(1);
+            result.Errores.Should().Be(0);
+        }
+
+        var guardado = await db.Productos.AsNoTracking().SingleAsync();
+        guardado.PrecioB2C.Should().Be(1.25m);
+        guardado.PrecioB2B.Should().Be(1.00m);
+
+        var filaAmbigua = Row("DEC-002", category, 10, 3, 25m)
+            .Replace("\"25.00\"", "\"1,234\"");
+        using var bad = new MemoryStream(Encoding.UTF8.GetBytes(
+            Header + "\n" + filaAmbigua + "\n"));
+        var rejected = await service.ImportarCatalogoCsvAsync(bad, vendor, catId);
+        rejected.Exitosos.Should().Be(0);
+        rejected.Errores.Should().Be(1);
+        (await db.Productos.CountAsync()).Should().Be(1);
+    }
+
+
 }
