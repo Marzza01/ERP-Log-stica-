@@ -133,6 +133,9 @@ jobs:
         working-directory: frontend/marketplace-ui
         run: npm run test:p3
 
+      - name: Lint frontend
+        working-directory: frontend/marketplace-ui
+        run: npm run lint
       - name: Build frontend
         working-directory: frontend/marketplace-ui
         run: npm run build
