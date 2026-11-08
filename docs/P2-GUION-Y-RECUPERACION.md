@@ -33,5 +33,7 @@ Crear **únicamente en una base desechable con API configurada al clon**: 1 Admi
 - Confirmar historia EF en destino y ensayar el plan contra clon; realizar CI y E2E del SHA definitivo, validar health/ready y errores de Render/Vercel, registrar reversión.
 - No confundir documentación de ensayo previo con estado actual de FIN06/FIN07: hoy ya constan en staging.
 
-## Cierre P2
-Cada módulo requiere URL/SHA, conjunto de datos usado, actor/rol, resultado esperado/observado, captura o traza de ejecución y observaciones; cinco criterios P2 firmados. Sin prueba de restauración, datos de demo y recorrido navegador, **no declarar 100 %**.
+## Aceptación del checklist P2 original y límites
+Los cinco criterios **de preparación de entrega** están cubiertos y documentados en `docs/P2-AUDITORIA-INTEGRIDAD-20261108.md`. Evidencia automatizada: 15/15 rutas Admin + JWT real Comprador/Vendedor, `CI #42436174876` (los tres jobs verdes). Los datos de staging están inventariados y sus carencias reportadas. El procedimiento de recuperación está documentado y una copia por branching pasó 37/37 tablas. El plan `staging -> main` está documentado **sin ejecutarlo**.
+
+**No confundir** este cierre del checklist P2 con una certificación de todas las operaciones de negocio: faltan datos transaccionales completos en staging, una restauración independiente desde snapshot/backup, un recorrido visual completo de todos los procesos con fixtures, aprobación de promoción a producción y revisión de logs Render. Para una demostración transaccional o salida a producción, esas puertas siguen abiertas. Cada futura operación requiere URL/SHA, dataset, rol, resultado esperado/observado y evidencia; no inventar resultados.
