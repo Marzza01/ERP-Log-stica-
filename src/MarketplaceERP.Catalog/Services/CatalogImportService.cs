@@ -13,6 +13,20 @@ namespace MarketplaceERP.Catalog.Services;
 
 public class CatalogImportService : ICatalogImportService
 {
+    // El contrato CSV es posicional: rechazar encabezados reordenados evita
+    // interpretar precios, cantidades y proveedores como otras columnas.
+    private static readonly string[] ColumnasEsperadas =
+    {
+        "SKU", "Nombre del Producto", "Categoría", "Subcategoría",
+        "Precio B2C ($)", "Precio B2B ($)", "Stock Inicial", "Stock Mínimo",
+        "Proveedor", "País Origen", "Peso (kg)", "Dimensiones (cm)",
+        "Unidad de Medida", "Estado", "Código EAN", "Descripción Corta"
+    };
+
+    // Acotar la memoria al validar duplicados antes de tocar el DbContext.
+    private const int MaxFilasImportacion = 10000;
+    private const int MaxCaracteresImportacion = 8000000;
+
     private readonly CatalogDbContext _dbContext;
     private readonly ILogger<CatalogImportService> _logger;
 
@@ -48,20 +62,61 @@ public class CatalogImportService : ICatalogImportService
             return new ImportResult(0, 0, 1, new List<string> { "El archivo CSV está vacío." });
         }
 
+        var columnas = ParseCsvLine(headerLine);
+        if (columnas.Count != ColumnasEsperadas.Length ||
+            columnas.Where((valor, indice) =>
+                !string.Equals(valor.Trim().TrimStart('\uFEFF'), ColumnasEsperadas[indice],
+                    StringComparison.OrdinalIgnoreCase)).Any())
+        {
+            return new ImportResult(0, 0, 1, new List<string>
+            {
+                "Encabezado CSV inválido: se requieren las 16 columnas oficiales en su orden original."
+            });
+        }
+
+        // Preflight sin mutaciones: si hay un SKU repetido, rechazar todo el
+        // archivo antes de cambiar datos maestros, stock o ubicaciones WMS.
+        var filas = new List<(int Numero, string Contenido)>();
+        var skusVistos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int fila = 1;
+        long caracteres = headerLine.Length;
         while (!reader.EndOfStream)
         {
             fila++;
-            var line = await reader.ReadLineAsync(cancellationToken);
+            string? line = await reader.ReadLineAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(line)) continue;
 
+            caracteres += line.Length;
+            if (filas.Count >= MaxFilasImportacion || caracteres > MaxCaracteresImportacion)
+            {
+                return new ImportResult(filas.Count + 1, 0, 1, new List<string>
+                {
+                    "CSV excede el límite de filas o caracteres para importación segura."
+                });
+            }
+
+            filas.Add((fila, line));
+            var campos = ParseCsvLine(line);
+            if (campos.Count != ColumnasEsperadas.Length) continue; // validación por fila
+            string sku = campos[0].Trim();
+            if (sku.Length > 0 && !skusVistos.Add(sku))
+            {
+                errores.Add($"Fila {fila}: SKU duplicado dentro del CSV: {sku}.");
+            }
+        }
+
+        if (errores.Count > 0)
+            return new ImportResult(filas.Count, 0, errores.Count, errores);
+
+        foreach (var (numeroFila, line) in filas)
+        {
             total++;
             try
             {
                 var fields = ParseCsvLine(line);
                 if (fields.Count != 16)
                 {
-                    errores.Add($"Fila {fila}: Se esperaban exactamente 16 columnas pero se obtuvieron {fields.Count}.");
+                    errores.Add($"Fila {numeroFila}: Se esperaban exactamente 16 columnas pero se obtuvieron {fields.Count}.");
                     continue;
                 }
 
@@ -76,7 +131,7 @@ public class CatalogImportService : ICatalogImportService
                 if (string.IsNullOrWhiteSpace(sku) || string.IsNullOrWhiteSpace(nombre) ||
                     string.IsNullOrWhiteSpace(categoria))
                 {
-                    errores.Add($"Fila {fila}: SKU, nombre y categoría son obligatorios.");
+                    errores.Add($"Fila {numeroFila}: SKU, nombre y categoría son obligatorios.");
                     continue;
                 }
 
@@ -86,7 +141,7 @@ public class CatalogImportService : ICatalogImportService
                     !TryParseImportDecimal(fields[5], out decimal precioB2B) ||
                     precioB2C <= 0m || precioB2B <= 0m || precioB2B > precioB2C)
                 {
-                    errores.Add($"Fila {fila}: Precio B2C/B2B inválido o inconsistente.");
+                    errores.Add($"Fila {numeroFila}: Precio B2C/B2B inválido o inconsistente.");
                     continue;
                 }
 
@@ -94,13 +149,13 @@ public class CatalogImportService : ICatalogImportService
                     !int.TryParse(fields[7], NumberStyles.Integer, CultureInfo.InvariantCulture, out int stockMinimo) ||
                     stockInicial < 0 || stockMinimo < 0)
                 {
-                    errores.Add($"Fila {fila}: Stock inicial/mínimo inválido o negativo.");
+                    errores.Add($"Fila {numeroFila}: Stock inicial/mínimo inválido o negativo.");
                     continue;
                 }
 
                 if (!TryParseImportDecimal(fields[10], out decimal pesoKg) || pesoKg < 0m)
                 {
-                    errores.Add($"Fila {fila}: Peso en kg inválido o negativo.");
+                    errores.Add($"Fila {numeroFila}: Peso en kg inválido o negativo.");
                     continue;
                 }
 
@@ -247,7 +302,7 @@ public class CatalogImportService : ICatalogImportService
             }
             catch (Exception ex)
             {
-                errores.Add($"Fila {fila}: Error procesando - {ex.Message}");
+                errores.Add($"Fila {numeroFila}: Error procesando - {ex.Message}");
             }
         }
 
