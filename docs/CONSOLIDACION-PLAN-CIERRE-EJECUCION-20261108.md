@@ -52,3 +52,11 @@
 - `archive/preconsolidacion-render-staging-20261108` → `d9e907c0ca7538350cc71d881c2e0f2b12be3153`.
 
 **No se han realizado cambios de producción, datos de Neon ni fusiones a staging/main.**
+
+## Puerta académica adicional — Rúbrica UNICAES (obligatoria)
+
+Se compararon las 15 páginas del PDF contra el código y datos de staging/Neon. Matriz detallada de 44 comprobaciones: [RUBRICA-UNICAES-MATRIZ-CUMPLIMIENTO-20261108.md](RUBRICA-UNICAES-MATRIZ-CUMPLIMIENTO-20261108.md).
+
+Antes de presentar la versión como completa: demostrar 500 productos publicados conforme a la política comercial, 5 proveedores, 10 pedidos 5+5, tres medios simulados, 50 simultáneos, los 8 KPI académicos correctos, ABC 500, forecast top20, tracking/notificaciones, y documentación formal de 50 páginas/APA7/8 fuentes/Excel de fórmulas/diapositivas/manual. **No falsear datos operativos ni habilitar pagos reales para cumplir la rúbrica.**
+
+Nota de interpretación: la rúbrica contiene un título contradictorio sobre 60%, pero su total de proyecto y hoja de nota final indican 80% proyecto y 20% defensa. Falta aclarar con docente.
