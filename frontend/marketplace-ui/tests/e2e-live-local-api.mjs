@@ -93,6 +93,7 @@ try {
     '/contabilidad', '/liquidaciones'
   ];
   const routeResults = [];
+  const requestsBeforeP2 = requests.length;
   const errorsBeforeP2 = errors.length;
   for (const path of p2Routes) {
     const response = await page.goto(origin + path, {
@@ -109,6 +110,9 @@ try {
       'Unexpected JS exception in P2 route ' + path + ': ' + errors.join(' | '));
     routeResults.push(path);
   }
+  const p2BusinessRequests = requests.slice(requestsBeforeP2);
+  assert.ok(p2BusinessRequests.every(r => r.method === 'GET'),
+    'P2 UI smoke unexpectedly wrote to API: ' + JSON.stringify(p2BusinessRequests.filter(r => r.method !== 'GET')));
   console.log('P2_LOCAL_ADMIN_ROUTE_EVIDENCE=' + JSON.stringify({
     completed: true, count: routeResults.length, routes: routeResults,
     mode: 'real-chromium-real-dotnet-disposable-postgres-readonly-ui',
