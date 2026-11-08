@@ -18,6 +18,14 @@ export function crearReporteKpisCsv(data: DashboardKpis): string {
     ['Hasta', data.periodo.hasta],
     ['Días', data.periodo.diasPeriodo],
     ['Generado por API', data.generadoEn],
+    ['Resumen operativo', 'Valor'],
+    ['Órdenes registradas', data.resumenEjecutivo.totalOrdenes],
+    ['Órdenes entregadas', data.resumenEjecutivo.ordenesEntregadas],
+    ['Órdenes canceladas', data.resumenEjecutivo.ordenesCanceladas],
+    ['Conciliaciones 3-Way registradas', data.resumenEjecutivo.totalMatches3Way],
+    ['Devoluciones RMA', data.resumenEjecutivo.totalRmasPeriodo],
+    ['Comisión interna generada (USD)', data.resumenEjecutivo.totalComisionGenerada],
+    [],
     ['Indicador', 'Valor', 'Unidad', 'Meta', 'Semáforo', 'Datos disponibles'],
   ];
   for (const k of data.kpis) {
