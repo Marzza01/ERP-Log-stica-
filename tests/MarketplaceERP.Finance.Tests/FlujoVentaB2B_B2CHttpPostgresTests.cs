@@ -352,6 +352,20 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
             inspection with { OperacionId = Guid.NewGuid() }))
             Assert.Equal(HttpStatusCode.OK, retryInspect.StatusCode);
 
+        // La misma clase de error afectaba a GET /api/rma porque la consulta
+        // incluye Producto. El contrato plano no serializa relaciones EF.
+        using (var listResponse = await http.GetAsync("/api/rma"))
+        {
+            Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+            using var listJson = JsonDocument.Parse(
+                await listResponse.Content.ReadAsStringAsync());
+            Assert.Equal(1, listJson.RootElement.GetArrayLength());
+            Assert.Equal(rmaId, listJson.RootElement[0].GetProperty("id").GetGuid());
+            Assert.Equal("Completado",
+                listJson.RootElement[0].GetProperty("estado").GetString());
+            Assert.False(listJson.RootElement[0].TryGetProperty("producto", out _));
+        }
+
         await using var finalCatalog = Catalog();
         var finalStock = await finalCatalog.StockFisico.AsNoTracking().SingleAsync();
         Assert.Equal(10, finalStock.CantidadTotal);
