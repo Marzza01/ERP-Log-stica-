@@ -379,9 +379,22 @@ public class CatalogImportService : ICatalogImportService
         _ => "Z"
     };
 
-    private static bool TryParseImportDecimal(string value, out decimal result) =>
-        decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out result) ||
-        decimal.TryParse(value, NumberStyles.Any, new CultureInfo("es-SV"), out result);
+    private static bool TryParseImportDecimal(string value, out decimal result)
+    {
+        result = default;
+        string normalized = value.Trim();
+        // El CSV oficial utiliza números decimales sin separadores de miles.
+        // NumberStyles.Any interpretaba "1,25" como 125 en InvariantCulture.
+        // Se admite coma O punto decimal, nunca ambos, con máximo 2 decimales
+        // para ajustarse a las columnas numeric(18,2) de PostgreSQL.
+        if (!System.Text.RegularExpressions.Regex.IsMatch(
+                normalized, @"\A\d{1,16}(?:[.,]\d{1,2})?\z",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            return false;
+
+        return decimal.TryParse(normalized.Replace(',', '.'),
+            NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out result);
+    }
 
     private static List<string> ParseCsvLine(string line)
     {
