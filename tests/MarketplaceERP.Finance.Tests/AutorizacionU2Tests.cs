@@ -189,6 +189,12 @@ public class AutorizacionU2Tests
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
             var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
             var isProductController = controller == typeof(ProductosController);
+            if (isProductController && action.Name == nameof(ProductosController.ValidarCsv))
+            {
+                // La simulación no escribe, pero sigue recibiendo archivos del usuario:
+                // acceso explícito solo para Admin, nunca Vendedor/Comprador.
+                Assert.Equal("Admin", action.GetCustomAttribute<AuthorizeAttribute>()?.Roles);
+            }
             var isProductCatalogRead = isProductController && (
                 action.Name == nameof(ProductosController.GetPublicados) ||
                 action.Name == nameof(ProductosController.Buscar) ||
@@ -224,8 +230,8 @@ public class AutorizacionU2Tests
             }
         }
         Assert.Equal(23, controllers.Length);
-        Assert.Equal(84, actions);
-        Assert.Equal(85, routes); // Productos/GetAlertasStock has two aliases.
+        Assert.Equal(85, actions);
+        Assert.Equal(86, routes); // Productos/GetAlertasStock tiene dos alias.
     }
 
     [Theory]
