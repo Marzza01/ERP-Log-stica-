@@ -136,6 +136,91 @@ public sealed class CatalogImportAtomicPostgresTests : IAsyncLifetime
         Assert.Equal(0, await verify.UbicacionesAlmacen.CountAsync());
     }
 
+    [Fact]
+    public async Task DosImportacionesConcurrentes_MismoSku_SeSerializanSinDuplicarStock()
+    {
+        if (!_created) return;
+
+        var vendedor = Guid.NewGuid();
+        var categoria = Guid.NewGuid();
+
+        // Retener exactamente el candado transaccional que debe usar el servicio.
+        // Si se omite ese lock en la implementación, los dos importadores no
+        // aparecerán bloqueados en pg_stat_activity y esta prueba fallará.
+        await using var bloqueo = new NpgsqlConnection(_testConnection!);
+        await bloqueo.OpenAsync();
+        await using var transaccionBloqueo = await bloqueo.BeginTransactionAsync();
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(6173152, 20261108)",
+            bloqueo, transaccionBloqueo))
+        {
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        async Task<ImportResult> ImportarAsync()
+        {
+            await using var db = NewContext();
+            var servicio = new CatalogImportService(db, NullLogger<CatalogImportService>.Instance);
+            using var archivo = FileOf(Row("CONCURRENT-001", "25.00", "40"));
+            return await servicio.ImportarCatalogoCsvAsync(archivo, vendedor, categoria);
+        }
+
+        var primero = Task.Run(ImportarAsync);
+        var segundo = Task.Run(ImportarAsync);
+
+        try
+        {
+            var ambosBloqueados = false;
+            for (int intento = 0; intento < 100; intento++)
+            {
+                await using var count = new NpgsqlCommand("""
+                    SELECT count(*) FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND wait_event_type = 'Lock'
+                      AND wait_event = 'advisory'
+                    """, bloqueo, transaccionBloqueo);
+                var esperando = (long)(await count.ExecuteScalarAsync())!;
+                if (esperando >= 2)
+                {
+                    ambosBloqueados = true;
+                    break;
+                }
+
+                if (primero.IsCompleted || segundo.IsCompleted) break;
+                await Task.Delay(100);
+            }
+
+            Assert.True(ambosBloqueados,
+                "Los dos importadores deben esperar el advisory lock ANTES de consultar SKU.");
+        }
+        finally
+        {
+            // Liberar la transacción incluso cuando una aserción falla.
+            await transaccionBloqueo.CommitAsync();
+        }
+
+        var resultados = await Task.WhenAll(primero, segundo)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.All(resultados, r =>
+        {
+            Assert.Equal(1, r.TotalProcesados);
+            Assert.Equal(1, r.Exitosos);
+            Assert.Equal(0, r.Errores);
+        });
+
+        await using var verificar = NewContext();
+        var producto = await verificar.Productos.AsNoTracking().SingleAsync();
+        Assert.Equal("CONCURRENT-001", producto.Sku);
+        Assert.Equal(1, await verificar.Productos.CountAsync());
+        Assert.Equal(1, await verificar.StockFisico.CountAsync());
+        Assert.Equal(1, await verificar.UbicacionesAlmacen.CountAsync());
+        var stock = await verificar.StockFisico.AsNoTracking().SingleAsync();
+        Assert.Equal(40, stock.CantidadTotal);
+        Assert.Equal(0, stock.CantidadReservada);
+        Assert.Equal(0, stock.CantidadBloqueada);
+        Assert.Equal(producto.Id, stock.ProductoId);
+    }
+
     public async Task DisposeAsync()
     {
         if (!_created || _adminConnection is null ||
