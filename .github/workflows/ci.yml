@@ -308,3 +308,47 @@ jobs:
       - name: Test real Admin JWT in Chromium + local PostgreSQL
         working-directory: frontend/marketplace-ui
         run: node tests/e2e-live-local-api.mjs
+
+  local-worktrees-windows:
+    name: Local Git comparator (Windows PowerShell 5.1)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Compare two disposable worktrees with absent files
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $env:RUNNER_TEMP ('erp-git-windows-' + [Guid]::NewGuid().ToString('N'))
+          $testRepo = Join-Path $base 'repo con espacios'
+          $linked = Join-Path $base 'worktree con espacios'
+          $output = Join-Path $base 'output'
+          New-Item -ItemType Directory -Path $testRepo, $output -Force | Out-Null
+          git init $testRepo | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
+          git -C $testRepo config user.email ci@erp.invalid
+          git -C $testRepo config user.name 'CI Windows'
+          'original' | Set-Content (Join-Path $testRepo 'tracked.txt')
+          git -C $testRepo add tracked.txt
+          git -C $testRepo commit -m 'baseline' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'baseline commit failed' }
+          git -C $testRepo branch candidate
+          git -C $testRepo branch staging
+          git -C $testRepo worktree add -b linked-worktree $linked HEAD | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'worktree add failed' }
+          'changed locally' | Set-Content (Join-Path $testRepo 'tracked.txt')
+          'new file only' | Set-Content (Join-Path $linked 'new-only.txt')
+          & ./scripts/analizar-cambios-worktrees.ps1 -Repo $testRepo -Destino $output -RamaCandidata candidate -RamaStaging staging
+          if (-not $?) { throw 'worktree comparator failed' }
+          $report = @(Get-ChildItem -LiteralPath $output -Directory | Sort-Object Name -Descending)[0].FullName
+          $rows = @(Import-Csv (Join-Path $report 'Archivos_Comparados.csv'))
+          $summary = @(Import-Csv (Join-Path $report 'Resumen_Worktrees.csv'))
+          if ($summary.Count -ne 2) { throw "Expected 2 worktrees, got $($summary.Count)" }
+          if (@($rows | Where-Object { $_.RutaRelativa -eq 'tracked.txt' -and $_.Estado -eq 'Diferente de ambas' }).Count -ne 1) {
+            throw 'Modified tracked file not detected'
+          }
+          if (@($rows | Where-Object { $_.RutaRelativa -eq 'new-only.txt' -and $_.Estado -eq 'Nuevo en ambas' }).Count -ne 1) {
+            throw 'Absent new file was not classified correctly'
+          }
