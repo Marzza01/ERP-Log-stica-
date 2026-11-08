@@ -48,9 +48,36 @@ public class CatalogImportService : ICatalogImportService
         return await ImportarCatalogoCsvAsync(fileStream, defaultVendedorId, defaultCategoriaId, cancellationToken);
     }
 
-    public Task<ImportResult> ImportarCatalogoCsvAsync(
-        Stream csvStream, Guid defaultVendedorId, Guid defaultCategoriaId, CancellationToken cancellationToken = default) =>
-        ProcesarCatalogoCsvAsync(csvStream, defaultVendedorId, defaultCategoriaId, soloValidar: false, cancellationToken);
+    public async Task<ImportResult> ImportarCatalogoCsvAsync(
+        Stream csvStream, Guid defaultVendedorId, Guid defaultCategoriaId, CancellationToken cancellationToken = default)
+    {
+        // La primera pasada es SOLO validación y no rastrea ni modifica entidades.
+        // Soportar streams no-seekable: copiar con límite a un buffer temporal en memoria.
+        const int maxBytesImportacion = 8_000_000;
+        using var copia = new MemoryStream();
+        var buffer = new byte[81920];
+        int leidos;
+        while ((leidos = await csvStream.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
+        {
+            if (copia.Length > maxBytesImportacion - leidos)
+                return new ImportResult(0, 0, 1, new List<string> { "CSV excede 8 MB para importación segura." });
+            await copia.WriteAsync(buffer.AsMemory(0, leidos), cancellationToken);
+        }
+
+        copia.Position = 0;
+        var validacion = await ProcesarCatalogoCsvAsync(
+            copia, Guid.Empty, Guid.Empty, soloValidar: true, cancellationToken);
+        if (validacion.Errores > 0)
+        {
+            // No guardar filas válidas de un archivo que contiene filas inválidas.
+            return new ImportResult(
+                validacion.TotalProcesados, 0, validacion.Errores, validacion.MensajesError);
+        }
+
+        copia.Position = 0;
+        return await ProcesarCatalogoCsvAsync(
+            copia, defaultVendedorId, defaultCategoriaId, soloValidar: false, cancellationToken);
+    }
 
     public Task<ImportResult> ValidarCatalogoCsvAsync(
         Stream csvStream, CancellationToken cancellationToken = default) =>
@@ -317,9 +344,17 @@ public class CatalogImportService : ICatalogImportService
 
                 exitosos++;
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                errores.Add($"Fila {numeroFila}: Error procesando - {ex.Message}");
+                // No continuar ni guardar filas anteriores si falla el acceso a
+                // PostgreSQL o la preparación de una fila. SaveChanges sigue fuera
+                // del bucle, por lo que no se ha confirmado ninguna mutación.
+                throw new InvalidOperationException(
+                    $"Importación CSV abortada en fila {numeroFila}; no se guardaron cambios del lote.", ex);
             }
         }
 
