@@ -296,6 +296,150 @@ public sealed class FulfillmentOmsRecoveryPostgresTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task FallaFinanceTrasDespacho_RetryNoDescuentaInventarioOtraVez()
+    {
+        if (!_created) return;
+
+        var ordenId = Guid.NewGuid();
+        var productoId = Guid.NewGuid();
+        var numero = "ORD-DESP-" + Guid.NewGuid().ToString("N")[..10];
+        const string sku = "SKU-DESP-QA";
+        const string codigo = "PAS-B-RCK-01-NIV-01-POS-01";
+        Guid paqueteId;
+        string guia;
+
+        await using (var catalog = Catalog())
+        {
+            catalog.Productos.Add(new Producto
+            {
+                Id = productoId, Sku = sku, Nombre = "Producto prueba despacho",
+                CategoriaNombre = "Ropa y Accesorios", Subcategoria = "QA",
+                PrecioB2C = 25m, PrecioB2B = 20m, StockInicial = 10,
+                StockMinimo = 2, ProveedorNombre = "Proveedor QA",
+                PaisOrigen = "El Salvador", PesoKg = 1m,
+                DimensionesCm = "10x10x10", UnidadMedida = "Unidad",
+                EstadoProducto = "Activo", Descripcion = "Prueba de despacho",
+                VendedorId = Guid.NewGuid(), CategoriaId = Guid.NewGuid()
+            });
+            var ubicacionId = Guid.NewGuid();
+            catalog.UbicacionesAlmacen.Add(new UbicacionAlmacen
+            {
+                Id = ubicacionId, Codigo = codigo, Pasillo = "B", Rack = "01",
+                Nivel = 1, Posicion = "01", EstaOcupada = true
+            });
+            catalog.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(), ProductoId = productoId,
+                UbicacionAlmacenId = ubicacionId, UbicacionCodigo = codigo,
+                CantidadTotal = 10
+            });
+            await catalog.SaveChangesAsync();
+
+            var stockService = new StockService(catalog, NullLogger<StockService>.Instance);
+            var reserva = await stockService.ReservarStockAsync(productoId, 2, ordenId);
+            Assert.True(reserva.Exitoso, reserva.MensajeError);
+            await stockService.ConfirmarReservaAsync(reserva.ReservaId);
+
+            var fulfillment = new FulfillmentService(catalog, stockService,
+                NullLogger<FulfillmentService>.Instance);
+            var pick = await fulfillment.GenerarPickListAsync(
+                new GenerarPickListRequest(ordenId, numero, "QA", new List<ItemPickingSolicitud>
+                {
+                    new(productoId, sku, "Producto prueba despacho", 2)
+                }));
+            await fulfillment.ConfirmarPickingAsync(pick.Id,
+                pick.Items.Select(i =>
+                    new ConfirmarItemPickingRequest(i.Id, i.CantidadSolicitada)).ToList());
+            var paquete = await fulfillment.EmpacarYRotularAsync(new EmpacarDespachoRequest(
+                ordenId, numero, 1m, 20m, 10m, 10m, "QA Express",
+                "San Salvador", "San Salvador Centro", "Dirección prueba",
+                "Receptor QA", "7000-0000"));
+            paqueteId = paquete.Id;
+            guia = paquete.NumeroGuia;
+        }
+
+        await using (var finance = Finance())
+        {
+            finance.Ordenes.Add(new Orden
+            {
+                Id = ordenId, NumeroOrden = numero, Estado = EstadoOrden.EnProceso,
+                CompradorId = Guid.NewGuid(), VendedorId = Guid.NewGuid(),
+                GuiaEnvio = guia
+            });
+            await finance.SaveChangesAsync();
+        }
+
+        await SqlAsync("""
+            CREATE FUNCTION finance.ci_fail_ship() RETURNS trigger
+            LANGUAGE plpgsql AS $ship$
+            BEGIN
+                IF NEW."Estado" = 'Enviada' AND OLD."Estado" = 'EnProceso' THEN
+                    RAISE EXCEPTION 'Fallo OMS simulado después de consumir stock WMS';
+                END IF;
+                RETURN NEW;
+            END $ship$;
+            CREATE TRIGGER ci_fail_ship
+              BEFORE UPDATE ON finance.ordenes
+              FOR EACH ROW EXECUTE FUNCTION finance.ci_fail_ship();
+            """);
+        try
+        {
+            await using var catalog = Catalog();
+            await using var finance = Finance();
+            var stock = new StockService(catalog, NullLogger<StockService>.Instance);
+            var fulfillment = new FulfillmentService(catalog, stock,
+                NullLogger<FulfillmentService>.Instance);
+            var controller = new FulfillmentController(fulfillment, finance);
+            await Assert.ThrowsAsync<DbUpdateException>(() =>
+                controller.DespacharPaquete(paqueteId, CancellationToken.None));
+        }
+        finally
+        {
+            await SqlAsync("DROP TRIGGER IF EXISTS ci_fail_ship ON finance.ordenes");
+            await SqlAsync("DROP FUNCTION IF EXISTS finance.ci_fail_ship()");
+        }
+
+        await using (var catalog = Catalog())
+        await using (var finance = Finance())
+        {
+            var paquete = await catalog.PaquetesDespacho.AsNoTracking().SingleAsync();
+            Assert.Equal(EstadoPacking.Despachado, paquete.Estado);
+            var stock = await catalog.StockFisico.AsNoTracking().SingleAsync();
+            Assert.Equal(8, stock.CantidadTotal);
+            Assert.Equal(0, stock.CantidadReservada);
+            Assert.Equal(1, await catalog.MovimientosInventario.CountAsync(m =>
+                m.OrdenId == ordenId &&
+                m.TipoMovimiento == TipoMovimientoInventario.DespachoOutbound));
+            Assert.Equal(EstadoOrden.EnProceso,
+                (await finance.Ordenes.AsNoTracking().SingleAsync()).Estado);
+        }
+
+        // Reintento: el paquete ya despachado se reutiliza; no consumir 2 veces.
+        await using (var catalog = Catalog())
+        await using (var finance = Finance())
+        {
+            var stock = new StockService(catalog, NullLogger<StockService>.Instance);
+            var controller = new FulfillmentController(
+                new FulfillmentService(catalog, stock, NullLogger<FulfillmentService>.Instance),
+                finance);
+            var result = await controller.DespacharPaquete(paqueteId, CancellationToken.None);
+            Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(result);
+        }
+
+        await using (var catalog = Catalog())
+        await using (var finance = Finance())
+        {
+            Assert.Equal(1, await catalog.PaquetesDespacho.CountAsync());
+            Assert.Equal(8, (await catalog.StockFisico.AsNoTracking().SingleAsync()).CantidadTotal);
+            Assert.Equal(1, await catalog.MovimientosInventario.CountAsync(m =>
+                m.OrdenId == ordenId &&
+                m.TipoMovimiento == TipoMovimientoInventario.DespachoOutbound));
+            Assert.Equal(EstadoOrden.Enviada,
+                (await finance.Ordenes.AsNoTracking().SingleAsync()).Estado);
+        }
+    }
+
     private async Task SqlAsync(string sql)
     {
         await using var connection = new NpgsqlConnection(_ephemeral!);
