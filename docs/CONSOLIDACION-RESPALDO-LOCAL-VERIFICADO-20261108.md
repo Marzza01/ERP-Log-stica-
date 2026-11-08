@@ -31,9 +31,61 @@ Información de la consola PowerShell enviada por el desarrollador; validada con
 - `scripts/analizar-cambios-worktrees.ps1`: solo lectura sobre todos los worktrees; compara los 32 archivos modificados/nuevos contra `origin/consolidacion/erp-segura-20261108` y `origin/staging/catalog-500-neon-test`.
 - Exporta SHA de cada archivo normalizado por filtros Git y clasificación (idéntico / diferente / nuevo).
 - Conservar trabajos locales hasta **revisar diff semántico**. Coincidencia de blob implica contenido idéntico; diferencia de blob NO implica novedad funcional.
-- **Ejecutado correctamente en Windows el 2026-11-08**, con salida `Comparacion_Worktrees_20261108-202734`. Resumen: **32 ocurrencias de archivos locales**; **7** blobs idénticos a la consolidación, **0** idénticos solo a staging, **16** distintos de ambas ramas, **9** ausentes de ambas ramas y **0** eliminados localmente. Esta clasificación es de contenido, no de equivalencia funcional.
-- Por worktree: `MarketplaceERP`: 7 idénticos / 4 distintos / 1 ausente; `MarketplaceERP-staging-500`: 0 / 2 / 0; `MarketplaceERP-backend-integ`: 2 / 10 / 4; `MarketplaceERP-P1`: 0 / 0 / 1; `MarketplaceERP-P5-Backup`: 0 / 0 / 1; los restantes cinco worktrees están limpios. 
-- **Pendiente:** incorporar el listado de rutas/estados del `Archivos_Comparados.csv` local para determinar los 16 archivos distintos y los 9 ausentes; no inferir qué contenido se puede descartar sin ese listado y revisión semántica. GitHub no puede ver estos archivos locales sin que el usuario los comparta.
+- **Ejecutado correctamente en Windows el 2026-11-08**, salida `Comparacion_Worktrees_20261108-202734`: **32 ocurrencias de archivos locales**, **9 idénticas** al blob de consolidación, **0 idénticas solo a staging**, **16 diferentes de ambas**, **7 ausentes de ambas** y **0 eliminadas**. Se rectifica aquí una transcripción preliminar anterior que indicaba erróneamente 7/16/9.
+- Por worktree: `MarketplaceERP`: 7 idénticos / 4 distintos / 1 nuevo; `MarketplaceERP-staging-500`: 0 / 2 / 0; `MarketplaceERP-backend-integ`: 2 / 10 / 4; `MarketplaceERP-P1`: 0 / 0 / 1; `MarketplaceERP-P5-Backup`: 0 / 0 / 1; los restantes cinco worktrees están limpios.
+- **23 ocurrencias requieren revisión de contenido**, no necesariamente 23 archivos distintos (p. ej. `docs/data/Catalogo_500_Productos.csv` aparece en tres worktrees). No hacer `merge`, `checkout` ni `reset` sobre estas rutas.
+
+### Lista de los 23 pendientes, agrupados por riesgo
+
+**A. Integridad de catálogo / importación / migraciones (prioridad alta)**
+
+| Worktree | Archivo local | Comparación |
+|---|---|---|
+| Principal | `docs/data/Catalogo_500_Productos.csv` | Diferente |
+| Staging-500 | `docs/data/Catalogo_500_Productos.csv` | Diferente |
+| Backend-integ | `docs/data/Catalogo_500_Productos.csv` | Diferente |
+| Staging-500 | `src/MarketplaceERP.API/Contracts/ProductoCompradorResponse.cs` | Diferente |
+| Backend-integ | `frontend/marketplace-ui/src/api/productos.ts` | Diferente |
+| Backend-integ | `frontend/marketplace-ui/src/types/index.ts` | Diferente |
+| Backend-integ | `src/MarketplaceERP.API/Controllers/ProductosController.cs` | Diferente |
+| Backend-integ | `src/MarketplaceERP.Catalog/CatalogServiceExtensions.cs` | Diferente |
+| Backend-integ | `src/MarketplaceERP.Catalog/Data/CatalogDbContext.cs` | Diferente |
+| Backend-integ | `src/MarketplaceERP.Catalog/Migrations/20261106005614_CodigoEanOpcional.cs` | Diferente |
+| Backend-integ | `src/MarketplaceERP.Catalog/Migrations/20261106005614_CodigoEanOpcional.Designer.cs` | Diferente |
+| Backend-integ | `src/MarketplaceERP.Catalog/Services/ControlledCatalogImportService.cs` | Nuevo |
+| Backend-integ | `src/MarketplaceERP.Catalog/Services/IControlledCatalogImportService.cs` | Nuevo |
+| Backend-integ | `tests/MarketplaceERP.Catalog.Tests/CatalogLogisticsTests.cs` | Diferente |
+| Backend-integ | `tests/MarketplaceERP.Catalog.Tests/ControlledCatalogImportTests.cs` | Nuevo |
+| Backend-integ | `tests/MarketplaceERP.Finance.Tests/AutorizacionU2Tests.cs` | Diferente |
+| Backend-integ | `docs/Catalogo_500_Importacion_Controlada.md` | Nuevo |
+
+**B. Autenticación / proxy / dashboard (prioridad alta)**
+
+| Worktree | Archivo | Comparación |
+|---|---|---|
+| Principal | `frontend/marketplace-ui/middleware.js` | Diferente |
+| Principal | `frontend/marketplace-ui/tests/auth-proxy.test.cjs` | Diferente |
+| Principal | `frontend/marketplace-ui/src/pages/dashboard/DashboardPage.tsx` | Diferente |
+
+**C. Evidencia / configuración no ejecutable (revisión separada)**
+
+| Worktree | Archivo | Comparación |
+|---|---|---|
+| Principal | `docs/Matriz_Integracion_MarketplaceERP.xlsx` | Nuevo |
+| P1 | `frontend/marketplace-ui/.gitignore` | Nuevo |
+| P5-Backup | `frontend/marketplace-ui/.gitignore` | Nuevo |
+
+### Lo ya verificado en staging mediante GitHub
+
+- La migración `CodigoEanOpcional.cs` **ya existe** en staging: no reemplazar ni duplicar la migración sin contrastar el esquema y snapshot de EF.
+- `CatalogDbContext.cs` marca `CodigoEAN` como opcional y tiene un índice; revisar contenido local sin revertir ese contrato.
+- `ProductosController.cs` ya ofrece operaciones de importación CSV que usan `ICatalogImportService`, registrada por `CatalogServiceExtensions.cs`. El archivo local `ControlledCatalogImportService.cs` no está en staging en esa ruta. **No asumir que falta toda la función de importación ni integrar el servicio nuevo a ciegas.**
+- `middleware.js` de staging decide el origen proxy según entorno Vercel; debe preservarse el comportamiento de seguridad al estudiar el cambio local.
+- El `DashboardPage.tsx` actual incorpora componentes KPI y exportación de reporte; no sustituirlo con una versión anterior.
+
+### Gate pendiente
+
+Solicitar exclusivamente el contenido local de los 23 archivos **en su versión respaldada** para contrastarlo semánticamente, idealmente en ZIP privado, con revisión de posibles secretos y datos personales antes de compartir. Distinguir corrección realmente nueva de regresión o duplicado. No alterar despliegues ni bases de datos.
 
 ## Límites de recuperación
 
