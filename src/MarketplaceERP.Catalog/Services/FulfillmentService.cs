@@ -164,6 +164,10 @@ public class FulfillmentService : IFulfillmentService
 
         if (pickList is null) return null;
 
+        // Una lista completada ya es evidencia de recoleccion fisica: no alterar sus cantidades.
+        if (pickList.Estado == EstadoPicking.Completado)
+            throw new InvalidOperationException("Una PickList completada no admite modificaciones.");
+
         if (pickList.Estado == EstadoPicking.Pendiente)
         {
             pickList.Estado = EstadoPicking.EnProceso;
@@ -214,14 +218,18 @@ public class FulfillmentService : IFulfillmentService
                 $"La orden {request.OrdenId} no tiene una PickList completada y no puede empacarse.");
         }
 
+        // No crear documentos de despacho adicionales una vez emitido un despacho real.
+        // La politica de multiples paquetes requiere un modelo explicito de cantidades parciales.
         var paqueteExistente = await _db.PaquetesDespacho
-            .FirstOrDefaultAsync(
-                p => p.OrdenId == request.OrdenId &&
-                     p.Estado != EstadoPacking.Despachado,
-                cancellationToken);
+            .FirstOrDefaultAsync(p => p.OrdenId == request.OrdenId, cancellationToken);
 
         if (paqueteExistente is not null)
+        {
+            if (paqueteExistente.Estado == EstadoPacking.Despachado)
+                throw new InvalidOperationException("La orden ya tiene un paquete despachado.");
+
             return paqueteExistente;
+        }
 
         var paquete = new PaqueteDespacho
         {
