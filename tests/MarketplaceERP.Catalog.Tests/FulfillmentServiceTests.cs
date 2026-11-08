@@ -162,6 +162,61 @@ public class FulfillmentServiceTests
         paquete.VolumenM3.Should().Be(0.006m);
     }
 
+
+    [Fact]
+    public async Task ConfirmarPicking_Completada_NoPermiteReducirCantidad()
+    {
+        await using var db = CreateInMemoryDbContext();
+        var service = CreateFulfillmentService(db, CreateStockService(db));
+        var item = new ItemPickList
+        {
+            Id = Guid.NewGuid(), Sku = "SKU-GUARD", NombreProducto = "Producto",
+            CantidadSolicitada = 3, CantidadRecogida = 3,
+            Pasillo = "A", Rack = "01", Nivel = 1, Posicion = "01"
+        };
+        var list = new PickList
+        {
+            Id = Guid.NewGuid(), NumeroPickList = "PKL-GUARD", NumeroOrden = "ORD-GUARD",
+            Estado = EstadoPicking.Completado, FechaFin = DateTime.UtcNow,
+            Items = new List<ItemPickList> { item }
+        };
+        db.PickLists.Add(list);
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ConfirmarPickingAsync(list.Id,
+                new List<ConfirmarItemPickingRequest> { new(item.Id, 1) }));
+
+        Assert.Equal(3, (await db.PickLists.Include(x => x.Items).SingleAsync()).Items.Single().CantidadRecogida);
+    }
+
+    [Fact]
+    public async Task EmpacarYRotular_NoCreaNuevoPaqueteDespuesDeDespacho()
+    {
+        await using var db = CreateInMemoryDbContext();
+        var service = CreateFulfillmentService(db, CreateStockService(db));
+        var orderId = Guid.NewGuid();
+        db.PickLists.Add(new PickList
+        {
+            Id = Guid.NewGuid(), OrdenId = orderId, NumeroOrden = "ORD-GUARD-2",
+            NumeroPickList = "PKL-GUARD-2", Estado = EstadoPicking.Completado
+        });
+        db.PaquetesDespacho.Add(new PaqueteDespacho
+        {
+            Id = Guid.NewGuid(), OrdenId = orderId, NumeroOrden = "ORD-GUARD-2",
+            NumeroGuia = "GUIA-GUARD-2", Estado = EstadoPacking.Despachado,
+            FechaDespacho = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var request = new EmpacarDespachoRequest(
+            orderId, "ORD-GUARD-2", 1m, 10m, 10m, 10m, "Transportista",
+            "San Salvador", "Centro", "Direccion", "Cliente", "7000-0000");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EmpacarYRotularAsync(request));
+
+        Assert.Equal(1, await db.PaquetesDespacho.CountAsync());
+    }
+
     [Fact]
     public async Task DespacharPaquete_ConsumeReservaYStock_YSiguienteIntentoEsIdempotente()
     {
