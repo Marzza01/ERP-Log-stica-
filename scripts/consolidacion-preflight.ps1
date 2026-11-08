@@ -3,18 +3,22 @@
 # USO (desde cualquier carpeta): pwsh -File scripts/consolidacion-preflight.ps1
 [CmdletBinding()]
 param(
-    [string]$OutputDir = (Join-Path (Get-Location).Path "auditoria-git-local")
+    [string]$OutputDir = ""
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 function Git([string[]]$GitArgs) {
-    $value = & git @GitArgs 2>&1
+    $value = @(& git @GitArgs 2>&1)
     if ($LASTEXITCODE -ne 0) { throw "git $($GitArgs -join ' ') falló: $value" }
-    return @($value)
+    return $value | Where-Object { $null -ne $_ }
 }
 
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'git no está instalado.' }
 $top = (Git @('rev-parse', '--show-toplevel') | Select-Object -First 1).Trim()
+if ([string]::IsNullOrWhiteSpace($OutputDir)) {
+    $OutputDir = Join-Path (Split-Path -Parent $top) 'MarketplaceERP-Auditoria-Git'
+}
 $head = (Git @('rev-parse', 'HEAD') | Select-Object -First 1).Trim()
 $dirty = @(Git @('status', '--porcelain'))
 $remote = @(Git @('remote', '-v'))
