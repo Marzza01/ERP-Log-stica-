@@ -145,7 +145,7 @@ async function run() {
     await page.getByText('SKU-00051').waitFor({ timeout: 15000 });
     await page.getByPlaceholder('Buscar por SKU o nombre de producto...').fill('SKU-09999');
     await page.getByText('SKU-09999').waitFor({ timeout: 15000 });
-    await page.getByText('Página 1 de 1').waitFor({ timeout: 15000 });
+    await page.locator('.table-footer').getByText('1 registro', { exact: true }).waitFor({ timeout: 15000 });
     console.log('P3_CATALOG_BROWSER_EVIDENCE=' + JSON.stringify({
       completed: true, totalSkus: 10000, pageSize: 50, laterPageLoaded: true,
       searchBeyondFirstPage: true, mockApi: true, productionTouched: false,
