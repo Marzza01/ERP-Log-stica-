@@ -6,6 +6,7 @@ on:
       - main
       - develop
       - 'fix/**'
+      - 'staging/**'
   pull_request:
     branches:
       - main
