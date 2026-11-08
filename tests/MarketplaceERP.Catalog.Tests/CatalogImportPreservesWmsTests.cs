@@ -116,12 +116,12 @@ public class CatalogImportPreservesWmsTests
         var result = await service.ImportarCatalogoCsvAsync(input, Guid.NewGuid(), Guid.NewGuid());
 
         result.TotalProcesados.Should().Be(3);
-        result.Exitosos.Should().Be(1);
+        result.Exitosos.Should().Be(0); // lote rechazado completamente
         result.Errores.Should().Be(2);
-        (await db.Productos.CountAsync()).Should().Be(1);
-        (await db.StockFisico.CountAsync()).Should().Be(1);
-        (await db.UbicacionesAlmacen.CountAsync()).Should().Be(1);
-        (await db.Productos.SingleAsync()).Sku.Should().Be("SKU-VALIDO");
+        db.ChangeTracker.Entries().Should().BeEmpty();
+        (await db.Productos.CountAsync()).Should().Be(0);
+        (await db.StockFisico.CountAsync()).Should().Be(0);
+        (await db.UbicacionesAlmacen.CountAsync()).Should().Be(0);
     }
 
 
@@ -237,5 +237,57 @@ public class CatalogImportPreservesWmsTests
         (await db.StockFisico.CountAsync()).Should().Be(0);
         (await db.UbicacionesAlmacen.CountAsync()).Should().Be(0);
     }
+
+
+    [Fact]
+    public async Task ReimportarConFilaValidaEInvalida_NoModificaProductoNiUbicacionExistentes()
+    {
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase($"CatalogAtomicReimport_{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new CatalogDbContext(options);
+        var service = new CatalogImportService(db, NullLogger<CatalogImportService>.Instance);
+        var vendedor = Guid.NewGuid();
+        var categoria = Guid.NewGuid();
+        const string category = "Electrónica y Tecnología";
+
+        using (var original = new MemoryStream(Encoding.UTF8.GetBytes(
+            Header + "\n" + Row("SKU-001", category, 100, 20, 30m) + "\n")))
+        {
+            var carga = await service.ImportarCatalogoCsvAsync(original, vendedor, categoria);
+            carga.Exitosos.Should().Be(1);
+            carga.Errores.Should().Be(0);
+        }
+
+        var antes = await db.Productos.AsNoTracking().SingleAsync();
+        var stockAntes = await db.StockFisico.AsNoTracking().SingleAsync();
+        var ubicacionesAntes = await db.UbicacionesAlmacen.CountAsync();
+
+        // Si alguna fila tiene precio inválido, incluso después de una fila
+        // válida que cambiaría el SKU existente, se rechaza el lote completo.
+        var incorrecta = Row("SKU-002", category, 30, 5, 45m)
+            .Replace("\"45.00\"", "\"precio-roto\"");
+        using var segundo = new MemoryStream(Encoding.UTF8.GetBytes(
+            Header + "\n" +
+            Row("SKU-001", category, 777, 9, 90m) + "\n" +
+            incorrecta + "\n"));
+
+        var resultado = await service.ImportarCatalogoCsvAsync(segundo, vendedor, categoria);
+        resultado.TotalProcesados.Should().Be(2);
+        resultado.Exitosos.Should().Be(0);
+        resultado.Errores.Should().Be(1);
+
+        (await db.Productos.CountAsync()).Should().Be(1);
+        var despues = await db.Productos.AsNoTracking().SingleAsync();
+        despues.Id.Should().Be(antes.Id);
+        despues.PrecioB2C.Should().Be(antes.PrecioB2C);
+        despues.StockMinimo.Should().Be(antes.StockMinimo);
+        (await db.StockFisico.CountAsync()).Should().Be(1);
+        var stockDespues = await db.StockFisico.AsNoTracking().SingleAsync();
+        stockDespues.CantidadTotal.Should().Be(stockAntes.CantidadTotal);
+        stockDespues.UbicacionAlmacenId.Should().Be(stockAntes.UbicacionAlmacenId);
+        (await db.UbicacionesAlmacen.CountAsync()).Should().Be(ubicacionesAntes);
+    }
+
 
 }
