@@ -59,9 +59,9 @@ public class CatalogImportService : ICatalogImportService
             try
             {
                 var fields = ParseCsvLine(line);
-                if (fields.Count < 16)
+                if (fields.Count != 16)
                 {
-                    errores.Add($"Fila {fila}: Se esperaban 16 columnas pero se obtuvieron {fields.Count}.");
+                    errores.Add($"Fila {fila}: Se esperaban exactamente 16 columnas pero se obtuvieron {fields.Count}.");
                     continue;
                 }
 
@@ -73,13 +73,39 @@ public class CatalogImportService : ICatalogImportService
                 string nombre = fields[1].Trim();
                 string categoria = fields[2].Trim();
                 string subcategoria = fields[3].Trim();
-                decimal precioB2C = ParseDecimal(fields[4], 10.0m);
-                decimal precioB2B = ParseDecimal(fields[5], precioB2C * 0.8m);
-                int stockInicial = ParseInt(fields[6], 50);
-                int stockMinimo = ParseInt(fields[7], 15);
+                if (string.IsNullOrWhiteSpace(sku) || string.IsNullOrWhiteSpace(nombre) ||
+                    string.IsNullOrWhiteSpace(categoria))
+                {
+                    errores.Add($"Fila {fila}: SKU, nombre y categoría son obligatorios.");
+                    continue;
+                }
+
+                // No sustituir silenciosamente importes y cantidades defectuosos por
+                // valores ficticios. Un CSV malformado no puede alterar el catálogo.
+                if (!TryParseImportDecimal(fields[4], out decimal precioB2C) ||
+                    !TryParseImportDecimal(fields[5], out decimal precioB2B) ||
+                    precioB2C <= 0m || precioB2B <= 0m || precioB2B > precioB2C)
+                {
+                    errores.Add($"Fila {fila}: Precio B2C/B2B inválido o inconsistente.");
+                    continue;
+                }
+
+                if (!int.TryParse(fields[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int stockInicial) ||
+                    !int.TryParse(fields[7], NumberStyles.Integer, CultureInfo.InvariantCulture, out int stockMinimo) ||
+                    stockInicial < 0 || stockMinimo < 0)
+                {
+                    errores.Add($"Fila {fila}: Stock inicial/mínimo inválido o negativo.");
+                    continue;
+                }
+
+                if (!TryParseImportDecimal(fields[10], out decimal pesoKg) || pesoKg < 0m)
+                {
+                    errores.Add($"Fila {fila}: Peso en kg inválido o negativo.");
+                    continue;
+                }
+
                 string proveedor = fields[8].Trim();
                 string paisOrigen = fields[9].Trim();
-                decimal pesoKg = ParseDecimal(fields[10], 1.0m);
                 string dimensiones = fields[11].Trim();
                 string unidad = fields[12].Trim();
                 string estado = fields[13].Trim();
@@ -243,19 +269,9 @@ public class CatalogImportService : ICatalogImportService
         _ => "Z"
     };
 
-    private static decimal ParseDecimal(string value, decimal fallback)
-    {
-        if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal result))
-            return result;
-        if (decimal.TryParse(value, NumberStyles.Any, new CultureInfo("es-SV"), out result))
-            return result;
-        return fallback;
-    }
-
-    private static int ParseInt(string value, int fallback)
-    {
-        return int.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out int result) ? result : fallback;
-    }
+    private static bool TryParseImportDecimal(string value, out decimal result) =>
+        decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out result) ||
+        decimal.TryParse(value, NumberStyles.Any, new CultureInfo("es-SV"), out result);
 
     private static List<string> ParseCsvLine(string line)
     {
