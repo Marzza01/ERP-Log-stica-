@@ -31,7 +31,9 @@ Información de la consola PowerShell enviada por el desarrollador; validada con
 - `scripts/analizar-cambios-worktrees.ps1`: solo lectura sobre todos los worktrees; compara los 32 archivos modificados/nuevos contra `origin/consolidacion/erp-segura-20261108` y `origin/staging/catalog-500-neon-test`.
 - Exporta SHA de cada archivo normalizado por filtros Git y clasificación (idéntico / diferente / nuevo).
 - Conservar trabajos locales hasta **revisar diff semántico**. Coincidencia de blob implica contenido idéntico; diferencia de blob NO implica novedad funcional.
-- La ejecución de este script en la PC está **pendiente**; GitHub no accede a archivos de worktrees sin confirmación.
+- **Ejecutado correctamente en Windows el 2026-11-08**, con salida `Comparacion_Worktrees_20261108-202734`. Resumen: **32 ocurrencias de archivos locales**; **7** blobs idénticos a la consolidación, **0** idénticos solo a staging, **16** distintos de ambas ramas, **9** ausentes de ambas ramas y **0** eliminados localmente. Esta clasificación es de contenido, no de equivalencia funcional.
+- Por worktree: `MarketplaceERP`: 7 idénticos / 4 distintos / 1 ausente; `MarketplaceERP-staging-500`: 0 / 2 / 0; `MarketplaceERP-backend-integ`: 2 / 10 / 4; `MarketplaceERP-P1`: 0 / 0 / 1; `MarketplaceERP-P5-Backup`: 0 / 0 / 1; los restantes cinco worktrees están limpios. 
+- **Pendiente:** incorporar el listado de rutas/estados del `Archivos_Comparados.csv` local para determinar los 16 archivos distintos y los 9 ausentes; no inferir qué contenido se puede descartar sin ese listado y revisión semántica. GitHub no puede ver estos archivos locales sin que el usuario los comparta.
 
 ## Límites de recuperación
 
