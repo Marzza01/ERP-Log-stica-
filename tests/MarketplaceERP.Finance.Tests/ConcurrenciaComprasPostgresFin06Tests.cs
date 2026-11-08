@@ -318,6 +318,60 @@ public sealed class ConcurrenciaComprasPostgresFin06Tests : IAsyncLifetime
             .ToListAsync());
     }
 
+    [Fact]
+    public async Task Venta_MismoOrigen_ReintentoSecuencial_PostgreSQL_NoDuplicaAsiento()
+    {
+        if (!_created) return;
+        var orderId = Guid.NewGuid();
+
+        Guid firstId;
+        await using (var firstDb = NewContext())
+        {
+            var accounting = new ContabilidadService(firstDb, NullLogger<ContabilidadService>.Instance);
+            var partida = await accounting.GenerarAsientoVentaAsync(
+                orderId, 100m, 13m, "FacturaConsumidorFinal");
+            firstId = partida.Id;
+        }
+
+        await using (var replayDb = NewContext())
+        {
+            var accounting = new ContabilidadService(replayDb, NullLogger<ContabilidadService>.Instance);
+            var replay = await accounting.GenerarAsientoVentaAsync(
+                orderId, 100m, 13m, "FacturaConsumidorFinal");
+            Assert.Equal(firstId, replay.Id);
+        }
+
+        await using var verify = NewContext();
+        Assert.Equal(1, await verify.PartidasContables.CountAsync(p =>
+            p.TipoOperacion == "Venta" && p.ReferenciaOrigenId == orderId));
+    }
+
+    [Fact]
+    public async Task Venta_MismoOrigen_ImportesDistintos_PostgreSQL_RechazaReintento()
+    {
+        if (!_created) return;
+        var orderId = Guid.NewGuid();
+
+        await using (var firstDb = NewContext())
+        {
+            var accounting = new ContabilidadService(firstDb, NullLogger<ContabilidadService>.Instance);
+            await accounting.GenerarAsientoVentaAsync(
+                orderId, 100m, 13m, "FacturaConsumidorFinal");
+        }
+
+        await using (var replayDb = NewContext())
+        {
+            var accounting = new ContabilidadService(replayDb, NullLogger<ContabilidadService>.Instance);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                accounting.GenerarAsientoVentaAsync(
+                    orderId, 150m, 19.5m, "FacturaConsumidorFinal"));
+        }
+
+        await using var verify = NewContext();
+        Assert.Equal(1, await verify.PartidasContables.CountAsync(p =>
+            p.TipoOperacion == "Venta" && p.ReferenciaOrigenId == orderId));
+    }
+
     public async Task DisposeAsync()
     {
         if (!_created || _adminConnection is null ||
