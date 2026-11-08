@@ -237,13 +237,13 @@ public sealed class FulfillmentOmsRecoveryPostgresTests : IAsyncLifetime
 
         await SqlAsync("""
             CREATE FUNCTION finance.ci_fail_pick() RETURNS trigger
-            LANGUAGE plpgsql AS $
+            LANGUAGE plpgsql AS $pick$
             BEGIN
                 IF NEW."Estado" = 'EnProceso' AND OLD."Estado" = 'Aprobada' THEN
                     RAISE EXCEPTION 'Fallo OMS simulado tras guardar PickList WMS';
                 END IF;
                 RETURN NEW;
-            END $;
+            END $pick$;
             CREATE TRIGGER ci_fail_pick
               BEFORE UPDATE ON finance.ordenes
               FOR EACH ROW EXECUTE FUNCTION finance.ci_fail_pick();
