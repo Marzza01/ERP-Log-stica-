@@ -54,3 +54,8 @@ lerna-debug.log*
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+## Python and AI-tool generated cache (existing tracked files require separate review)
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
