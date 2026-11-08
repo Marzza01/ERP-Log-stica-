@@ -148,7 +148,8 @@ jobs:
         run: |
           foreach ($path in @(
             'scripts/consolidacion-preflight.ps1',
-            'scripts/consolidacion-backup-bundle.ps1'
+            'scripts/consolidacion-backup-bundle.ps1',
+            'scripts/analizar-cambios-worktrees.ps1'
           )) {
             $tokens = $null
             $parseErrors = $null
