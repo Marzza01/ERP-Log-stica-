@@ -166,6 +166,29 @@ public class ContabilidadService : IContabilidadService
         string tipoComprobante, CancellationToken cancellationToken = default)
     {
         decimal totalConIva = montoVenta + iva;
+
+        // Proteccion para reintentos secuenciales. La concurrencia verdadera requiere
+        // adicionalmente un indice parcial UNIQUE (TipoOperacion=Venta, ReferenciaOrigenId)
+        // sobre una migracion validada contra datos historicos.
+        var existente = await _dbContext.PartidasContables
+            .Include(p => p.Lineas)
+            .FirstOrDefaultAsync(p => p.TipoOperacion == "Venta" &&
+                                      p.ReferenciaOrigenId == ordenId, cancellationToken);
+        if (existente is not null)
+        {
+            var ingreso = existente.Lineas
+                .Where(l => l.CodigoCuenta == INGRESOS_VENTAS).Sum(l => l.Haber);
+            var ivaRegistrado = existente.Lineas
+                .Where(l => l.CodigoCuenta == IVA_DEBITO).Sum(l => l.Haber);
+            if (existente.TotalDebe != totalConIva ||
+                existente.TotalHaber != totalConIva ||
+                ingreso != montoVenta || ivaRegistrado != iva)
+                throw new InvalidOperationException(
+                    "La orden ya tiene un asiento Venta con importes diferentes.");
+
+            return existente;
+        }
+
         bool esFacturaCredito = tipoComprobante.Contains("Crédito", StringComparison.OrdinalIgnoreCase)
                              || tipoComprobante.Contains("Credito", StringComparison.OrdinalIgnoreCase)
                              || tipoComprobante.Contains("CCF", StringComparison.OrdinalIgnoreCase);
