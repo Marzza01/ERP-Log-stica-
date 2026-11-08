@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-function loadTs(source, dependency = {}) {
+function loadTs(source, dependency = {}, globals = {}) {
   const full = path.join(__dirname, '..', source);
   const transpiled = ts.transpileModule(fs.readFileSync(full, 'utf8'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -13,7 +13,7 @@ function loadTs(source, dependency = {}) {
   });
   assert.equal(transpiled.diagnostics?.length ?? 0, 0);
   const module = { exports: {} };
-  vm.runInNewContext(transpiled.outputText, { module, exports: module.exports, require: () => dependency, URLSearchParams, Number, String }, { filename: source });
+  vm.runInNewContext(transpiled.outputText, { module, exports: module.exports, require: () => dependency, URLSearchParams, Number, String, ...globals }, { filename: source });
   return module.exports;
 }
 
@@ -71,4 +71,19 @@ test('P3 reporte: evita fórmulas CSV inyectadas por nombres externos', () => {
   const csv = report.crearReporteKpisCsv(data);
   assert.ok(csv.includes("'=HYPERLINK"));
   assert.ok(!csv.includes('"=HYPERLINK'));
+});
+
+test('P3 UX: error 503 HTML de proxy no se muestra a usuario', async () => {
+  const client = loadTs('src/api/client.ts', {}, {
+    localStorage: { getItem: () => null },
+    fetch: async () => ({ ok: false, status: 503, statusText: 'Service Unavailable',
+      text: async () => '<html><body>trace: secret-stack</body></html>' }),
+  });
+  await assert.rejects(client.apiClient.get('/api/productos'), error => {
+    assert.equal(error.status, 503);
+    assert.ok(error.message.includes('temporalmente'));
+    assert.ok(!error.message.includes('<html>'));
+    assert.ok(!error.message.includes('secret-stack'));
+    return true;
+  });
 });
