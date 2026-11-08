@@ -87,7 +87,8 @@ public class CatalogImportService : ICatalogImportService
         Stream csvStream, Guid defaultVendedorId, Guid defaultCategoriaId,
         bool soloValidar, CancellationToken cancellationToken)
     {
-        using var reader = new StreamReader(csvStream, System.Text.Encoding.UTF8);
+        using var reader = new StreamReader(csvStream, System.Text.Encoding.UTF8,
+            detectEncodingFromByteOrderMarks: true, bufferSize: 1024, leaveOpen: true);
         var errores = new List<string>();
         int exitosos = 0;
         int total = 0;
