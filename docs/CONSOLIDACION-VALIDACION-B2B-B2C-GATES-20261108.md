@@ -48,6 +48,28 @@
 
 **Gate antes de corregir:** ejecutar fallo de Finance inmediatamente después de cada escritura en Catalog usando PostgreSQL desechable y comprobar reintento idempotente o conciliación por `OrdenId`/`PaqueteId`. No añadir una transacción SQL compartida a ciegas entre distintos DbContext/esquemas.
 
+## 3A. Ensayos de recuperación entre Catalog y Finance completados en PostgreSQL aislado
+
+Se añadió `tests/MarketplaceERP.Finance.Tests/FulfillmentOmsRecoveryPostgresTests.cs`, que usa únicamente `postgres@localhost:5432/postgres` del runner y crea/elimina una BD `ci_fulfillment_*` con migraciones reales de Catalog y Finance. Nunca se conecta a Neon.
+
+| Caso probado | Fallo inyectado | Observación y recuperación |
+|---|---|---|
+| Generación PickList | PostgreSQL rechaza la transición OMS a `EnProceso` después del INSERT en WMS | **Defecto reproducido**: una segunda llamada creaba **dos PickLists para la misma orden**; CI [42528362653](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42528362653). **Corregido**: el servicio consulta PickList existente, verifica orden/productos/SKU/cantidades y la reutiliza; si el contenido es incompatible, rechaza el reintento. Un `pg_advisory_xact_lock` de llave por `OrdenId` serializa sus peticiones simultáneas |
+| Packing y guía | PostgreSQL rechaza guardar `GuiaEnvio` en Finance después de insertar el paquete WMS | Estado divergente reproducido: WMS conserva paquete, OMS no tiene guía; tras retirar el fallo, reintentar recupera la **misma guía**, sin un segundo paquete |
+| Despacho | PostgreSQL rechaza mover OMS a `Enviada` **después** del consumo de stock y del cambio a `Despachado` en WMS | Estado divergente reproducido; el siguiente intento actualiza OMS sin nueva reducción del stock. Se verifica **un solo movimiento Outbound** y saldo correcto |
+| Dos PickLists simultáneas | La prueba retiene externamente el candado transaccional por `OrdenId` y lanza dos operaciones | Ambos procesos esperan el bloqueo `pg_locks`, después reciben el **mismo ID** y solo se guarda una PickList; no cambia saldo físico |
+
+**Evidencias CI:** tras corregir la duplicación, [42528604056](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42528604056) pasó 505 pruebas .NET y E2E; [42528897454](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42528897454) pasó 506 pruebas, E2E y PostgreSQL; [42529180587](https://github.com/Marzza01/ERP-Log-stica-/actions/runs/42529180587) aprobó **507/507 pruebas .NET, cero fallos**, incluida simultaneidad. El trabajo E2E del último run estaba en ejecución durante la última lectura de esta anotación.
+
+**Herramienta de diagnóstico:** `scripts/diagnosticar-divergencias-fulfillment.sql` es solo `SELECT` y busca listas duplicadas, PickLists sin avance OMS, guías desajustadas, paquetes duplicados, despachos sin estado OMS y paquetes huérfanos. **Aún no se ha ejecutado contra los datos del usuario y sus resultados requieren interpretación.**
+
+**Límites críticos:**
+
+- El diseño **todavía NO tiene una transacción distribuida** entre Catalog y Finance. Se ha comprobado recuperación por reintento en circunstancias específicas, **NO recuperación automática** si el usuario nunca reintenta.
+- El lock serializa llamadas que pasan por `FulfillmentService.GenerarPickListAsync`; no es un índice UNIQUE en la base ni protege escritores directos/legados. Añadir un índice único requiere antes inspeccionar duplicados históricos y migración no destructiva.
+- No se han probado todas las fallas concurrentes ni las entregas en el mundo real. El test B2B/B2C integral actual es principalmente EF InMemory y necesita corroboración HTTP/API + PostgreSQL con datos sintéticos.
+- Quedan pendientes los 23 archivos locales de recuperación, incluido el importador controlado y modificaciones de frontend.
+
 ## 4. Cobertura que existe y lo que todavía NO demuestra
 
 - `tests/MarketplaceERP.Finance.Tests/FlujoIntegralE2ETests.cs` encadena PO–3Way–venta–Picking–Packing–Despacho–Liquidación y verifica balance, **pero utiliza EF Core InMemory para Core, Catalog y Finance**; no demuestra restricciones de PostgreSQL, integración HTTP/JWT ni consistencia bajo fallos entre DbContext.
