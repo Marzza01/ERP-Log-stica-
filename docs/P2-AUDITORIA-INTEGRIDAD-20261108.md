@@ -51,5 +51,8 @@ El 2026-11-08 UTC se ejecutaron satisfactoriamente **las seis consultas** de `sc
 ### Bloqueo técnico del ensayo de snapshot
 Intento de `create_snapshot` de la rama de ensayo Neon rechazado por el proveedor: `not allowed to snapshot non-root branch` (HTTP 400). No se intentó en Neon `main` ni en staging. El ensayo de restauración **sigue pendiente** y exige método compatible en un entorno desechable; no ejecutar sobre la rama raíz sin revisión independiente.
 
+## Regresión adicional P1 ejecutada en el clon para P2
+Se ejecutaron con éxito las **cinco consultas** de `scripts/p1-staging-integrity.sql` sobre `br-polished-union-bbrwd0tu`: 10 + 12 + 9 = **31 controles de anomalías**, todos devolvieron **0**. Los otros dos bloques confirmaron conteos de migraciones (2/6/6) y registros financieros (1 factura, 0 liquidaciones y 0 splits y asientos). Esta repetición fue únicamente lectura y se realizó en un **clon**, no en staging; los controles sobre tablas vacías siguen siendo vacuamente satisfactorios y **no** sustituyen pruebas transaccionales.
+
 ## Decisión
 **P2 no se certifica al 100 %.** Este documento aporta auditoría verificable y una lista de puertas de salida. No autoriza escribir datos persistentes en staging ni modificar producción.
