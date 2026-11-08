@@ -72,6 +72,15 @@ jobs:
       - name: Run tests
         run: dotnet test MarketplaceERP.sln --no-build --configuration Release --logger "trx;LogFilePrefix=test-results" --results-directory ./TestResults
 
+      # Las pruebas nunca deben reescribir el CSV versionado del catálogo de 500 SKUs.
+      - name: Assert catalog fixture did not overwrite tracked CSV
+        if: always()
+        run: |
+          git diff --exit-code -- docs/data/Catalogo_500_Productos.csv
+          if [ -n "$(git status --porcelain --untracked-files=no -- docs/data/Catalogo_500_Productos.csv)" ]; then
+            echo "::error::A test modified the tracked 500-product CSV"; exit 1
+          fi
+
       # Preservar reportes TRX sin depender de una accion Node 20 obsoleta.
       - name: Upload test results (TRX)
         uses: actions/upload-artifact@v6
