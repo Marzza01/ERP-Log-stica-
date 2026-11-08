@@ -77,7 +77,7 @@ function setupApi(page) {
       const pagina = Number(url.searchParams.get('pagina') || 1);
       const tamano = Number(url.searchParams.get('tamano') || 50);
       const query = (url.searchParams.get('q') || '').toLowerCase();
-      const items = Array.from({ length: 500 }, (_, i) => ({
+      const items = Array.from({ length: 10000 }, (_, i) => ({
         id: String(i + 1), sku: 'SKU-' + String(i + 1).padStart(5, '0'),
         nombre: 'Producto ' + (i + 1), categoriaNombre: 'General', stockMinimo: 3,
         stocks: [{ cantidadTotal: 8, cantidadReservada: 2, cantidadBloqueada: 1 }],
@@ -140,14 +140,14 @@ async function run() {
     // P3: validar que la UI alcanza el SKU 500 mediante búsqueda del servidor
     // y no calcula el total global a partir de la primera página.
     await page.goto(baseUrl + '/productos');
-    await page.getByText('Página 1 de 10').waitFor({ timeout: 15000 });
+    await page.getByText('Página 1 de 200').waitFor({ timeout: 15000 });
     await page.locator('.table-footer button').last().click();
     await page.getByText('SKU-00051').waitFor({ timeout: 15000 });
-    await page.getByPlaceholder('Buscar por SKU o nombre de producto...').fill('SKU-00499');
-    await page.getByText('SKU-00499').waitFor({ timeout: 15000 });
+    await page.getByPlaceholder('Buscar por SKU o nombre de producto...').fill('SKU-09999');
+    await page.getByText('SKU-09999').waitFor({ timeout: 15000 });
     await page.getByText('Página 1 de 1').waitFor({ timeout: 15000 });
     console.log('P3_CATALOG_BROWSER_EVIDENCE=' + JSON.stringify({
-      completed: true, totalSkus: 500, pageSize: 50, laterPageLoaded: true,
+      completed: true, totalSkus: 10000, pageSize: 50, laterPageLoaded: true,
       searchBeyondFirstPage: true, mockApi: true, productionTouched: false,
     }));
 
