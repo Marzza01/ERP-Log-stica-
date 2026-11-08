@@ -38,10 +38,21 @@ $reportDir = Join-Path $Destino ("Comparacion_Worktrees_"+$stamp)
 New-Item -ItemType Directory -Path $reportDir -ErrorAction Stop | Out-Null
 
 function Try-Blob([string]$Ref,[string]$Path) {
-    $spec = $Ref + ":" + $Path
-    $result = & git -C $root rev-parse --verify $spec 2>$null
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return ($result | Select-Object -First 1).Trim()
+    # A file may legitimately be absent from a comparison branch.
+    # rev-parse --verify ref:path writes fatal stderr on that absence; with
+    # ErrorActionPreference=Stop Windows PowerShell 5.1 turns this into a
+    # terminating NativeCommandError before LASTEXITCODE can be inspected.
+    # ls-tree returns an EMPTY result for an absent file instead.
+    $result = @(& git -C $root ls-tree $Ref -- $Path)
+    if ($LASTEXITCODE -ne 0) {
+        throw "No se pudo inspeccionar el arbol Git de ${Ref}: $Path"
+    }
+    foreach ($line in $result) {
+        if ($line -match '^100[0-7]{3} blob ([0-9a-fA-F]{40,64})\x09') {
+            return $Matches[1].ToLowerInvariant()
+        }
+    }
+    return $null
 }
 function Git-Safe([string]$Worktree,[string[]]$GitArguments) {
     # $Args es una variable automatica especial de PowerShell.
