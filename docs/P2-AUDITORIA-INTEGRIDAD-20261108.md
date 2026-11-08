@@ -44,5 +44,12 @@ Consultas `SELECT` sobre `br-polished-union-bbrwd0tu`, no sobre la rama predeter
 - [ ] Riesgos de Issue #51 remediados o aceptados de forma documentada según criterio de entrega; pruebas posteriores verdes.
 - [ ] Checklist firmado con evidencias y SHA final, sin confundir aprobación de staging con producción.
 
+
+## Ejecución verificada del script P2
+El 2026-11-08 UTC se ejecutaron satisfactoriamente **las seis consultas** de `scripts/p2-integridad-readonly.sql` sobre la rama `br-polished-union-bbrwd0tu`, sin escrituras ni errores SQL. Controles `sku_duplicados`, `sku_vacio`, `stock_fuera_rango` (incluye bloqueado) y `roles_no_canonicos`: **todos 0**. Se verificaron los 14 IDs de migración. El script **no** demuestra recuperación completa de backup ni E2E de módulos sin registros.
+
+### Bloqueo técnico del ensayo de snapshot
+Intento de `create_snapshot` de la rama de ensayo Neon rechazado por el proveedor: `not allowed to snapshot non-root branch` (HTTP 400). No se intentó en Neon `main` ni en staging. El ensayo de restauración **sigue pendiente** y exige método compatible en un entorno desechable; no ejecutar sobre la rama raíz sin revisión independiente.
+
 ## Decisión
 **P2 no se certifica al 100 %.** Este documento aporta auditoría verificable y una lista de puertas de salida. No autoriza escribir datos persistentes en staging ni modificar producción.
