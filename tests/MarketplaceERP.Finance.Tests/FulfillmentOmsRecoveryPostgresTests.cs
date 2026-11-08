@@ -440,6 +440,116 @@ public sealed class FulfillmentOmsRecoveryPostgresTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task DosPickListsConcurrentes_ParaLaMismaOrden_SoloCreaUnaEnPostgres()
+    {
+        if (!_created) return;
+
+        var ordenId = Guid.NewGuid();
+        var productoId = Guid.NewGuid();
+        const string sku = "SKU-PICK-CONC-QA";
+        const string ubicacion = "PAS-C-RCK-01-NIV-01-POS-01";
+        const string numeroOrden = "ORD-PICK-CONC-QA";
+
+        await using (var catalog = Catalog())
+        {
+            catalog.Productos.Add(new Producto
+            {
+                Id = productoId, Sku = sku, Nombre = "Prueba picking concurrente",
+                CategoriaNombre = "Alimentos y Bebidas", Subcategoria = "Pruebas",
+                PrecioB2C = 20m, PrecioB2B = 15m, StockInicial = 10, StockMinimo = 1,
+                ProveedorNombre = "QA", PaisOrigen = "El Salvador", PesoKg = 1m,
+                DimensionesCm = "10x10x10", UnidadMedida = "Unidad",
+                EstadoProducto = "Activo", Descripcion = "Ensayo concurrente",
+                VendedorId = Guid.NewGuid(), CategoriaId = Guid.NewGuid()
+            });
+            var ubicacionId = Guid.NewGuid();
+            catalog.UbicacionesAlmacen.Add(new UbicacionAlmacen
+            {
+                Id = ubicacionId, Codigo = ubicacion, Pasillo = "C",
+                Rack = "01", Nivel = 1, Posicion = "01", EstaOcupada = true
+            });
+            catalog.StockFisico.Add(new StockFisico
+            {
+                Id = Guid.NewGuid(), ProductoId = productoId,
+                UbicacionAlmacenId = ubicacionId, UbicacionCodigo = ubicacion,
+                CantidadTotal = 10
+            });
+            await catalog.SaveChangesAsync();
+            var reservas = new StockService(catalog, NullLogger<StockService>.Instance);
+            var reserva = await reservas.ReservarStockAsync(productoId, 2, ordenId);
+            Assert.True(reserva.Exitoso, reserva.MensajeError);
+            await reservas.ConfirmarReservaAsync(reserva.ReservaId);
+        }
+
+        var llave = BitConverter.ToInt64(ordenId.ToByteArray(), 0);
+        await using var connection = new NpgsqlConnection(_ephemeral!);
+        await connection.OpenAsync();
+        await using var hold = await connection.BeginTransactionAsync();
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(@key)", connection, hold))
+        {
+            cmd.Parameters.AddWithValue("key", llave);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        async Task<PickList> GenerarAsync()
+        {
+            await using var db = Catalog();
+            var service = Service(db);
+            return await service.GenerarPickListAsync(new GenerarPickListRequest(
+                ordenId, numeroOrden, "Operador QA",
+                new List<ItemPickingSolicitud>
+                {
+                    new(productoId, sku, "Prueba picking concurrente", 2)
+                }));
+        }
+
+        var primero = Task.Run(GenerarAsync);
+        var segundo = Task.Run(GenerarAsync);
+        try
+        {
+            var dosEsperando = false;
+            for (var intento = 0; intento < 100; intento++)
+            {
+                await using var count = new NpgsqlCommand("""
+                    SELECT count(*) FROM pg_locks
+                    WHERE locktype = 'advisory' AND NOT granted
+                      AND database = (
+                        SELECT oid FROM pg_database WHERE datname = current_database()
+                      )
+                    """, connection, hold);
+                var esperando = (long)(await count.ExecuteScalarAsync())!;
+                if (esperando >= 2)
+                {
+                    dosEsperando = true;
+                    break;
+                }
+                if (primero.IsCompleted || segundo.IsCompleted) break;
+                await Task.Delay(100);
+            }
+            Assert.True(dosEsperando,
+                "Ambas solicitudes deben esperar el bloqueo por orden antes de consultar WMS.");
+        }
+        finally
+        {
+            await hold.CommitAsync();
+        }
+
+        var resultado = await Task.WhenAll(primero, segundo)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(resultado[0].Id, resultado[1].Id);
+        Assert.Equal(ordenId, resultado[0].OrdenId);
+
+        await using var verify = Catalog();
+        Assert.Equal(1, await verify.PickLists.CountAsync(x => x.OrdenId == ordenId));
+        Assert.Equal(2, (await verify.PickLists.Include(x => x.Items)
+            .SingleAsync(x => x.OrdenId == ordenId)).Items.Sum(x => x.CantidadSolicitada));
+        var stock = await verify.StockFisico.AsNoTracking().SingleAsync();
+        Assert.Equal(10, stock.CantidadTotal);
+        Assert.Equal(2, stock.CantidadReservada);
+    }
+
     private async Task SqlAsync(string sql)
     {
         await using var connection = new NpgsqlConnection(_ephemeral!);
