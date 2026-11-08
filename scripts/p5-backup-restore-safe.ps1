@@ -69,8 +69,11 @@ try {
     $srcHost = Required 'P5_SOURCE_PGHOST'
     $srcDb = Required 'P5_SOURCE_PGDATABASE'
     Configure 'P5_TARGET'
-    if ($env:PGHOST -eq $srcHost -and $env:PGDATABASE -eq $srcDb) {
-      throw 'La restauración NO puede ejecutarse contra el origen.'
+    if ($env:PGHOST -eq $srcHost) {
+      throw 'La restauración requiere un endpoint y rama Neon INDEPENDIENTES; host igual al origen.'
+    }
+    if ($env:PGDATABASE -eq $srcDb) {
+      throw 'La restauración NO puede ejecutarse contra el nombre de base de origen.'
     }
     if ($env:PGDATABASE -notmatch '^p5_restore_[a-z0-9_]+$') {
       throw 'La base destino debe ser independiente y llamarse p5_restore_*.'
