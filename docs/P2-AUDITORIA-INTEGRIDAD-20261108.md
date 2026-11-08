@@ -57,5 +57,10 @@ Se ejecutaron con éxito las **cinco consultas** de `scripts/p1-staging-integrit
 ## Concordancia fila a fila entre staging y el clon
 Se calcularon huellas deterministas de las filas, ordenadas por `Id`, en **ambas ramas por separado**, sin extraer datos confidenciales. En seis tablas —`catalog.productos` (500), `core.proveedores` (4), `finance.ordenes_compra` (3), `finance.facturas_proveedor` (1), `catalog.movimientos_inventario` (3) y `core.usuarios` (2)— coinciden tanto los conteos como los hashes agregados **6/6**. Las huellas MD5 son comprobaciones prácticas de igualdad y no certificación criptográfica de backup; el control no cubre todas las tablas ni sustituye restauración y ejecución funcional.
 
+## Ensayo P2 de recuperación por rama independiente
+Se creó una **segunda rama desechable** `br-crimson-hat-bbmx0mpt`, nombre `p2-recuperacion-copia-verificada-20261108`, hija de `br-polished-union-bbrwd0tu`. Se compararon **las 37 tablas BASE TABLE** de `core`, `catalog` y `finance` mediante `COUNT(*)` y huella determinista ordenada de todas las filas serializadas a JSON. **37/37 coincidieron en cantidad y huella**, sin anomalías. Incluye los tres historiales `__EFMigrationsHistory` (2/6/6), todos los datos no vacíos y las tablas vacías. Sin DML/DDL en ninguna rama.
+
+**Limitación explícita:** duplicar mediante branching en Neon es recuperación de un punto de ramificación y verifica identidad de datos en ese instante, **no** es una restauración de backup/snapshot independiente, no prueba procedimiento de desastre ni que la aplicación web pueda reconstruir sus servicios. El intento de snapshot de rama hija recibió HTTP 400 (snapshot no disponible para rama no raíz). Mantener pendiente la aceptación de restore independiente.
+
 ## Decisión
 **P2 no se certifica al 100 %.** Este documento aporta auditoría verificable y una lista de puertas de salida. No autoriza escribir datos persistentes en staging ni modificar producción.
