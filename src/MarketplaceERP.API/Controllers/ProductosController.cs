@@ -81,7 +81,7 @@ public class ProductosController : ControllerBase
             query = query.Where(p => p.Nombre.ToLower().Contains(qLower) || 
                                      p.Sku.ToLower().Contains(qLower) || 
                                      p.Descripcion.ToLower().Contains(qLower) ||
-                                     p.CodigoEAN.Contains(qLower));
+                                     (p.CodigoEAN != null && p.CodigoEAN.Contains(qLower)));
         }
 
         if (!string.IsNullOrWhiteSpace(categoria))
