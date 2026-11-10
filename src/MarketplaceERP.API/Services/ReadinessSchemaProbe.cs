@@ -40,4 +40,24 @@ public static class ReadinessSchemaProbe
             if (closeAfterCheck) await connection.CloseAsync();
         }
     }
+
+    /// <summary>
+    /// Fail closed when this deployed binary and the database differ in EF migration history.
+    /// Both the known migrations and database history must match exactly.
+    /// Read-only: never migrates or seeds.
+    /// </summary>
+    public static async Task<bool> CurrentMigrationsAppliedAsync(
+        DbContext context,
+        CancellationToken cancellationToken = default)
+    {
+        if (!context.Database.IsNpgsql()) return false;
+
+        var expected = context.Database.GetMigrations().ToHashSet(StringComparer.Ordinal);
+        if (expected.Count == 0) return false;
+
+        var applied = (await context.Database.GetAppliedMigrationsAsync(cancellationToken))
+            .ToHashSet(StringComparer.Ordinal);
+
+        return expected.SetEquals(applied);
+    }
 }

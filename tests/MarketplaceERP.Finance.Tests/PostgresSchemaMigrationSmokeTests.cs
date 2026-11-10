@@ -1,3 +1,4 @@
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Catalog;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
@@ -181,6 +182,7 @@ public sealed class PostgresSchemaMigrationSmokeTests : IAsyncLifetime
         Assert.Equal(known.OrderBy(x => x, StringComparer.Ordinal),
             applied.OrderBy(x => x, StringComparer.Ordinal));
         Assert.Empty(await context.Database.GetPendingMigrationsAsync());
+        Assert.True(await ReadinessSchemaProbe.CurrentMigrationsAppliedAsync(context));
         if (requiredMigration is not null) Assert.Contains(requiredMigration, applied);
     }
 

@@ -115,6 +115,8 @@ public sealed class P1ReadinessAndBootstrapTests
                 "CREATE TABLE core.\"__EFMigrationsHistory\" (\"MigrationId\" varchar(150) NOT NULL)");
             Assert.True(await ReadinessSchemaProbe.RequiredTablesExistAsync(
                 core, appTable, historyTable));
+            // A history table's mere existence is insufficient: no migrations applied.
+            Assert.False(await ReadinessSchemaProbe.CurrentMigrationsAppliedAsync(core));
         }
         finally
         {
