@@ -74,4 +74,71 @@ public class StagingDatabaseTargetGuardTests
     [Fact]
     public void ExistingProductionServiceWithoutStagingMarker_IsUnchanged() =>
         Check(Configuration(Connection(host: "other.invalid"), marker: null), "marketplaceerp-api");
+
+    private static void CheckMaintenance(
+        IConfiguration config, string? service = StagingDatabaseTargetGuard.ServiceName,
+        string environment = "Production") =>
+        StagingDatabaseTargetGuard.ValidateMaintenanceWriteTarget(
+            config, service, environment, DatabaseConnectionConfiguration.Resolve(config));
+
+    [Fact]
+    public void Maintenance_ExactStagingIdentityAndTls_PassesWithoutDatabaseConnection() =>
+        CheckMaintenance(Configuration());
+
+    [Fact]
+    public void Maintenance_LocalPostgresQaWithoutStagingIdentity_IsAllowed()
+    {
+        var local = Connection(host: "localhost", database: "gate65_qa_local", user: "postgres",
+            ssl: SslMode.Disable, binding: ChannelBinding.Disable);
+        CheckMaintenance(Configuration(local, marker: null), service: null, environment: "Development");
+        CheckMaintenance(Configuration(local.Replace("localhost", "127.0.0.1"), marker: null),
+            service: null, environment: "Development");
+    }
+
+    [Fact]
+    public void Maintenance_ProductionRemoteHostIsRejectedWithoutStagingIdentity()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            CheckMaintenance(Configuration(Connection(host: "production-db.invalid", database: "real_prod"),
+                marker: null), service: "marketplaceerp-api"));
+    }
+
+    [Fact]
+    public void Maintenance_StagingHostWithoutBothMarkersIsRejected()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            CheckMaintenance(Configuration(marker: null), service: null));
+        Assert.Throws<InvalidOperationException>(() =>
+            CheckMaintenance(Configuration(), service: null));
+        Assert.Throws<InvalidOperationException>(() =>
+            CheckMaintenance(Configuration(marker: null)));
+    }
+
+    [Fact]
+    public void Maintenance_LocalhostWithStagingMarkersIsRejected()
+    {
+        var local = Connection(host: "localhost", database: "gate65_qa_local", user: "postgres");
+        Assert.Throws<InvalidOperationException>(() =>
+            CheckMaintenance(Configuration(local)));
+        Assert.Throws<InvalidOperationException>(() =>
+            CheckMaintenance(Configuration(local, marker: null)));
+    }
+
+    [Fact]
+    public void Maintenance_StagingRequiresExactDatabaseRoleTlsAndPaymentMode()
+    {
+        foreach (var invalid in new[]
+        {
+            Connection(database: "wrong"),
+            Connection(user: "wrong"),
+            Connection(ssl: SslMode.Require),
+            Connection(binding: ChannelBinding.Prefer)
+        })
+        {
+            Assert.Throws<InvalidOperationException>(() =>
+                CheckMaintenance(Configuration(invalid)));
+        }
+        Assert.Throws<InvalidOperationException>(() =>
+            CheckMaintenance(Configuration(), environment: "Development"));
+    }
 }

@@ -15,6 +15,40 @@ public static class StagingDatabaseTargetGuard
     public const string DatabaseName = "marketplaceerp_test";
     public const string DatabaseUser = "marketplaceerp_test_owner";
 
+    /// <summary>
+    /// Every remotely mutating maintenance command is restricted to the exact
+    /// authorized Neon staging endpoint, with the full Render staging identity.
+    /// Loopback QA is allowed only without ANY staging marker.
+    /// Production maintenance needs a separate, expressly reviewed release gate.
+    /// DescribeTarget remains offline and is deliberately exempt.
+    /// </summary>
+    public static void ValidateMaintenanceWriteTarget(
+        IConfiguration configuration, string? renderServiceName,
+        string environmentName, string? resolvedConnection)
+    {
+        NpgsqlConnectionStringBuilder target;
+        try { target = new NpgsqlConnectionStringBuilder(resolvedConnection); }
+        catch (Exception ex) when (ex is ArgumentException or FormatException)
+        {
+            throw new InvalidOperationException("El destino de mantenimiento es inválido.");
+        }
+
+        var namedStaging = string.Equals(renderServiceName, ServiceName, StringComparison.Ordinal);
+        var markedStaging = string.Equals(configuration["Deployment:Target"], TargetMarker, StringComparison.Ordinal);
+        var loopback = target.Host is "localhost" or "127.0.0.1" or "::1";
+        if (loopback && !namedStaging && !markedStaging)
+            return; // Explicitly confirmed localhost-only QA, never a remote service.
+
+        if (!namedStaging || !markedStaging ||
+            !string.Equals(target.Host, DirectHost, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "Mantenimiento remoto no autorizado: únicamente Neon staging con identidad completa.");
+
+        // Inherit the existing strict host, port, DB, role, TLS, payment and
+        // single-source connection requirements from HTTP staging.
+        Validate(configuration, renderServiceName, environmentName, resolvedConnection);
+    }
+
     public static void Validate(IConfiguration configuration, string? renderServiceName,
         string environmentName, string? resolvedConnection)
     {

@@ -28,6 +28,13 @@ public static class MaintenanceRunner
                 return 0; // No context, connection or SQL is created for description.
             }
             target.Confirm(command);
+            // Unlike HTTP startup, maintenance has its own execution path.
+            // Enforce the same staging identity before opening any DB connection
+            // or applying any schema/data writes. Production remote maintenance
+            // remains blocked pending a separately authorized deployment gate.
+            StagingDatabaseTargetGuard.ValidateMaintenanceWriteTarget(
+                config, Environment.GetEnvironmentVariable("RENDER_SERVICE_NAME"),
+                builder.Environment.EnvironmentName, connection);
             if (command.Action == MaintenanceAction.SeedDemo && !builder.Environment.IsDevelopment())
                 throw new InvalidOperationException("Seed demo solo se admite explícitamente en Development.");
 
