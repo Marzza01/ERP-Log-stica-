@@ -332,7 +332,7 @@ public class CatalogImportService : ICatalogImportService
                         CantidadBloqueada = 0,
                         PuntoReorden = stockMinimo,
                         UbicacionAlmacenId = ubicacion!.Id,
-                        UbicacionCodigo = wmsCodigo,
+                        UbicacionCodigo = wmsCodigo ?? throw new InvalidOperationException("Código WMS requerido para alta de stock."),
                         UltimaActualizacion = DateTime.UtcNow
                     });
 
@@ -375,7 +375,7 @@ public class CatalogImportService : ICatalogImportService
                             CantidadBloqueada = 0,
                             PuntoReorden = stockMinimo,
                             UbicacionAlmacenId = ubicacion!.Id,
-                            UbicacionCodigo = wmsCodigo,
+                            UbicacionCodigo = wmsCodigo ?? throw new InvalidOperationException("Código WMS requerido para alta de stock."),
                             UltimaActualizacion = DateTime.UtcNow
                         });
                     }

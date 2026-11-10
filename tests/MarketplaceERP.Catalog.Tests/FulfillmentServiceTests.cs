@@ -74,6 +74,13 @@ public class FulfillmentServiceTests
         pickList.Items.First().Pasillo.Should().Be("A");
         pickList.Items.Last().Pasillo.Should().Be("B");
         pickList.Estado.Should().Be(EstadoPicking.Pendiente);
+        pickList.NumeroPickList.Should().Be(
+            $"PKL-{pickList.FechaCreacion:yyyyMMdd}-{pickList.Id:N}");
+        pickList.NumeroPickList.Length.Should().Be(45);
+        // Reintentar la misma reserva no crea un nuevo documento/numero.
+        var replay = await service.GenerarPickListAsync(request);
+        replay.Id.Should().Be(pickList.Id);
+        replay.NumeroPickList.Should().Be(pickList.NumeroPickList);
     }
 
     [Fact]
@@ -158,6 +165,12 @@ public class FulfillmentServiceTests
         var paquete = await service.EmpacarYRotularAsync(request);
 
         paquete.NumeroGuia.Should().StartWith("SV-LOGI-");
+        paquete.NumeroGuia.Should().Be(
+            $"SV-LOGI-{paquete.FechaEmpaque:yyyyMMdd}-{paquete.Id:N}");
+        paquete.NumeroGuia.Length.Should().Be(49);
+        var replay = await service.EmpacarYRotularAsync(request);
+        replay.Id.Should().Be(paquete.Id);
+        replay.NumeroGuia.Should().Be(paquete.NumeroGuia);
         paquete.Estado.Should().Be(EstadoPacking.ListoParaDespacho);
         paquete.VolumenM3.Should().Be(0.006m);
     }

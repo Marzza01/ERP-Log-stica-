@@ -247,10 +247,30 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
         Assert.Equal(quantity,
             pickJson.RootElement.GetProperty("items")[0].GetProperty("cantidadSolicitada").GetInt32());
 
+        // Una cantidad inválida se rechaza con 400 sin alterar la lista.
+        using var invalidConfirm = await http.PostAsJsonAsync(
+            $"/api/fulfillment/picklists/{pickId}/confirmar",
+            new[] { new ConfirmarItemPickingRequest(itemId, quantity + 1) });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidConfirm.StatusCode);
+        using (var invalidJson = JsonDocument.Parse(
+                   await invalidConfirm.Content.ReadAsStringAsync()))
+            Assert.Equal("PICKING_CANTIDAD_INVALIDA",
+                invalidJson.RootElement.GetProperty("codigo").GetString());
+
         using var confirm = await http.PostAsJsonAsync(
             $"/api/fulfillment/picklists/{pickId}/confirmar",
             new[] { new ConfirmarItemPickingRequest(itemId, quantity) });
         Assert.Equal(HttpStatusCode.OK, confirm.StatusCode);
+
+        // Un reintento sobre una lista completada no puede reducir cantidades.
+        using var repeatConfirm = await http.PostAsJsonAsync(
+            $"/api/fulfillment/picklists/{pickId}/confirmar",
+            new[] { new ConfirmarItemPickingRequest(itemId, quantity - 1) });
+        Assert.Equal(HttpStatusCode.Conflict, repeatConfirm.StatusCode);
+        using (var completedJson = JsonDocument.Parse(
+                   await repeatConfirm.Content.ReadAsStringAsync()))
+            Assert.Equal("PICKING_COMPLETADO",
+                completedJson.RootElement.GetProperty("codigo").GetString());
 
         using var packing = await http.PostAsJsonAsync(
             $"/api/fulfillment/ordenes/{orderId}/empacar",
@@ -259,6 +279,20 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
                 "San Salvador", "Centro", "Dirección QA",
                 "Destinatario QA", "7000-0000"));
         Assert.Equal(HttpStatusCode.OK, packing.StatusCode);
+
+        // Un segundo POST con la misma orden pero diferente dirección no debe
+        // aparentar que modificó el paquete previamente persistido.
+        using var changedPacking = await http.PostAsJsonAsync(
+            $"/api/fulfillment/ordenes/{orderId}/empacar",
+            new EmpacarDespachoRequest(
+                orderId, numeroOrden, 3m, 30m, 20m, 10m, "Transportista QA",
+                "San Salvador", "Centro", "Direccion distinta QA",
+                "Destinatario QA", "7000-0000"));
+        Assert.Equal(HttpStatusCode.Conflict, changedPacking.StatusCode);
+        using (var rejectionJson = JsonDocument.Parse(
+                   await changedPacking.Content.ReadAsStringAsync()))
+            Assert.Equal("EMPAQUE_CONFLICTO",
+                rejectionJson.RootElement.GetProperty("codigo").GetString());
 
         Guid packageId;
         string guide;
@@ -310,8 +344,8 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
         Assert.Equal(partida.TotalDebe, partida.TotalHaber);
         Assert.Equal(partida.TotalDebe, partida.Lineas.Sum(x => x.Debe));
         Assert.Equal(partida.TotalHaber, partida.Lineas.Sum(x => x.Haber));
-        Assert.Single(partida.Lineas.Where(x => x.CodigoCuenta ==
-            (tipoCliente == TipoCliente.B2B ? "1105" : "1101")));
+        Assert.Single(partida.Lineas, x => x.CodigoCuenta ==
+            (tipoCliente == TipoCliente.B2B ? "1105" : "1101"));
 
         // La devolucion exige una venta entregada. Antes, responder 400 sin
         // crear un RMA; ni el comprador ni la fecha se infieren del request.
@@ -438,9 +472,9 @@ public sealed class FlujoVentaB2B_B2CHttpPostgresTests : IAsyncLifetime
         {
             Assert.True(twoWaiting,
                 "Ambas solicitudes RMA deben esperar el bloqueo por OrdenId.");
-            var accepted = Assert.Single(concurrent.Where(x =>
-                x.StatusCode == HttpStatusCode.Created));
-            Assert.Single(concurrent.Where(x => x.StatusCode == HttpStatusCode.BadRequest));
+            var accepted = Assert.Single(concurrent, x =>
+                x.StatusCode == HttpStatusCode.Created);
+            Assert.Single(concurrent, x => x.StatusCode == HttpStatusCode.BadRequest);
             using var acceptedJson = JsonDocument.Parse(
                 await accepted.Content.ReadAsStringAsync());
             pendingRmaId = acceptedJson.RootElement.GetProperty("id").GetGuid();

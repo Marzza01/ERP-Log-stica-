@@ -42,5 +42,9 @@ public class SplitPago
 
     // Navegación
     public Orden Orden { get; set; } = null!;
+    // Enlace histórico 1:1 a Liquidacion.SplitPagoId (mantener hasta contracción).
     public Liquidacion? Liquidacion { get; set; }
+    // Enlace nuevo 1:N; nunca se usa el enlace legado para reclamar el lote.
+    public Guid? LiquidacionId { get; set; }
+    public Liquidacion? LiquidacionGrupo { get; set; }
 }

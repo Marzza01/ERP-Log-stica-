@@ -50,6 +50,72 @@ test('P3 catálogo: sin colección Stocks se preserva el DTO del cliente', () =>
   assert.equal(catalog.normalizarProducto(p), p);
 });
 
+test('P3 EAN opcional: contrato JSON preserva NULL sin inventar código de barras', async () => {
+  const calls = [];
+  const api = loadTs('src/api/productos.ts', {
+    apiClient: {
+      post: async (url, payload) => { calls.push({ url, payload }); return payload; },
+      get: async () => ({ items: [{ id: 'g', codigoEAN: null }], total: 1, pagina: 1, tamano: 8 }),
+    },
+  });
+  const request = {
+    sku: 'QA-NO-EAN', nombre: 'Artículo sin código verificado',
+    descripcion: '', categoriaNombre: 'Prueba', subcategoria: '',
+    precioB2C: 12.5, precioB2B: 11.25, stockMinimo: 1,
+    proveedorNombre: 'QA', paisOrigen: 'SV', pesoKg: 1,
+    dimensionesCm: '', unidadMedida: 'unidad', estadoProducto: 'Activo',
+    estaPublicado: true,
+    vendedorId: '713b54af-e490-4626-a025-65197558a9cb',
+    categoriaId: '2576e782-dcdd-4a8b-88d3-e9d7d8994ff2',
+  };
+  await api.productosApi.crear(request);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/productos');
+  assert.equal(calls[0].payload.codigoEAN, null);
+  assert.equal(calls[0].payload.vendedorId, request.vendedorId);
+  assert.equal(calls[0].payload.categoriaId, request.categoriaId);
+  assert.throws(() => api.productosApi.crear({ ...request, vendedorId: '' }),
+    /vendedor activo y una categoría reales/);
+  assert.throws(() => api.productosApi.crear({ ...request,
+    vendedorId: '11111111-1111-1111-1111-111111111111' }),
+    /vendedor activo y una categoría reales/);
+  assert.throws(() => api.productosApi.crear({ ...request,
+    categoriaId: '22222222-2222-2222-2222-222222222222' }),
+    /vendedor activo y una categoría reales/);
+  assert.throws(() => api.productosApi.crear({ ...request,
+    categoriaId: '00000000-0000-0000-0000-000000000000' }),
+    /vendedor activo y una categoría reales/);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].payload.precioBase, request.precioB2C);
+  assert.equal(calls[0].payload.stockInicial, 0);
+  const consulta = await api.productosApi.listar();
+  assert.equal(consulta.items[0].codigoEAN, null);
+  assert.equal(catalog.normalizarProducto({ id: 'g', codigoEAN: null }).codigoEAN, null);
+});
+
+test('P3 creación de producto: las opciones proceden de Core y nunca de GUID inventados', async () => {
+  const urls = [];
+  const references = {
+    vendedores: [{ id: '713b54af-e490-4626-a025-65197558a9cb', nombre: 'Vendedor real QA' }],
+    categorias: [{ id: '2576e782-dcdd-4a8b-88d3-e9d7d8994ff2', nombre: 'Categoría real QA' }],
+  };
+  const api = loadTs('src/api/productos.ts', {
+    apiClient: {
+      get: async url => { urls.push(url); return references; },
+    },
+  });
+  const selected = await api.productosApi.opcionesAlta();
+  assert.equal(urls.length, 1);
+  assert.equal(urls[0], '/api/productos/opciones-alta');
+  assert.equal(selected.vendedores[0].id, references.vendedores[0].id);
+  assert.equal(selected.categorias[0].id, references.categorias[0].id);
+  const source = fs.readFileSync(
+    path.join(__dirname, '../src/pages/productos/ProductosPage.tsx'), 'utf8');
+  assert.ok(source.includes('productosApi.opcionesAlta()'));
+  assert.ok(source.includes('opcionesAlta.vendedores'));
+  assert.ok(source.includes('opcionesAlta.categorias'));
+});
+
 test('P3 reporte: no exportar KPI sin datos como cero', () => {
   const data = {
     periodo: { desde: '2026-10-01', hasta: '2026-10-31', diasPeriodo: 30 },

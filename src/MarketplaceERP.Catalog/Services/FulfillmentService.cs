@@ -118,17 +118,22 @@ public class FulfillmentService : IFulfillmentService
         if (request.Items.Count == 0)
             throw new InvalidOperationException("La orden no contiene items para picking.");
 
+        // El numero externo deriva del mismo GUID persistente de la PickList.
+        // Evita agotar el espacio de solo 8,999 aleatorios diarios y mantiene
+        // legibilidad y trazabilidad de un unico documento.
+        var pickListId = Guid.NewGuid();
+        var fechaCreacion = DateTime.UtcNow;
         var pickList = new PickList
         {
-            Id = Guid.NewGuid(),
-            NumeroPickList = $"PKL-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}",
+            Id = pickListId,
+            NumeroPickList = $"PKL-{fechaCreacion:yyyyMMdd}-{pickListId:N}",
             OrdenId = request.OrdenId,
             NumeroOrden = request.NumeroOrden,
             OperadorAsignado = string.IsNullOrWhiteSpace(request.OperadorAsignado)
                 ? "Operador Bodega 1"
                 : request.OperadorAsignado,
             Estado = EstadoPicking.Pendiente,
-            FechaCreacion = DateTime.UtcNow
+            FechaCreacion = fechaCreacion
         };
 
         foreach (var item in request.Items)
@@ -238,6 +243,52 @@ public class FulfillmentService : IFulfillmentService
         List<ConfirmarItemPickingRequest> confirmaciones,
         CancellationToken cancellationToken = default)
     {
+        await using var transaction = await BeginTransactionIfRelationalAsync(cancellationToken);
+        try
+        {
+            var ordenId = await _db.PickLists
+                .AsNoTracking()
+                .Where(p => p.Id == pickListId)
+                .Select(p => (Guid?)p.OrdenId)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (!ordenId.HasValue)
+            {
+                await CommitIfNeededAsync(transaction, cancellationToken);
+                return null;
+            }
+
+            if (_db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            {
+                // La confirmacion tambien comparte el lock por OrdenId usado
+                // al generar PickList, empacar y despachar. Evita que una
+                // confirmacion tardia revierta cantidades ya completadas.
+                long llave = BitConverter.ToInt64(ordenId.Value.ToByteArray(), 0);
+                await _db.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock({llave})", cancellationToken);
+            }
+
+            // Cargar los items despues del lock para ver el estado confirmado
+            // por el operador que haya terminado primero.
+            var resultado = await ConfirmarPickingCoreAsync(
+                pickListId, confirmaciones, cancellationToken);
+            await CommitIfNeededAsync(transaction, cancellationToken);
+            return resultado;
+        }
+        catch
+        {
+            await RollbackIfNeededAsync(transaction, cancellationToken);
+            if (transaction is not null)
+                _db.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    private async Task<PickList?> ConfirmarPickingCoreAsync(
+        Guid pickListId,
+        List<ConfirmarItemPickingRequest> confirmaciones,
+        CancellationToken cancellationToken)
+    {
         var pickList = await _db.PickLists
             .Include(p => p.Items)
             .FirstOrDefaultAsync(p => p.Id == pickListId, cancellationToken);
@@ -288,6 +339,21 @@ public class FulfillmentService : IFulfillmentService
         EmpacarDespachoRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (request.OrdenId == Guid.Empty)
+            throw new ArgumentException("OrdenId es obligatorio.", nameof(request));
+
+        await using var transaccion = await BeginTransactionIfRelationalAsync(cancellationToken);
+        try
+        {
+        if (_db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+        {
+            // El check-then-insert de paquete debe estar protegido por orden
+            // contra dos operadores concurrentes, también si son procesos distintos.
+            long llave = BitConverter.ToInt64(request.OrdenId.ToByteArray(), 0);
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({llave})", cancellationToken);
+        }
+
         var pickListCompletada = await _db.PickLists
             .AsNoTracking()
             .AnyAsync(p => p.OrdenId == request.OrdenId && p.Estado == EstadoPicking.Completado, cancellationToken);
@@ -308,13 +374,41 @@ public class FulfillmentService : IFulfillmentService
             if (paqueteExistente.Estado == EstadoPacking.Despachado)
                 throw new InvalidOperationException("La orden ya tiene un paquete despachado.");
 
+            // Un reintento es idempotente solamente con el mismo contenido.
+            // No dar por aceptada una dirección, peso o transportista distintos
+            // sin haber actualizado el paquete realmente persistido.
+            var transportistaSolicitado = string.IsNullOrWhiteSpace(request.Transportista)
+                ? "LOGIMKT Express"
+                : request.Transportista;
+            if (paqueteExistente.NumeroOrden != request.NumeroOrden ||
+                paqueteExistente.PesoRealKg != request.PesoRealKg ||
+                paqueteExistente.LargoCm != request.LargoCm ||
+                paqueteExistente.AnchoCm != request.AnchoCm ||
+                paqueteExistente.AltoCm != request.AltoCm ||
+                paqueteExistente.Transportista != transportistaSolicitado ||
+                paqueteExistente.DepartamentoDestino != request.DepartamentoDestino ||
+                paqueteExistente.MunicipioDestino != request.MunicipioDestino ||
+                paqueteExistente.DireccionEntrega != request.DireccionEntrega ||
+                paqueteExistente.ContactoReceptor != request.ContactoReceptor ||
+                paqueteExistente.TelefonoReceptor != request.TelefonoReceptor)
+            {
+                throw new InvalidOperationException(
+                    "Ya existe un paquete para la orden con datos de empaque distintos. " +
+                    "El reintento no puede modificarlo.");
+            }
+
+            await CommitIfNeededAsync(transaccion, cancellationToken);
             return paqueteExistente;
         }
 
+        // NumeroGuia vinculado de forma 1:1 al Id persistente del paquete.
+        // No se genera un nuevo numero en los reintentos de empacado.
+        var paqueteId = Guid.NewGuid();
+        var fechaEmpaque = DateTime.UtcNow;
         var paquete = new PaqueteDespacho
         {
-            Id = Guid.NewGuid(),
-            NumeroGuia = $"SV-LOGI-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(10000, 99999)}",
+            Id = paqueteId,
+            NumeroGuia = $"SV-LOGI-{fechaEmpaque:yyyyMMdd}-{paqueteId:N}",
             OrdenId = request.OrdenId,
             NumeroOrden = request.NumeroOrden,
             Estado = EstadoPacking.ListoParaDespacho,
@@ -330,11 +424,12 @@ public class FulfillmentService : IFulfillmentService
             DireccionEntrega = request.DireccionEntrega,
             ContactoReceptor = request.ContactoReceptor,
             TelefonoReceptor = request.TelefonoReceptor,
-            FechaEmpaque = DateTime.UtcNow
+            FechaEmpaque = fechaEmpaque
         };
 
         _db.PaquetesDespacho.Add(paquete);
         await _db.SaveChangesAsync(cancellationToken);
+        await CommitIfNeededAsync(transaccion, cancellationToken);
 
         _logger.LogInformation(
             "Paquete empaquetado para orden {Orden}. Guía emitida: {Guia}",
@@ -342,6 +437,14 @@ public class FulfillmentService : IFulfillmentService
             paquete.NumeroGuia);
 
         return paquete;
+        }
+        catch
+        {
+            await RollbackIfNeededAsync(transaccion, cancellationToken);
+            if (transaccion is not null)
+                _db.ChangeTracker.Clear();
+            throw;
+        }
     }
 
     public async Task<PaqueteDespacho?> DespacharPaqueteAsync(
@@ -352,14 +455,34 @@ public class FulfillmentService : IFulfillmentService
 
         try
         {
-            var paquete = await _db.PaquetesDespacho
-                .FirstOrDefaultAsync(p => p.Id == paqueteId, cancellationToken);
+            // Determinar la orden sin rastrear una entidad posiblemente obsoleta.
+            // Empaque y despacho comparten un mismo lock por OrdenId.
+            var ordenId = await _db.PaquetesDespacho
+                .AsNoTracking()
+                .Where(p => p.Id == paqueteId)
+                .Select(p => (Guid?)p.OrdenId)
+                .FirstOrDefaultAsync(cancellationToken);
 
-            if (paquete is null)
+            if (!ordenId.HasValue)
             {
                 await CommitIfNeededAsync(transaction, cancellationToken);
                 return null;
             }
+
+            if (_db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
+            {
+                long llave = BitConverter.ToInt64(ordenId.Value.ToByteArray(), 0);
+                await _db.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock({llave})", cancellationToken);
+            }
+
+            // Cargar el estado nuevamente DESPUES de obtener el lock.
+            // La segunda solicitud debe observar Despachado, no ListoParaDespacho
+            // leido antes del commit de la primera solicitud.
+            var paquete = await _db.PaquetesDespacho
+                .FirstOrDefaultAsync(p => p.Id == paqueteId, cancellationToken);
+            if (paquete is null)
+                throw new InvalidOperationException("El paquete desaparecio durante el despacho.");
 
             // Idempotencia: un segundo clic/solicitud no vuelve a consumir stock.
             if (paquete.Estado == EstadoPacking.Despachado && paquete.FechaDespacho.HasValue)

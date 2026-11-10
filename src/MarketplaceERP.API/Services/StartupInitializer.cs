@@ -54,6 +54,11 @@ public static class StartupInitializer
 
                 try
                 {
+                    // F17: detectar conflictos conocidos en los tres esquemas antes
+                    // de que la primera migracion de Core/Catalog haga escrituras.
+                    // El lock global permanece retenido durante la comprobacion.
+                    await MigrationGlobalPreflight.ValidateAsync(lockConn);
+
                     // Secuencia ordenada de migraciones: Core -> Catalog -> Finance
                     logger.LogInformation("Aplicando migraciones de CoreDbContext...");
                     await coreDb.Database.MigrateAsync();

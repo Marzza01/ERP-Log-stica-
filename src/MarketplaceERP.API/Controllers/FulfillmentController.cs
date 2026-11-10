@@ -95,7 +95,33 @@ public class FulfillmentController : ControllerBase
         [FromBody] List<ConfirmarItemPickingRequest> confirmaciones,
         CancellationToken cancellationToken)
     {
-        var pickList = await _fulfillmentService.ConfirmarPickingAsync(pickListId, confirmaciones, cancellationToken);
+        PickList? pickList;
+        try
+        {
+            pickList = await _fulfillmentService.ConfirmarPickingAsync(
+                pickListId, confirmaciones, cancellationToken);
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.StartsWith("Una PickList completada no admite modificaciones.",
+                StringComparison.Ordinal))
+        {
+            return Conflict(new
+            {
+                mensaje = ex.Message,
+                codigo = "PICKING_COMPLETADO"
+            });
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.StartsWith("Cantidad de picking inválida",
+                StringComparison.Ordinal))
+        {
+            return BadRequest(new
+            {
+                mensaje = ex.Message,
+                codigo = "PICKING_CANTIDAD_INVALIDA"
+            });
+        }
+
         if (pickList is null)
             return NotFound(new { mensaje = "Pick List no encontrada." });
 
@@ -134,7 +160,19 @@ public class FulfillmentController : ControllerBase
         if (orden.Estado != EstadoOrden.EnProceso)
             return Conflict(new { mensaje = "Solo una orden en preparación puede empacarse." });
 
-        var paquete = await _fulfillmentService.EmpacarYRotularAsync(request, cancellationToken);
+        PaqueteDespacho paquete;
+        try
+        {
+            paquete = await _fulfillmentService.EmpacarYRotularAsync(request, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new
+            {
+                mensaje = ex.Message,
+                codigo = "EMPAQUE_CONFLICTO"
+            });
+        }
 
         // Asignar guía y transportista a la orden en el OMS
         orden.GuiaEnvio = paquete.NumeroGuia;

@@ -32,6 +32,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\MarketplaceERP.API\MarketplaceERP.API.csproj" />
+    <!-- Pruebas QA autorizadas: compilar controladores de simulación SOLO en el host de tests. -->
+    <ProjectReference Include="..\..\src\MarketplaceERP.API\MarketplaceERP.API.csproj" AdditionalProperties="CheckoutQaHarness=true" />
   </ItemGroup>
 </Project>

@@ -387,6 +387,29 @@ public class CatalogDbContext : DbContext
                   .OnDelete(DeleteBehavior.Restrict);
         });
 
+        // Referencias WMS externas: obligatorias y únicas también para escrituras
+        // manuales, no solo cuando las genera FulfillmentService mediante GUID.
+        modelBuilder.Entity<PickList>(entity =>
+        {
+            entity.HasIndex(p => p.NumeroPickList)
+                  .IsUnique()
+                  .HasDatabaseName("UX_WMS_PickList_NumeroPickList");
+            // Una orden no puede tener dos PickLists, ni con numeros diferentes.
+            entity.HasIndex(p => p.OrdenId)
+                  .IsUnique()
+                  .HasDatabaseName("UX_WMS_PickList_OrdenId");
+        });
+        modelBuilder.Entity<PaqueteDespacho>(entity =>
+        {
+            entity.HasIndex(p => p.NumeroGuia)
+                  .IsUnique()
+                  .HasDatabaseName("UX_WMS_Paquete_NumeroGuia");
+            // El modelo actual admite un solo paquete por orden.
+            entity.HasIndex(p => p.OrdenId)
+                  .IsUnique()
+                  .HasDatabaseName("UX_WMS_Paquete_OrdenId");
+        });
+
         // ── MovimientoMWIP (Material & Work in Process) ─────────────────────────
         modelBuilder.Entity<MovimientoMWIP>(entity =>
         {

@@ -1,3 +1,5 @@
+import { hayOperacionPendiente } from './carritoV2Qa';
+
 /** Persistencia conservadora de un Checkout: no reintentar un pago ambiguo. */
 export interface CheckoutPendiente {
   clave: string;
@@ -37,11 +39,44 @@ export function leerPendiente(cuenta: string): CheckoutPendiente | null {
 }
 
 export function guardarPendiente(cuenta: string, pendiente: CheckoutPendiente): void {
-  // Nunca emitir un POST si no se puede registrar primero la clave durable.
+  // Una marca V1 ilegible O una operación V2 bloquean esta compra.
+  // No sobrescribir ni reparar silenciosamente datos de pagos inciertos.
+  if (!cuenta?.trim() || !pendienteValido(pendiente))
+    throw new Error('INTENTO_V1_INVALIDO');
+  if (hayOperacionPendiente(cuenta))
+    throw new Error('INTENTO_PREVIO_SIN_CONCILIAR');
+  localStorage.setItem(key(cuenta, 'pendiente'), JSON.stringify(pendiente));
+  if (localStorage.getItem(key(cuenta, 'pendiente')) !== JSON.stringify(pendiente))
+    throw new Error('INTENTO_V1_NO_PERSISTIDO');
+}
+
+/** Solo añade el ID confirmado a la MISMA clave ya guardada. */
+export function actualizarPendiente(cuenta: string, pendiente: CheckoutPendiente): void {
+  const anterior = leerPendiente(cuenta);
+  if (!pendienteValido(pendiente) || !anterior ||
+      anterior.clave !== pendiente.clave ||
+      anterior.productoId !== pendiente.productoId ||
+      anterior.cantidad !== pendiente.cantidad ||
+      anterior.creadoUtc !== pendiente.creadoUtc ||
+      (anterior.ordenId && anterior.ordenId !== pendiente.ordenId))
+    throw new Error('ACTUALIZACION_V1_NO_AUTORIZADA');
   localStorage.setItem(key(cuenta, 'pendiente'), JSON.stringify(pendiente));
 }
 
-export function borrarPendiente(cuenta: string): void {
+function pendienteValido(p: CheckoutPendiente): boolean {
+  return !!p && KEY_REGEX.test(p.clave) && esGuid(p.productoId) &&
+    typeof p.productoNombre === 'string' && !!p.productoNombre.trim() &&
+    typeof p.creadoUtc === 'string' && !!p.creadoUtc &&
+    Number.isSafeInteger(p.cantidad) && p.cantidad >= 1 && p.cantidad <= 9999 &&
+    (p.ordenId === undefined || esGuid(p.ordenId));
+}
+
+export function borrarPendiente(cuenta: string, claveEsperada: string): void {
+  // Otra pestaña pudo guardar una operación diferente durante el POST.
+  // Nunca borrar la clave ajena solo porque terminó esta petición.
+  const actual = leerPendiente(cuenta);
+  if (!actual || !KEY_REGEX.test(claveEsperada) || actual.clave !== claveEsperada)
+    throw new Error('INTENTO_V1_CAMBIO_ENTRE_PESTANAS');
   localStorage.removeItem(key(cuenta, 'pendiente'));
 }
 
@@ -59,11 +94,19 @@ export function recordarOrden(cuenta: string, ordenId: string): string[] {
   return lista;
 }
 
-export function pendienteResuelto(estadoOrden: string, estadoPago: string, estadoReembolso: string | null, reservaPendiente: number): boolean {
-  // Criterios conservadores: si hay reserva pendiente o situacion ambigua, bloquear un nuevo checkout.
-  if (reservaPendiente > 0) return false;
+export function pendienteResuelto(
+  estadoOrden: string, estadoPago: string, estadoReembolso: string | null,
+  reservaPendiente: number, requiereRevision = true,
+): boolean {
+  // Falla cerrado si faltan datos o la API reporta alertas, incluso si
+  // el estado parece terminal. CanceladoAntesEnvio solo procede con
+  // seguimiento respaldado por auditoría sin ninguna anomalía.
+  if (requiereRevision !== false || !Number.isSafeInteger(reservaPendiente) ||
+      reservaPendiente !== 0) return false;
   if (estadoOrden === 'Cancelada') {
-    return estadoPago === 'Rechazado' || estadoPago === 'SinIntento' || estadoReembolso === 'Finalizado';
+    return estadoPago === 'Rechazado' || estadoPago === 'SinIntento' ||
+      estadoPago === 'CanceladoAntesEnvio' || estadoReembolso === 'Finalizado';
   }
-  return ['Aprobada', 'EnProceso', 'Enviada', 'Entregada'].includes(estadoOrden) && estadoPago === 'Completado';
+  return ['Aprobada', 'EnProceso', 'Enviada', 'Entregada'].includes(estadoOrden) &&
+    estadoPago === 'Completado';
 }

@@ -29,6 +29,13 @@ export interface CrearProductoRequest {
   unidadMedida: string;
   estadoProducto: string;
   estaPublicado: boolean;
+  vendedorId?: string;
+  categoriaId?: string;
+}
+
+export interface OpcionesAltaProducto {
+  vendedores: Array<{ id: string; nombre: string }>;
+  categorias: Array<{ id: string; nombre: string }>;
 }
 
 export interface AlertasStockResponse {
@@ -80,21 +87,37 @@ export function normalizarPaginaProductos(response: ProductosResponse): Producto
   return { ...response, items: (response.items ?? []).map(normalizarProducto) };
 }
 
-const DEFAULT_VENDEDOR_ID = '11111111-1111-1111-1111-111111111111';
-const DEFAULT_CATEGORIA_ID = '22222222-2222-2222-2222-222222222222';
+const GUID_REGISTRADO = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ID_NULO = '00000000-0000-0000-0000-000000000000';
+// Los IDs de muestra NO representan Core.Vendedores/Core.Categorias.
+const IDS_PLANTILLA = new Set([
+  '11111111-1111-1111-1111-111111111111',
+  '22222222-2222-2222-2222-222222222222',
+]);
 
-const toBackendProducto = (req: CrearProductoRequest) => ({
+function referenciaValida(id?: string): id is string {
+  return typeof id === 'string' && GUID_REGISTRADO.test(id) &&
+    id.toLowerCase() !== ID_NULO && !IDS_PLANTILLA.has(id.toLowerCase());
+}
+
+const toBackendProducto = (req: CrearProductoRequest) => {
+  if (!referenciaValida(req.vendedorId) || !referenciaValida(req.categoriaId))
+    throw new Error('Selecciona un vendedor activo y una categoría reales antes de crear el producto.');
+  return {
   ...req,
   id: '00000000-0000-0000-0000-000000000000',
   precioBase: req.precioB2C,
   moneda: 'USD',
   stockInicial: 0,
-  codigoEAN: '', // Pendiente para el integrante responsable de códigos de barras.
-  vendedorId: DEFAULT_VENDEDOR_ID,
-  categoriaId: DEFAULT_CATEGORIA_ID,
-});
+  // Nunca crear una cadena vacía como código físico no verificado.
+  codigoEAN: null,
+  vendedorId: req.vendedorId,
+  categoriaId: req.categoriaId,
+  };
+};
 
 export const productosApi = {
+  opcionesAlta: () => apiClient.get<OpcionesAltaProducto>('/api/productos/opciones-alta'),
   listar: (pagina = 1, tamano = 50) =>
     apiClient.get<ProductosResponse>(`/api/productos?pagina=${pagina}&tamano=${tamano}`).then(normalizarPaginaProductos),
 

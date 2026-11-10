@@ -96,7 +96,11 @@ builder.Services.AddCatalogServices(builder.Configuration);
 builder.Services.AddFinanceServices(builder.Configuration, builder.Environment.IsDevelopment());
 builder.Services.AddScoped<MarketplaceERP.API.Services.ReservasExpiracionService>();
 
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        // Recuperación selectiva de concurrencia histórica: solo conflictos EF a HTTP 409.
+        options.Filters.Add<MarketplaceERP.API.Filters.ConcurrencyExceptionFilter>();
+    })
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;

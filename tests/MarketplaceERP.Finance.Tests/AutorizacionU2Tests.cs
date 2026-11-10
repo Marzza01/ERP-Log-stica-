@@ -185,7 +185,16 @@ public class AutorizacionU2Tests
         {
             actions++;
             var publicLogin = controller == typeof(AuthController) && action.Name == nameof(AuthController.Login);
-            var buyerCheckout = controller == typeof(CheckoutController) && action.Name == nameof(CheckoutController.ProcesarCheckout);
+            // Las dos acciones V2 solo existen en sandbox QA y conservan
+            // exactamente la misma matriz de Comprador que checkout V1.
+            // El acceso de Admin, Vendedor y anónimo debe seguir prohibido.
+            var buyerCheckout =
+                (controller == typeof(CheckoutController) &&
+                    action.Name == nameof(CheckoutController.ProcesarCheckout)) ||
+                (controller == typeof(CheckoutV2QaQuoteController) &&
+                    action.Name == nameof(CheckoutV2QaQuoteController.CotizarSoloQa)) ||
+                (controller == typeof(CheckoutV2QaSimulatedController) &&
+                    action.Name == nameof(CheckoutV2QaSimulatedController.ComprarSimulado));
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
             var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
             var isProductController = controller == typeof(ProductosController);
@@ -200,6 +209,7 @@ public class AutorizacionU2Tests
                 action.Name == nameof(ProductosController.Buscar) ||
                 action.Name == nameof(ProductosController.GetById));
             var isProductSellerOp = isProductController && (
+                action.Name == nameof(ProductosController.OpcionesAlta) ||
                 action.Name == nameof(ProductosController.Create) ||
                 action.Name == nameof(ProductosController.Update) ||
                 action.Name == nameof(ProductosController.Delete) ||
@@ -229,9 +239,13 @@ public class AutorizacionU2Tests
                 }
             }
         }
-        Assert.Equal(23, controllers.Length);
-        Assert.Equal(85, actions);
-        Assert.Equal(86, routes); // Productos/GetAlertasStock tiene dos alias.
+        // Base original: 23 controladores / 85 acciones / 86 rutas.
+        // SOLO en sandbox: +2 endpoints QA de comprador y +1 endpoint
+        // de referencias reales de producto para Admin/Vendedor.
+        // Ninguna autorización queda implícita.
+        Assert.Equal(25, controllers.Length);
+        Assert.Equal(88, actions);
+        Assert.Equal(89, routes); // Productos/GetAlertasStock tiene dos alias.
     }
 
     [Theory]

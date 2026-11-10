@@ -38,5 +38,8 @@ public class Liquidacion
     public DateTime? FechaLiquidacion { get; set; }
 
     // Navegación
+    // Referencia histórica del split ancla para compatibilidad de lectura 1:1.
     public SplitPago SplitPago { get; set; } = null!;
+    // Relación 1:N autoritativa para importar, reclamar y procesar todos los splits.
+    public List<SplitPago> SplitsPago { get; set; } = new();
 }

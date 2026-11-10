@@ -20,10 +20,24 @@
 
   <ItemGroup>
     <!-- API es la capa de composición: referencia todos los módulos -->
-    <ProjectReference Include="..\MarketplaceERP.Shared\MarketplaceERP.Shared.csproj" />
-    <ProjectReference Include="..\MarketplaceERP.Core\MarketplaceERP.Core.csproj" />
-    <ProjectReference Include="..\MarketplaceERP.Catalog\MarketplaceERP.Catalog.csproj" />
-    <ProjectReference Include="..\MarketplaceERP.Finance\MarketplaceERP.Finance.csproj" />
+    <ProjectReference Include="..\MarketplaceERP.Shared\MarketplaceERP.Shared.csproj" GlobalPropertiesToRemove="CheckoutQaHarness" />
+    <ProjectReference Include="..\MarketplaceERP.Core\MarketplaceERP.Core.csproj" GlobalPropertiesToRemove="CheckoutQaHarness" />
+    <ProjectReference Include="..\MarketplaceERP.Catalog\MarketplaceERP.Catalog.csproj" GlobalPropertiesToRemove="CheckoutQaHarness" />
+    <ProjectReference Include="..\MarketplaceERP.Finance\MarketplaceERP.Finance.csproj" GlobalPropertiesToRemove="CheckoutQaHarness" />
+  </ItemGroup>
+
+  <!-- Los prototipos de simulación nunca entran al binario desplegable por defecto.
+       Únicamente una compilación de tests QA puede habilitarlos expresamente. -->
+  <ItemGroup Condition="'$(CheckoutQaHarness)' != 'true'">
+    <Compile Remove="Controllers\CheckoutV2QaQuoteController.cs" />
+    <Compile Remove="Controllers\CheckoutV2QaSimulatedController.cs" />
+    <Compile Remove="Services\QaPrePagoRecoveryService.cs" />
+    <!-- Los helpers para pagos y reservas QA son solo para TestServer. -->
+    <Compile Remove="Services\CierreCheckoutAdminQaService.cs" />
+    <Compile Remove="Services\QaIntentoReservasMapService.cs" />
+    <Compile Remove="Services\QaMultiSkuCierreTransaccionalService.cs" />
+    <Compile Remove="Services\QaMultiSkuCotizacionCanonica.cs" />
+    <Compile Remove="Services\QaMultiSkuPagoSimuladoService.cs" />
   </ItemGroup>
 
   <ItemGroup>
