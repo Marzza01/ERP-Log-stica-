@@ -7,21 +7,29 @@ namespace MarketplaceERP.Finance.Tests;
 
 public class StagingDatabaseTargetGuardTests
 {
-    private static IConfiguration Configuration(string? connection = null, string? marker = "NeonTest",
-        string? otherUrl = null) => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-    {
-        ["CONNECTION_STRING"] = connection ?? Connection(),
-        ["DATABASE_URL"] = otherUrl,
-        ["Deployment:Target"] = marker,
-        ["Payments:Provider"] = "Disabled"
-    }).Build();
+    private const string IsolatedTestHost =
+        "ep-isolated-test-example.c-15.us-east-1.aws.neon.tech";
+    private const string SharedProductionHost =
+        "ep-jolly-breeze-bbw4v48n.c-15.us-east-1.aws.neon.tech";
+
+    private static IConfiguration Configuration(string? connection = null,
+        string? marker = StagingDatabaseTargetGuard.TargetMarker,
+        string? otherUrl = null, string? approvedHost = IsolatedTestHost) =>
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["CONNECTION_STRING"] = connection ?? Connection(),
+            ["DATABASE_URL"] = otherUrl,
+            ["Deployment:Target"] = marker,
+            ["Deployment:ApprovedStagingHost"] = approvedHost,
+            ["Payments:Provider"] = "Disabled"
+        }).Build();
 
     private static string Connection(string? host = null, string? database = null, string? user = null,
         SslMode ssl = SslMode.VerifyFull, ChannelBinding binding = ChannelBinding.Require,
         bool withPassword = true) =>
         new NpgsqlConnectionStringBuilder
         {
-            Host = host ?? StagingDatabaseTargetGuard.DirectHost,
+            Host = host ?? IsolatedTestHost,
             Port = 5432,
             Database = database ?? StagingDatabaseTargetGuard.DatabaseName,
             Username = user ?? StagingDatabaseTargetGuard.DatabaseUser,
@@ -39,12 +47,50 @@ public class StagingDatabaseTargetGuardTests
     public void ExactStagingIdentityAndVerifiedTls_PassWithoutOpeningDatabase() => Check(Configuration());
 
     [Theory]
+    [InlineData(SharedProductionHost)]
     [InlineData("ep-delicate-salad-bb7xy92n.c-15.us-east-1.aws.neon.tech")]
     [InlineData("ep-calm-surf-bbm5guwf.c-15.us-east-1.aws.neon.tech")]
     [InlineData("ep-jolly-breeze-bbw4v48n-pooler.c-15.us-east-1.aws.neon.tech")]
     [InlineData("localhost")]
     public void OtherHosts_AreRejectedBeforeAnyConnection(string host) =>
         Assert.Throws<InvalidOperationException>(() => Check(Configuration(Connection(host: host))));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("localhost")]
+    [InlineData("ep-isolated-test-example-pooler.c-15.us-east-1.aws.neon.tech")]
+    [InlineData("ep-isolated-test-example.c-20.us-east-1.aws.neon.tech")]
+    [InlineData(SharedProductionHost)]
+    public void MissingUnsafeOrSharedApprovedHost_FailsClosed(string? host) =>
+        Assert.Throws<InvalidOperationException>(() =>
+            Check(Configuration(approvedHost: host)));
+
+    [Fact]
+    public void SharedProductionEndpointRejectedEvenWhenConfigurationApprovesIt()
+    {
+        var connection = Connection(host: SharedProductionHost);
+        var config = Configuration(connection, approvedHost: SharedProductionHost);
+        Assert.Throws<InvalidOperationException>(() => Check(config));
+        Assert.Throws<InvalidOperationException>(() => CheckMaintenance(config));
+    }
+
+    [Fact]
+    public void LegacyStagingMarkerRejectedInsteadOfSilentlyReusingProductionHost()
+    {
+        var legacy = Configuration(marker: "NeonTest");
+        Assert.Throws<InvalidOperationException>(() => Check(legacy));
+        Assert.Throws<InvalidOperationException>(() => CheckMaintenance(legacy));
+    }
+
+    [Fact]
+    public void IndependentHostNeedsMatchingExplicitApprovedHost()
+    {
+        var connection = Connection();
+        Assert.Throws<InvalidOperationException>(() =>
+            Check(Configuration(connection, approvedHost:
+                "ep-some-other-endpoint.c-15.us-east-1.aws.neon.tech")));
+    }
 
     [Fact]
     public void WrongDatabaseUserOrTls_AreRejected()
