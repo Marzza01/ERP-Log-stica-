@@ -39,7 +39,24 @@ async function login(page, account, landing) {
   await page.goto(origin+'/login');
   await page.getByPlaceholder('nombre@ejemplo.com').fill(account.email);
   await page.locator('input[type=password]').fill(account.password);
-  await page.getByRole('button',{name:'Ingresar al sistema'}).click();
+  // The preceding CI E2E shares a real IP-based 5/min login limiter.
+  // Respect HTTP 429 instead of disabling or bypassing the security policy.
+  const submitAndObserve = async () => {
+    const loginResponse = page.waitForResponse(res => {
+      const u = new URL(res.url());
+      return u.pathname === '/api/auth/login' && res.request().method() === 'POST';
+    }, { timeout: 15000 });
+    await page.getByRole('button',{name:'Ingresar al sistema'}).click();
+    return loginResponse;
+  };
+  let response = await submitAndObserve();
+  if (response.status() === 429) {
+    console.log('F105_RATE_LIMIT=429_RECOGNIZED_WAIT_ONE_WINDOW');
+    await delay(65000);
+    response = await submitAndObserve();
+  }
+  assert.equal(response.status(), 200,
+    'F105 login must receive 200 (or one bounded retry after expected 429)');
   await page.waitForURL('**'+landing, {timeout:18000});
   assert.ok(await page.evaluate(()=>localStorage.getItem('erp_token')));
 }
