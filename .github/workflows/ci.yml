@@ -318,6 +318,14 @@ jobs:
         working-directory: frontend/marketplace-ui
         run: node tests/e2e-live-local-api.mjs
 
+      # F112: independent real-API ownership gate. This never contacts remote Render/Neon.
+      - name: F105 two-seller ownership E2E (Chromium, JWT, disposable PostgreSQL)
+        working-directory: frontend/marketplace-ui
+        env:
+          CI: 'true'
+          F101_CHROME_CHANNEL: chromium
+        run: node tests/f105-live-seller-orders.mjs
+
   local-worktrees-windows:
     name: Local Git comparator (Windows PowerShell 5.1)
     runs-on: windows-latest
