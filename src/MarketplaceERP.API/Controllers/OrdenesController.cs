@@ -39,6 +39,89 @@ public class OrdenesController : ControllerBase
         _logger = logger;
     }
 
+    // Ruta nueva y separada: NO reutilizar el listado/KPIs global de Admin.
+    // La identidad del vendedor debe venir solo del JWT, nunca de query/body.
+    [HttpGet("mis-ordenes", Name = "ListarMisOrdenesVendedor")]
+    [Authorize(Roles = "Vendedor")]
+    public async Task<IActionResult> ListarMisOrdenes(
+        [FromQuery] string? estado = null,
+        [FromQuery] int pagina = 1,
+        [FromQuery] int tamano = 50,
+        CancellationToken cancellationToken = default)
+    {
+        var vendedorId = ObtenerVendedorIdSeguro();
+        if (!vendedorId.HasValue) return Forbid();
+
+        if (pagina < 1 || tamano is < 1 or > 100 ||
+            ((long)pagina - 1) * tamano > int.MaxValue)
+            return BadRequest(new { mensaje = "Paginacion invalida." });
+
+        var query = _db.Ordenes.AsNoTracking()
+            .Where(o => o.VendedorId == vendedorId.Value);
+
+        if (!string.IsNullOrWhiteSpace(estado))
+        {
+            if (!Enum.TryParse<EstadoOrden>(estado, true, out var valor) ||
+                !Enum.IsDefined(valor))
+                return BadRequest(new { mensaje = "Estado no valido." });
+            query = query.Where(o => o.Estado == valor);
+        }
+
+        // Filtrar ANTES de Count, Skip, Take y la proyeccion.
+        var total = await query.CountAsync(cancellationToken);
+        var page = await query
+            .OrderByDescending(o => o.FechaCreacion).ThenBy(o => o.Id)
+            .Skip((pagina - 1) * tamano).Take(tamano)
+            .Select(o => new
+            {
+                o.Id, o.NumeroOrden, o.Estado, o.TipoCliente,
+                o.MontoTotal, o.Moneda, o.FechaCreacion,
+                TotalItems = o.Items.Count
+            })
+            .ToListAsync(cancellationToken);
+
+        var ordenes = page.Select(o => new OrdenVendedorResumenResponse(
+            o.Id, o.NumeroOrden, o.Estado.ToString(), o.TipoCliente.ToString(),
+            o.MontoTotal, o.Moneda, o.FechaCreacion, o.TotalItems)).ToArray();
+
+        return Ok(new { total, pagina, tamano, ordenes });
+    }
+
+    [HttpGet("mis-ordenes/{id:guid}", Name = "ObtenerMiOrdenVendedor")]
+    [Authorize(Roles = "Vendedor")]
+    public async Task<IActionResult> ObtenerMiOrden(
+        Guid id, CancellationToken cancellationToken)
+    {
+        var vendedorId = ObtenerVendedorIdSeguro();
+        if (!vendedorId.HasValue) return Forbid();
+
+        // Una orden ajena y una inexistente dan exactamente el mismo 404.
+        var propia = await _db.Ordenes.AsNoTracking()
+            .Where(o => o.Id == id && o.VendedorId == vendedorId.Value)
+            .Include(o => o.Items)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (propia is null) return NotFound();
+
+        return Ok(new OrdenVendedorDetalleResponse(
+            propia.Id, propia.NumeroOrden, propia.Estado.ToString(),
+            propia.TipoCliente.ToString(), propia.MontoTotal, propia.Moneda,
+            propia.FechaCreacion,
+            propia.Items.OrderBy(i => i.Id).Select(i => new ItemOrdenVendedorResponse(
+                i.ProductoId, i.SkuReferencia, i.NombreProducto,
+                i.Cantidad, i.PrecioUnitario)).ToArray()));
+    }
+
+    private Guid? ObtenerVendedorIdSeguro()
+    {
+        if (User.Identity?.IsAuthenticated != true || !User.IsInRole("Vendedor"))
+            return null;
+
+        // Se rechazan claims faltantes, vacios, repetidos o ambiguos.
+        var claims = User.FindAll("VendedorId").Select(c => c.Value).ToArray();
+        return claims.Length == 1 && Guid.TryParse(claims[0], out var id) &&
+            id != Guid.Empty ? id : null;
+    }
+
     // ── GET /api/ordenes ──────────────────────────────────────────────────────
     /// <summary>Lista todas las órdenes con KPIs de tiempo de ciclo.</summary>
     [HttpGet(Name = "ListarOrdenes")]

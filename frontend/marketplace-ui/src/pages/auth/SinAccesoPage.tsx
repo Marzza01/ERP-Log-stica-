@@ -16,7 +16,7 @@ export default function SinAccesoPage() {
     if (usuario?.rol === 'Comprador') {
       navigate('/checkout');
     } else if (usuario?.rol === 'Vendedor') {
-      navigate('/ordenes');
+      navigate('/productos');
     } else {
       navigate('/dashboard');
     }

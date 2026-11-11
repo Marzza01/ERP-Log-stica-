@@ -197,6 +197,11 @@ public class AutorizacionU2Tests
                     action.Name == nameof(CheckoutV2QaSimulatedController.ComprarSimulado));
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
             var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
+            var sellerOwnOrders = controller == typeof(OrdenesController) && (
+                action.Name == nameof(OrdenesController.ListarMisOrdenes) ||
+                action.Name == nameof(OrdenesController.ObtenerMiOrden));
+            if (sellerOwnOrders)
+                Assert.Equal("Vendedor", action.GetCustomAttribute<AuthorizeAttribute>()?.Roles);
             var isProductController = controller == typeof(ProductosController);
             if (isProductController && action.Name == nameof(ProductosController.ValidarCsv))
             {
@@ -217,7 +222,7 @@ public class AutorizacionU2Tests
                 action.Name == nameof(ProductosController.GetAlertasStock) ||
                 action.Name == nameof(ProductosController.GetCatalogoB2B));
 
-            var allowsSeller = publicLogin || isProductCatalogRead || isProductSellerOp;
+            var allowsSeller = publicLogin || isProductCatalogRead || isProductSellerOp || sellerOwnOrders;
             var allowsBuyer = publicLogin || buyerCheckout || buyerTracking || buyerOrder || isProductCatalogRead;
 
             var metadata = controller.GetCustomAttributes(inherit: true).Concat(action.GetCustomAttributes(inherit: true)).ToArray();
@@ -231,7 +236,8 @@ public class AutorizacionU2Tests
                 Assert.Equal(publicLogin ? 200 : 401, await Probe(controller, action.Name, null));
                 Assert.Equal(allowsSeller ? 200 : 403, await Probe(controller, action.Name, "Vendedor"));
                 Assert.Equal(allowsBuyer ? 200 : 403, await Probe(controller, action.Name, "Comprador"));
-                Assert.Equal(buyerCheckout ? 403 : 200, await Probe(controller, action.Name, "Admin"));
+                Assert.Equal(buyerCheckout || sellerOwnOrders ? 403 : 200,
+                    await Probe(controller, action.Name, "Admin"));
                 if (!publicLogin)
                 {
                     Assert.Equal(401, await Probe(controller, action.Name, "Admin", "expired"));
@@ -244,8 +250,9 @@ public class AutorizacionU2Tests
         // de referencias reales de producto para Admin/Vendedor.
         // Ninguna autorización queda implícita.
         Assert.Equal(25, controllers.Length);
-        Assert.Equal(88, actions);
-        Assert.Equal(89, routes); // Productos/GetAlertasStock tiene dos alias.
+        // F103 agrega dos GET exclusivos de Vendedor sin ampliar rutas Admin.
+        Assert.Equal(90, actions);
+        Assert.Equal(91, routes); // Productos/GetAlertasStock tiene dos alias.
     }
 
     [Theory]

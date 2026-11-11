@@ -27,7 +27,7 @@ public sealed class SeguridadOperativaI5Tests
     }
 
     [Fact]
-    public void Ordenes_ExigeAdminSalvoDetallePropioDelComprador()
+    public void Ordenes_ExigeAdminSalvoLecturasPropiasDelCompradorYVendedor()
     {
         var controlador = typeof(OrdenesController);
         controlador.GetCustomAttribute<AuthorizeAttribute>().Should().NotBeNull();
@@ -38,13 +38,22 @@ public sealed class SeguridadOperativaI5Tests
         {
             nameof(OrdenesController.Listar), nameof(OrdenesController.Obtener),
             nameof(OrdenesController.Crear), nameof(OrdenesController.TransicionarEstado),
-            nameof(OrdenesController.ObtenerKpis)
+            nameof(OrdenesController.ObtenerKpis), nameof(OrdenesController.ListarMisOrdenes),
+            nameof(OrdenesController.ObtenerMiOrden)
         });
         foreach (var accion in acciones)
         {
             accion.GetCustomAttribute<AllowAnonymousAttribute>().Should().BeNull();
-            accion.GetCustomAttribute<AuthorizeAttribute>()!.Roles.Should().Be(
-                accion.Name == nameof(OrdenesController.Obtener) ? "Admin,Comprador" : "Admin");
+            // Solo estas dos rutas nuevas pueden recibir Vendedor. El listado
+            // global, la creacion, los KPIs y las transiciones siguen Admin.
+            var rolesEsperados = accion.Name switch
+            {
+                nameof(OrdenesController.Obtener) => "Admin,Comprador",
+                nameof(OrdenesController.ListarMisOrdenes) => "Vendedor",
+                nameof(OrdenesController.ObtenerMiOrden) => "Vendedor",
+                _ => "Admin"
+            };
+            accion.GetCustomAttribute<AuthorizeAttribute>()!.Roles.Should().Be(rolesEsperados);
         }
     }
 

@@ -35,7 +35,7 @@ export default function LoginPage() {
             return;
           }
           if (u.rol === 'Vendedor') {
-            navigate('/ordenes');
+            navigate('/productos');
             return;
           }
         } catch { /* ignore */ }

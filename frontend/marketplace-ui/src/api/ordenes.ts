@@ -27,3 +27,43 @@ export const ordenesApi = {
   getKpis: () =>
     apiClient.get<object>('/api/ordenes/kpis'),
 };
+export interface OrdenVendedorResumen {
+  id: string;
+  numeroOrden: string;
+  estado: string;
+  tipoCliente: string;
+  montoTotal: number;
+  moneda: string;
+  fechaCreacion: string;
+  totalItems: number;
+}
+export interface ItemOrdenVendedor {
+  productoId: string;
+  sku: string;
+  nombre: string;
+  cantidad: number;
+  precioUnitario: number;
+}
+export interface OrdenVendedorDetalle extends Omit<OrdenVendedorResumen, 'totalItems'> {
+  items: ItemOrdenVendedor[];
+}
+export interface MisOrdenesVendedorResponse {
+  total: number;
+  pagina: number;
+  tamano: number;
+  ordenes: OrdenVendedorResumen[];
+}
+
+// Endpoints de solo lectura, sin IDs de vendedor suministrados por el navegador.
+export const misOrdenesVendedorApi = {
+  listar: (params: { estado?: string; pagina: number; tamano: number }) => {
+    const qs = new URLSearchParams({
+      pagina: String(params.pagina),
+      tamano: String(params.tamano),
+    });
+    if (params.estado) qs.set('estado', params.estado);
+    return apiClient.get<MisOrdenesVendedorResponse>(`/api/ordenes/mis-ordenes?${qs}`);
+  },
+  detalle: (id: string) =>
+    apiClient.get<OrdenVendedorDetalle>(`/api/ordenes/mis-ordenes/${encodeURIComponent(id)}`),
+};
