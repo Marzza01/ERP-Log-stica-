@@ -16,6 +16,7 @@ using MarketplaceERP.Shared.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MarketplaceERP.API.Controllers;
 
@@ -32,17 +33,20 @@ public class CheckoutController : ControllerBase
     private readonly CheckoutOrchestrator _orchestrator;
     private readonly FinanceDbContext _financeDb;
     private readonly CatalogDbContext _catalogDb;
+    private readonly IContabilidadService _contabilidad;
     private readonly ILogger<CheckoutController> _logger;
 
     public CheckoutController(
         CheckoutOrchestrator orchestrator,
         FinanceDbContext financeDb,
         CatalogDbContext catalogDb,
+        IContabilidadService contabilidad,
         ILogger<CheckoutController> logger)
     {
         _orchestrator = orchestrator;
         _financeDb = financeDb;
         _catalogDb = catalogDb;
+        _contabilidad = contabilidad;
         _logger = logger;
     }
 
@@ -186,12 +190,8 @@ public class CheckoutController : ControllerBase
                 Moneda: "USD");
 
             var resultado = await _orchestrator.ProcesarCheckoutAsync(comando);
-
-            // El pago autoriza el pedido; NO implica envío ni entrega.
-            orden.Estado = EstadoOrden.Aprobada;
-            orden.FechaAprobacion = DateTime.UtcNow;
-            await _financeDb.SaveChangesAsync();
-            return Ok(resultado);
+            return await FinalizarCheckoutContableAsync(
+                orden, resultado, HttpContext.RequestAborted);
         }
         catch (StockInsuficienteException ex)
         {
@@ -228,8 +228,92 @@ public class CheckoutController : ControllerBase
                 ordenId
             });
         }
-        // Fallos no clasificados siguen sin marcarse como cancelados.
-        // I2B2B añadirá conciliación persistente y reembolso verificable.
+        // Los fallos posteriores al cobro se clasifican en
+        // FinalizarCheckoutContableAsync; no se reembolsa automáticamente.
+    }
+
+    private async Task<IActionResult> FinalizarCheckoutContableAsync(
+        Orden orden, CheckoutResult resultado, CancellationToken cancellationToken)
+    {
+        IDbContextTransaction? transaction = null;
+        try
+        {
+            Orden ordenFinalizar = orden;
+            if (_financeDb.Database.IsRelational())
+            {
+                transaction = await _financeDb.Database.BeginTransactionAsync(cancellationToken);
+                // Mismo bloqueo transaccional que usa la transición administrativa:
+                // una cancelación concurrente no puede convertirse en una venta aprobada.
+                var bloqueada = await _financeDb.Ordenes
+                    .FromSqlInterpolated(
+                        $"SELECT * FROM finance.ordenes WHERE \"Id\" = {orden.Id} FOR UPDATE")
+                    .SingleOrDefaultAsync(cancellationToken);
+                if (bloqueada is null)
+                    throw new InvalidOperationException("La orden desapareció antes del cierre contable.");
+                await _financeDb.Entry(bloqueada).ReloadAsync(cancellationToken);
+                ordenFinalizar = bloqueada;
+            }
+
+            if (ordenFinalizar.Estado != EstadoOrden.Pendiente)
+                throw new InvalidOperationException(
+                    $"La orden cambió a {ordenFinalizar.Estado} mientras se procesaba el pago.");
+
+            // El SplitPago ya fue persistido por la Saga. El asiento y la
+            // aprobación comercial se confirman juntos en Finance.
+            await _contabilidad.GenerarAsientoVentaAsync(
+                ordenFinalizar.Id, ordenFinalizar.SubTotal, ordenFinalizar.ImpuestoIva,
+                ordenFinalizar.TipoComprobante, cancellationToken);
+
+            ordenFinalizar.Estado = EstadoOrden.Aprobada;
+            ordenFinalizar.FechaAprobacion = DateTime.UtcNow;
+            await _financeDb.SaveChangesAsync(cancellationToken);
+
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
+
+            return Ok(resultado);
+        }
+        catch (Exception ex)
+        {
+            if (transaction is not null)
+            {
+                try { await transaction.RollbackAsync(CancellationToken.None); }
+                catch (Exception rollbackEx)
+                {
+                    _logger.LogError(rollbackEx,
+                        "No se pudo confirmar rollback del cierre contable. OrdenId={OrdenId}", orden.Id);
+                }
+            }
+
+            // El pago ya fue confirmado por la Saga. Limpiar el ChangeTracker
+            // evita reintentar un asiento fallido al finalizar la petición.
+            // El intento conserva Completado: la cola de seguimiento detecta
+            // COBRO_SIN_CIERRE_COMERCIAL mientras la orden siga Pendiente.
+            _financeDb.ChangeTracker.Clear();
+
+            _logger.LogError(ex,
+                "Pago confirmado, pero falló el asiento o la aprobación comercial. " +
+                "La orden queda pendiente para recuperación explícita; no se reembolsa ni se cobra otra vez. OrdenId={OrdenId}",
+                orden.Id);
+            return Conflict(new
+            {
+                mensaje = "El pago fue aceptado, pero no se pudo cerrar el asiento y aprobar la orden. Se requiere conciliación antes de reintentar.",
+                tipo = "PagoPendienteConciliacion",
+                ordenId = orden.Id
+            });
+        }
+        finally
+        {
+            if (transaction is not null)
+            {
+                try { await transaction.DisposeAsync(); }
+                catch (Exception disposeEx)
+                {
+                    _logger.LogWarning(disposeEx,
+                        "No se pudo liberar la transacción de cierre contable. OrdenId={OrdenId}", orden.Id);
+                }
+            }
+        }
     }
 
     private IActionResult RespuestaRepetida(Orden anterior, string hash)

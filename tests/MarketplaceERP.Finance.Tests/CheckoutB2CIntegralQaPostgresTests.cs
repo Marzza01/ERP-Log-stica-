@@ -153,6 +153,7 @@ public sealed class CheckoutB2CIntegralQaPostgresTests : IAsyncLifetime
                 services.AddDbContext<CoreDbContext>(o => o.UseNpgsql(_testConnection));
                 services.AddDbContext<CatalogDbContext>(o => o.UseNpgsql(_testConnection));
                 services.AddDbContext<FinanceDbContext>(o => o.UseNpgsql(_testConnection));
+                services.AddScoped<IContabilidadService, ContabilidadService>();
                 services.AddScoped<IStockService>(sp =>
                     new StockService(sp.GetRequiredService<CatalogDbContext>(),
                         sp.GetRequiredService<ILogger<StockService>>()));
@@ -212,7 +213,8 @@ public sealed class CheckoutB2CIntegralQaPostgresTests : IAsyncLifetime
 
         using var created = await buyer.PostAsJsonAsync(
             "/api/checkout", new CheckoutRequest(productId, cantidad));
-        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        Assert.True(created.StatusCode == HttpStatusCode.OK,
+            $"Checkout B2C devolvió {(int)created.StatusCode}: {await created.Content.ReadAsStringAsync()}");
         using var createdJson = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
         var orderId = createdJson.RootElement.GetProperty("ordenId").GetGuid();
         using (var repeat = await buyer.PostAsJsonAsync(
@@ -239,18 +241,25 @@ public sealed class CheckoutB2CIntegralQaPostgresTests : IAsyncLifetime
             Assert.NotNull(order.SplitPago);
             Assert.Equal(monto, order.SplitPago.MontoTotal);
             Assert.Equal(15m, order.SplitPago.MontoMarketplace);
-            Assert.Single(await verify.IntentosPago.AsNoTracking().ToListAsync());
+            var intento = await verify.IntentosPago.AsNoTracking().SingleAsync();
+            Assert.Equal(EstadoIntentoPago.Completado, intento.Estado);
             orderNumber = order.NumeroOrden;
 
-            // Límite explícito del E2E: el checkout no publica asientos por sí
-            // solo. Se invoca el servicio de contabilidad para demostrar la
-            // compatibilidad contable de la misma orden sin fabricar partidas.
-            var contabilidad = new ContabilidadService(
-                verify, NullLogger<ContabilidadService>.Instance);
-            var partida = await contabilidad.GenerarAsientoVentaAsync(
-                orderId, monto, 0m, order.TipoComprobante);
+            // El propio checkout HTTP debe persistir el asiento de venta
+            // atómicamente con la aprobación; no se invoca ContabilidadService
+            // manualmente en esta prueba.
+            var partida = await verify.PartidasContables.Include(x => x.Lineas)
+                .SingleAsync(x => x.TipoOperacion == "Venta" && x.ReferenciaOrigenId == orderId);
             Assert.Equal(monto, partida.TotalDebe);
             Assert.Equal(monto, partida.TotalHaber);
+            Assert.Equal(monto - 15m,
+                partida.Lineas.Single(line => line.CodigoCuenta == "2108").Haber);
+            Assert.Equal(15m,
+                partida.Lineas.Single(line => line.CodigoCuenta == "4101").Haber);
+            Assert.Equal(0m,
+                partida.Lineas.Single(line => line.CodigoCuenta == "2105").Haber);
+            Assert.Equal(1, await verify.PartidasContables.CountAsync(
+                x => x.TipoOperacion == "Venta" && x.ReferenciaOrigenId == orderId));
         }
         await using (var catalog = NewCatalog())
         {
@@ -373,6 +382,96 @@ public sealed class CheckoutB2CIntegralQaPostgresTests : IAsyncLifetime
         Assert.Equal(asientoFinal.TotalHaber, asientoFinal.Lineas.Sum(x => x.Haber));
         Assert.Contains(asientoFinal.Lineas, x => x.CodigoCuenta == "1101");
         gateway.Verify(g => g.ProcesarPagoAsync(It.IsAny<PagoRequest>()), Times.Once());
+    }
+
+    [Fact]
+    public async Task SplitContablePostgres_SubtotalIvaEnvio_ConciliadoYFailClosed()
+    {
+        if (!_created) throw new InvalidOperationException("Base efímera QA no creada.");
+        await using var db = NewFinance();
+
+        var validOrder = new Orden
+        {
+            Id = Guid.NewGuid(),
+            NumeroOrden = "F150-G2-" + Guid.NewGuid().ToString("N")[..8],
+            CompradorId = Guid.NewGuid(),
+            VendedorId = Guid.NewGuid(),
+            SubTotal = 200m,
+            ImpuestoIva = 26m,
+            CostoEnvio = 5m,
+            MontoTotal = 231m,
+            Estado = EstadoOrden.Aprobada,
+            TipoComprobante = "FacturaConsumidorFinal",
+            FechaCreacion = DateTime.UtcNow
+        };
+        var validSplit = new SplitPago
+        {
+            Id = Guid.NewGuid(),
+            OrdenId = validOrder.Id,
+            MontoTotal = 200m,
+            MontoVendedor = 180m,
+            MontoMarketplace = 20m,
+            PorcentajeVendedor = 90m,
+            PorcentajeMarketplace = 10m,
+            TransaccionId = "F150-G2-" + Guid.NewGuid().ToString("N"),
+            FechaProcesado = DateTime.UtcNow
+        };
+        validOrder.SplitPago = validSplit;
+        db.Ordenes.Add(validOrder);
+        db.SplitsPago.Add(validSplit);
+        await db.SaveChangesAsync();
+
+        var accounting = new ContabilidadService(db, NullLogger<ContabilidadService>.Instance);
+        var journal = await accounting.GenerarAsientoVentaAsync(
+            validOrder.Id, validOrder.SubTotal, validOrder.ImpuestoIva, validOrder.TipoComprobante);
+
+        Assert.Equal(231m, journal.TotalDebe);
+        Assert.Equal(231m, journal.TotalHaber);
+        Assert.Equal(180m, journal.Lineas.Single(x => x.CodigoCuenta == "2108").Haber);
+        Assert.Equal(25m, journal.Lineas.Single(x => x.CodigoCuenta == "4101").Haber);
+        Assert.Equal(26m, journal.Lineas.Single(x => x.CodigoCuenta == "2105").Haber);
+
+        var retry = await accounting.GenerarAsientoVentaAsync(
+            validOrder.Id, validOrder.SubTotal, validOrder.ImpuestoIva, validOrder.TipoComprobante);
+        Assert.Equal(journal.Id, retry.Id);
+        Assert.Equal(1, await db.PartidasContables.CountAsync());
+
+        var invalidOrder = new Orden
+        {
+            Id = Guid.NewGuid(),
+            NumeroOrden = "F150-G3-" + Guid.NewGuid().ToString("N")[..8],
+            CompradorId = Guid.NewGuid(),
+            VendedorId = Guid.NewGuid(),
+            SubTotal = 100m,
+            ImpuestoIva = 13m,
+            CostoEnvio = 0m,
+            MontoTotal = 113m,
+            Estado = EstadoOrden.Aprobada,
+            TipoComprobante = "FacturaConsumidorFinal",
+            FechaCreacion = DateTime.UtcNow
+        };
+        var invalidSplit = new SplitPago
+        {
+            Id = Guid.NewGuid(),
+            OrdenId = invalidOrder.Id,
+            MontoTotal = 100m,
+            MontoVendedor = 105m,
+            MontoMarketplace = 0m,
+            PorcentajeVendedor = 105m,
+            PorcentajeMarketplace = 0m,
+            TransaccionId = "F150-G3-INVALID",
+            FechaProcesado = DateTime.UtcNow
+        };
+        invalidOrder.SplitPago = invalidSplit;
+        db.Ordenes.Add(invalidOrder);
+        db.SplitsPago.Add(invalidSplit);
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            accounting.GenerarAsientoVentaAsync(
+                invalidOrder.Id, invalidOrder.SubTotal,
+                invalidOrder.ImpuestoIva, invalidOrder.TipoComprobante));
+        Assert.Equal(1, await db.PartidasContables.CountAsync());
     }
 
     public async Task DisposeAsync()

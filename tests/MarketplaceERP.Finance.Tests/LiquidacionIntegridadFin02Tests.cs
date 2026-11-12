@@ -65,6 +65,34 @@ public sealed class LiquidacionIntegridadFin02Tests
             () => service.GenerarLiquidacionAsync(seller));
     }
 
+    // F151: historical checkout contract — no seller liquidation before delivery.
+    [Fact]
+    public async Task OrdenNoEntregada_NoGeneraLiquidacion_HastaConfirmarEntrega()
+    {
+        await using var db = Db();
+        var seller = Guid.NewGuid();
+        var split = NuevoSplit(seller, 90m, 1);
+        split.Orden.Estado = EstadoOrden.Aprobada;
+        db.SplitsPago.Add(split);
+        await db.SaveChangesAsync();
+
+        var service = Service(db);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.GenerarLiquidacionAsync(seller));
+
+        Assert.Empty(await db.Liquidaciones.ToListAsync());
+        Assert.Null(split.LiquidacionId);
+
+        split.Orden.Estado = EstadoOrden.Entregada;
+        await db.SaveChangesAsync();
+
+        var liquidation = await service.GenerarLiquidacionAsync(seller);
+        Assert.Equal(90m, liquidation.MontoLiquidar);
+        Assert.Equal(split.Id, liquidation.SplitPagoId);
+        Assert.Equal(liquidation.Id, split.LiquidacionId);
+        Assert.Single(await db.Liquidaciones.ToListAsync());
+    }
+
     [Fact]
     public async Task LiquidacionHistoricaQueSumaVariosSplits_NoSePaga()
     {

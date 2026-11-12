@@ -19,6 +19,52 @@ namespace MarketplaceERP.Finance.Tests;
 
 public class RailwayPreparationTests
 {
+    [Theory]
+    [InlineData("postgres")]
+    [InlineData("postgresql")]
+    public void DatabaseUrl_WithoutPort_UsesPostgresDefault(string scheme)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DATABASE_URL"] = $"{scheme}://person:p%40ss%3Aword@db.internal/store"
+        }).Build();
+
+        var parsed = new Npgsql.NpgsqlConnectionStringBuilder(DatabaseConnectionConfiguration.Resolve(config));
+        Assert.Equal(5432, parsed.Port);
+        Assert.Equal("db.internal", parsed.Host);
+        Assert.Equal("store", parsed.Database);
+        Assert.Equal("p@ss:word", parsed.Password);
+        Assert.Equal(Npgsql.SslMode.Require, parsed.SslMode);
+    }
+
+    [Fact]
+    public void DatabaseUrl_ExplicitZeroPort_IsRejectedWithoutEchoingCredentials()
+    {
+        const string secret = "invalid-port-test-only";
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DATABASE_URL"] = $"postgresql://person:{secret}@db.internal:0/store"
+        }).Build();
+
+        var error = Assert.Throws<InvalidOperationException>(() => DatabaseConnectionConfiguration.Resolve(config));
+        Assert.DoesNotContain(secret, error.Message);
+    }
+
+    [Theory]
+    [InlineData(5432)]
+    [InlineData(6543)]
+    public void DatabaseUrl_ExplicitPort_IsPreserved(int port)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DATABASE_URL"] = $"postgresql://person:test-only@db.internal:{port}/store"
+        }).Build();
+
+        var parsed = new Npgsql.NpgsqlConnectionStringBuilder(DatabaseConnectionConfiguration.Resolve(config));
+        Assert.Equal(port, parsed.Port);
+        Assert.Equal(Npgsql.SslMode.Require, parsed.SslMode);
+    }
+
     [Fact]
     public void ConnectionResolution_IsSharedAndDoesNotLoseEscapedCredentials()
     {

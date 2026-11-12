@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
+using System.Text.Json;
 using MarketplaceERP.API.Controllers;
 using MarketplaceERP.API.Services;
 using MarketplaceERP.API.Security;
@@ -811,6 +812,7 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
     [InlineData(false, "commissionFailure")]
     [InlineData(false, "confirmFailure")]
     [InlineData(false, "attemptPersistFailure")]
+    [InlineData(false, "accountingFailure")]
     [InlineData(false, "finalizeOrderFailure")]
     public async Task HttpJwt_CompraYReintentoMismaClave_NoDuplicanPagoNiReserva(
         bool simultaneos, string escenario)
@@ -861,6 +863,12 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
                     ? new PagoResult(false, null, "Rechazo SIMULADO")
                     : new PagoResult(true, "AUDIT-SIM-TRANSACTION-001", null));
         var fakeCommissions = new Mock<ICommissionService>(MockBehavior.Strict);
+        var fakeAccounting = new Mock<IContabilidadService>(MockBehavior.Strict);
+        if (escenario == "accountingFailure")
+            fakeAccounting.Setup(x => x.GenerarAsientoVentaAsync(
+                    It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<decimal>(),
+                    It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("Fallo de asiento SIMULADO después del cobro"));
         if (escenario == "commissionFailure")
             fakeCommissions.Setup(x => x.CalcularComisionAsync(
                     It.IsAny<Guid>(), It.IsAny<decimal>()))
@@ -884,6 +892,12 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
                     if (escenario == "finalizeOrderFailure")
                         o.AddInterceptors(new FailOrderFinalizeInterceptor());
                 });
+                services.AddScoped<IContabilidadService>(sp =>
+                    escenario == "accountingFailure"
+                        ? fakeAccounting.Object
+                        : new ContabilidadService(
+                            sp.GetRequiredService<FinanceDbContext>(),
+                            sp.GetRequiredService<ILogger<ContabilidadService>>()));
                 services.AddScoped<IStockService>(sp =>
                 {
                     var inner = (IStockService)ActivatorUtilities.CreateInstance(sp,
@@ -1006,18 +1020,15 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
                 foreach (var response in responses) response.Dispose();
             }
         }
-        else if (escenario == "finalizeOrderFailure")
+        else if (escenario is "accountingFailure" or "finalizeOrderFailure")
         {
-            try
-            {
-                using var response = await http.PostAsJsonAsync(
-                    "/api/checkout", new CheckoutRequest(productoId, 2));
-                Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
-            }
-            catch (InvalidOperationException ex)
-            {
-                Assert.Contains("Fallo cierre de orden SIMULADO", ex.ToString());
-            }
+            using var response = await http.PostAsJsonAsync(
+                "/api/checkout", new CheckoutRequest(productoId, 2));
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            using var reconciliationBody = JsonDocument.Parse(
+                await response.Content.ReadAsStringAsync());
+            Assert.Equal("PagoPendienteConciliacion",
+                reconciliationBody.RootElement.GetProperty("tipo").GetString());
         }
         else
         {
@@ -1028,7 +1039,8 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
             var expectedType = escenario switch
             {
                 "rejected" => "PagoRechazado",
-                "uncertain" or "commissionFailure" or "confirmFailure" or "attemptPersistFailure" => "PagoPendienteConciliacion",
+                "uncertain" or "commissionFailure" or "confirmFailure" or
+                    "attemptPersistFailure" or "accountingFailure" => "PagoPendienteConciliacion",
                 _ => "StockInsuficiente"
             };
             Assert.Contains(expectedType, responseBody);
@@ -1049,7 +1061,8 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
         Assert.Equal(escenario == "lastStock" ? 2 : 1, await financeVerify.Ordenes.CountAsync());
         Assert.Equal(escenario is "noStock" or "attemptPersistFailure" ? 0 : 1,
             await financeVerify.IntentosPago.CountAsync());
-        Assert.Equal(escenario is "approved" or "lastStock" or "confirmFailure" or "finalizeOrderFailure" ? 1 : 0,
+        Assert.Equal(escenario is "approved" or "lastStock" or "confirmFailure" or
+            "accountingFailure" or "finalizeOrderFailure" ? 1 : 0,
             await financeVerify.SplitsPago.CountAsync());
         var order = escenario == "lastStock"
             ? await financeVerify.Ordenes.SingleAsync(o => o.Estado == EstadoOrden.Aprobada)
@@ -1057,18 +1070,54 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
         var expectedOrderState = escenario switch
         {
             "approved" or "lastStock" => EstadoOrden.Aprobada,
-            "uncertain" or "commissionFailure" or "confirmFailure" or "attemptPersistFailure" or "finalizeOrderFailure" => EstadoOrden.Pendiente,
+            "uncertain" or "commissionFailure" or "confirmFailure" or "attemptPersistFailure" or
+                "accountingFailure" or "finalizeOrderFailure" => EstadoOrden.Pendiente,
             _ => EstadoOrden.Cancelada
         };
         Assert.Equal(expectedOrderState, order.Estado);
         Assert.Equal(25m, order.MontoTotal);
         Assert.Equal(approvedBuyerId, order.CompradorId);
 
-        if (escenario is "approved" or "finalizeOrderFailure")
+        if (escenario != "noStock" && escenario != "attemptPersistFailure")
         {
-            // El evaluador no debe calificar como YaCerrado un pago completado
-            // si la orden comercial sigue pendiente. Jamás consulta al proveedor.
+            var expectedAttemptState = escenario switch
+            {
+                "approved" or "lastStock" or "accountingFailure" or
+                    "finalizeOrderFailure" => EstadoIntentoPago.Completado,
+                "rejected" => EstadoIntentoPago.Rechazado,
+                "uncertain" => EstadoIntentoPago.Incierto,
+                _ => EstadoIntentoPago.RequiereConciliacion
+            };
+            Assert.Equal(expectedAttemptState,
+                (await financeVerify.IntentosPago.SingleAsync()).Estado);
+        }
+
+        var expectedSaleJournals = escenario is "approved" or "lastStock" ? 1 : 0;
+        Assert.Equal(expectedSaleJournals,
+            await financeVerify.PartidasContables.CountAsync(x =>
+                x.TipoOperacion == "Venta" && x.ReferenciaOrigenId == order.Id));
+        if (expectedSaleJournals == 1)
+        {
+            var saleJournal = await financeVerify.PartidasContables.Include(x => x.Lineas)
+                .SingleAsync(x => x.TipoOperacion == "Venta" && x.ReferenciaOrigenId == order.Id);
+            Assert.Equal(25m, saleJournal.TotalDebe);
+            Assert.Equal(25m, saleJournal.TotalHaber);
+            Assert.Equal(22.50m,
+                saleJournal.Lineas.Single(x => x.CodigoCuenta == "2108").Haber);
+            Assert.Equal(2.50m,
+                saleJournal.Lineas.Single(x => x.CodigoCuenta == "4101").Haber);
+        }
+        if (escenario == "accountingFailure")
+            fakeAccounting.Verify(x => x.GenerarAsientoVentaAsync(
+                It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<decimal>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once());
+
+        if (escenario is "approved" or "accountingFailure" or "finalizeOrderFailure")
+        {
             var recoveryGateway = new Mock<IPaymentRecoveryGateway>(MockBehavior.Strict);
+            // El cobro está confirmado, pero el cierre comercial/contable
+            // quedó pendiente. El evaluador exige revisión manual sin consultar
+            // ni mutar la pasarela.
             var evaluator = new EvaluadorConciliacionPago(financeVerify,
                 recoveryGateway.Object, NullLogger<EvaluadorConciliacionPago>.Instance);
             var dictamen = await evaluator.EvaluarAsync(order.Id);
@@ -1089,9 +1138,9 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
         // ninguna mutación posterior sin bloqueos transaccionales adicionales.
         var preflight = new CierreCheckoutPreflight(financeVerify, catalogVerify);
         var aptitud = await preflight.EvaluarAsync(order.Id);
-        if (escenario == "finalizeOrderFailure")
+        if (escenario is "accountingFailure" or "finalizeOrderFailure")
             Assert.True(aptitud.DatosCoherentes,
-                "Bloqueos de preflight para cierre sintético: " + string.Join(", ", aptitud.Bloqueos));
+                "El pago está confirmado; el cierre QA puede recuperar el asiento y la aprobación.");
         else
             Assert.False(aptitud.DatosCoherentes);
         Assert.Equal(expectedOrderState,
@@ -1099,8 +1148,21 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
 
         var stock = await catalogVerify.StockFisico.SingleAsync();
         Assert.Equal(escenario == "noStock" ? 1 : escenario == "lastStock" ? 2 : 6, stock.CantidadTotal);
-        Assert.Equal(escenario is "approved" or "uncertain" or "lastStock" or "commissionFailure" or "confirmFailure" or "finalizeOrderFailure" ? 2 : 0,
+        Assert.Equal(escenario is "approved" or "uncertain" or "lastStock" or
+            "commissionFailure" or "confirmFailure" or "accountingFailure" or "finalizeOrderFailure" ? 2 : 0,
             stock.CantidadReservada);
+        if (escenario is "accountingFailure" or "finalizeOrderFailure")
+        {
+            using var tracking = await http.GetAsync($"/api/checkout/ordenes/{order.Id}/seguimiento");
+            Assert.Equal(HttpStatusCode.OK, tracking.StatusCode);
+            var observed = await tracking.Content.ReadFromJsonAsync<SeguimientoCheckoutDto>();
+            Assert.NotNull(observed);
+            Assert.Equal("Completado", observed.EstadoPago);
+            Assert.True(observed.RequiereRevision);
+            Assert.Contains("COBRO_SIN_CIERRE_COMERCIAL", observed.Alertas);
+            Assert.DoesNotContain("PAGO_REQUIERE_CONCILIACION", observed.Alertas);
+        }
+
         if (escenario == "attemptPersistFailure")
         {
             Assert.Single(reservations);
@@ -1219,8 +1281,7 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
             await financeVerify.SaveChangesAsync();
             var restaurado = await preflight.EvaluarAsync(order.Id);
             Assert.True(restaurado.DatosCoherentes,
-                "No debe quedar divergencia tras restaurar fixture: " +
-                string.Join(", ", restaurado.Bloqueos));
+                "El cierre QA debe poder recuperar el asiento y la aprobación tras restaurar el fixture.");
         }
         if (escenario is "commissionFailure" or "confirmFailure")
         {
@@ -1254,8 +1315,10 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
             Assert.Equal(HttpStatusCode.OK, tracking.StatusCode);
             var observed = await tracking.Content.ReadFromJsonAsync<SeguimientoCheckoutDto>();
             Assert.NotNull(observed);
+            Assert.Equal("Completado", observed.EstadoPago);
             Assert.True(observed.RequiereRevision);
             Assert.Contains("COBRO_SIN_CIERRE_COMERCIAL", observed.Alertas);
+            Assert.DoesNotContain("PAGO_REQUIERE_CONCILIACION", observed.Alertas);
             var adminJwt = new JwtSecurityToken(issuer: issuer, audience: issuer,
                 claims: new[] { new Claim(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()),
                     new Claim(ClaimTypes.Role, "Admin") },
@@ -1385,6 +1448,14 @@ public sealed class CheckoutHttpPostgresAuditTests : IAsyncLifetime
                 .CerrarAsync(order.Id, autorizacionExplicitaQa: true));
             Assert.Single(await dbComprobar.IntentosPago.ToListAsync());
             Assert.Single(await dbComprobar.SplitsPago.ToListAsync());
+            var asientoRecuperado = await dbComprobar.PartidasContables.Include(x => x.Lineas)
+                .SingleAsync(x => x.TipoOperacion == "Venta" && x.ReferenciaOrigenId == order.Id);
+            Assert.Equal(25m, asientoRecuperado.TotalDebe);
+            Assert.Equal(25m, asientoRecuperado.TotalHaber);
+            Assert.Equal(22.50m,
+                asientoRecuperado.Lineas.Single(x => x.CodigoCuenta == "2108").Haber);
+            Assert.Equal(2.50m,
+                asientoRecuperado.Lineas.Single(x => x.CodigoCuenta == "4101").Haber);
             Assert.Single(fakePayments.Invocations);
             using var terminado = await http.GetAsync($"/api/checkout/ordenes/{order.Id}/seguimiento");
             Assert.Equal(HttpStatusCode.OK, terminado.StatusCode);

@@ -2,7 +2,9 @@ using System.Data;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Finance.Data;
 using MarketplaceERP.Finance.Entities;
+using MarketplaceERP.Finance.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 
@@ -105,6 +107,14 @@ public sealed class CierreCheckoutAdminQaService
             throw new InvalidOperationException(
                 "Cierre QA bloqueado por invariantes: " +
                 string.Join(",", revision.Bloqueos));
+
+        // La recuperación administrativa QA reproduce el cierre normal:
+        // asiento y aprobación se confirman en la misma transacción.
+        var contabilidad = new ContabilidadService(
+            _finance, NullLogger<ContabilidadService>.Instance);
+        await contabilidad.GenerarAsientoVentaAsync(
+            orden.Id, orden.SubTotal, orden.ImpuestoIva,
+            orden.TipoComprobante, ct);
 
         orden.Estado = EstadoOrden.Aprobada;
         orden.FechaAprobacion = DateTime.UtcNow;

@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql;
 using NpgsqlTypes;
 using Xunit;
+using Moq;
 
 namespace MarketplaceERP.Finance.Tests;
 
@@ -446,6 +447,90 @@ public sealed class Fin08UnicidadAsientosPostgresQaTests : IAsyncLifetime
         Assert.Equal(3, journal.Lineas.Count);
         Assert.Equal(113m, journal.TotalDebe);
         Assert.Equal(journal.TotalDebe, journal.TotalHaber);
+    }
+
+    [Fact]
+    public async Task ApiAprobarSiFallaElAsiento_RevierteEstadoYConservaPagoParaConciliar()
+    {
+        Assert.True(_created);
+        await using (var migrated = NewContext())
+            await migrated.Database.MigrateAsync();
+
+        var orderId = Guid.NewGuid();
+        const decimal subtotal = 100m;
+        const decimal iva = 13m;
+        const string transactionId = "TXN-F151-ACCOUNTING-FAILURE";
+
+        await using (var seed = NewContext())
+        {
+            seed.Ordenes.Add(new MarketplaceERP.Finance.Entities.Orden
+            {
+                Id = orderId,
+                NumeroOrden = "QA-F151-" + Guid.NewGuid().ToString("N"),
+                CompradorId = Guid.NewGuid(),
+                VendedorId = Guid.NewGuid(),
+                SubTotal = subtotal,
+                ImpuestoIva = iva,
+                MontoTotal = subtotal + iva,
+                TipoCliente = MarketplaceERP.Finance.Entities.TipoCliente.B2C,
+                Estado = MarketplaceERP.Finance.Entities.EstadoOrden.Pendiente,
+                TipoComprobante = "FacturaConsumidorFinal",
+                Moneda = "USD"
+            });
+            seed.IntentosPago.Add(new MarketplaceERP.Finance.Entities.IntentoPago
+            {
+                Id = Guid.NewGuid(),
+                OrdenId = orderId,
+                ReferenciaOperacion = $"PAY-{orderId:N}",
+                Monto = subtotal + iva,
+                Moneda = "USD",
+                Estado = MarketplaceERP.Finance.Entities.EstadoIntentoPago.Aprobado,
+                TransaccionId = transactionId
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await using (var request = NewContext())
+        {
+            var accounting = new Moq.Mock<IContabilidadService>(Moq.MockBehavior.Strict);
+            accounting.Setup(x => x.GenerarAsientoVentaAsync(
+                    orderId, subtotal, iva, "FacturaConsumidorFinal",
+                    Moq.It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException(
+                    "Fallo simulado de asiento después del cobro confirmado"));
+
+            var controller = new MarketplaceERP.API.Controllers.OrdenesController(
+                request,
+                accounting.Object,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<
+                    MarketplaceERP.API.Controllers.OrdenesController>.Instance);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                controller.TransicionarEstado(
+                    orderId,
+                    new MarketplaceERP.API.Controllers.TransicionEstadoRequest("Aprobada", null),
+                    CancellationToken.None));
+
+            accounting.Verify(x => x.GenerarAsientoVentaAsync(
+                orderId, subtotal, iva, "FacturaConsumidorFinal",
+                Moq.It.IsAny<CancellationToken>()), Moq.Times.Once);
+            accounting.VerifyNoOtherCalls();
+        }
+
+        await using var verify = NewContext();
+        var persistedOrder = await verify.Ordenes.SingleAsync(x => x.Id == orderId);
+        Assert.Equal(MarketplaceERP.Finance.Entities.EstadoOrden.Pendiente,
+            persistedOrder.Estado);
+        Assert.Null(persistedOrder.FechaAprobacion);
+
+        var durablePayment = await verify.IntentosPago.SingleAsync(x => x.OrdenId == orderId);
+        Assert.Equal(MarketplaceERP.Finance.Entities.EstadoIntentoPago.Aprobado,
+            durablePayment.Estado);
+        Assert.Equal(transactionId, durablePayment.TransaccionId);
+
+        Assert.Empty(await verify.PartidasContables
+            .Where(x => x.TipoOperacion == "Venta" && x.ReferenciaOrigenId == orderId)
+            .ToListAsync());
     }
 
     public async Task DisposeAsync()

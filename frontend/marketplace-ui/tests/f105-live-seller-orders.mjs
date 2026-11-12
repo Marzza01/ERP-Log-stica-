@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -13,6 +13,9 @@ const origin = 'http://127.0.0.1:4176';
 const backend = 'http://127.0.0.1:5000';
 const adminEmail = process.env.ADMIN_EMAIL;
 const adminPassword = process.env.ADMIN_PASSWORD;
+const baselinePrSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const workingTreeDirty = execFileSync('git',
+  ['status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim().length > 0;
 assert.equal(process.env.CI, 'true', 'CI local required');
 assert.ok(adminEmail?.endsWith('@erp.invalid') && adminPassword?.length >= 20,
   'Only temporary local Admin credentials accepted');
@@ -254,7 +257,7 @@ try {
     sellerGlobalOrders:403,sellerGlobalKpis:403,
     buyerSellerRoute:403,anonymous:401,
     sellerMutations:0,externalPayments:0,externalDeployments:0,
-    baselinePrSha:'aa94bd80e2a5f96070181d8a22727d046d18b230'
+    baselinePrSha,workingTreeDirty
   }));
 } finally {
   if(browser) await browser.close();

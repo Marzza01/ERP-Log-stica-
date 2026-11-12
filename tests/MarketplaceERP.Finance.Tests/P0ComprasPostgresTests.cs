@@ -562,14 +562,37 @@ public class P0ComprasPostgresTests
 
             await using var cleanup = new NpgsqlConnection(admin.ConnectionString);
             await cleanup.OpenAsync();
-            await using (var sesiones = new NpgsqlCommand(
-                "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = @db", cleanup))
+            // TestServer/EF pueden terminar de devolver la última conexión
+            // al pool justo después de salir del bloque try. Esperar un margen
+            // acotado evita un falso fallo de teardown bajo carga paralela;
+            // nunca se terminan sesiones ni se fuerza el DROP.
+            var limiteDrenaje = DateTime.UtcNow.AddSeconds(5);
+            var activas = -1;
+            do
             {
+                await using var sesiones = new NpgsqlCommand(
+                    "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = @db", cleanup);
                 sesiones.Parameters.AddWithValue("db", database);
-                var activas = Convert.ToInt32(await sesiones.ExecuteScalarAsync());
-                if (activas != 0)
-                    throw new InvalidOperationException(
-                        $"No se elimina {database}: tiene {activas} conexiones activas.");
+                activas = Convert.ToInt32(await sesiones.ExecuteScalarAsync());
+                if (activas == 0) break;
+                await Task.Delay(100);
+            } while (DateTime.UtcNow < limiteDrenaje);
+
+            if (activas != 0)
+            {
+                await using var diagnostico = new NpgsqlCommand("""
+                    SELECT COALESCE(string_agg(
+                        format('pid=%s state=%s app=%s wait=%s query=%s',
+                            pid, state, application_name,
+                            COALESCE(wait_event, ''),
+                            LEFT(query, 120)), '; '), '')
+                    FROM pg_stat_activity
+                    WHERE datname = @db;
+                    """, cleanup);
+                diagnostico.Parameters.AddWithValue("db", database);
+                var detalle = Convert.ToString(await diagnostico.ExecuteScalarAsync());
+                throw new InvalidOperationException(
+                    $"No se elimina {database}: tiene {activas} conexiones activas tras 5 s. {detalle}");
             }
 
             await using var drop = new NpgsqlCommand(

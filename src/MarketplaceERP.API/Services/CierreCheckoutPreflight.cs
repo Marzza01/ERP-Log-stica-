@@ -78,6 +78,30 @@ public sealed class CierreCheckoutPreflight
             split.MontoVendedor + split.MontoMarketplace != orden.MontoTotal)
             bloqueos.Add("SPLIT_NO_CONCILIADO");
 
+        // Una orden ya aprobada debe tener exactamente un asiento de venta
+        // conciliado con el split. Una orden pendiente puede estar en recuperación:
+        // CierreCheckoutAdminQaService generará el asiento dentro de su transacción.
+        if (orden.Estado == EstadoOrden.Aprobada)
+        {
+            var asientosVenta = await _finance.PartidasContables.AsNoTracking()
+                .Include(p => p.Lineas)
+                .Where(p => p.TipoOperacion == "Venta" && p.ReferenciaOrigenId == ordenId)
+                .ToListAsync(cancellationToken);
+            var asiento = asientosVenta.Count == 1 ? asientosVenta[0] : null;
+            var cuentaVendedor = asiento?.Lineas.SingleOrDefault(l => l.CodigoCuenta == "2108");
+            var cuentaMarketplace = asiento?.Lineas.SingleOrDefault(l => l.CodigoCuenta == "4101");
+            var cuentaIva = asiento?.Lineas.SingleOrDefault(l => l.CodigoCuenta == "2105");
+            if (asiento is null || split is null ||
+                asiento.TotalDebe != orden.MontoTotal ||
+                asiento.TotalHaber != orden.MontoTotal ||
+                asiento.Lineas.Sum(l => l.Debe) != orden.MontoTotal ||
+                asiento.Lineas.Sum(l => l.Haber) != orden.MontoTotal ||
+                cuentaVendedor?.Haber != split.MontoVendedor ||
+                cuentaMarketplace?.Haber != split.MontoMarketplace + orden.CostoEnvio ||
+                cuentaIva?.Haber != orden.ImpuestoIva)
+                bloqueos.Add("ASIENTO_VENTA_NO_CONCILIADO");
+        }
+
         if (await _finance.ReembolsosPago.AsNoTracking()
             .AnyAsync(r => r.OrdenId == ordenId, cancellationToken))
             bloqueos.Add("REEMBOLSO_EXISTENTE");
