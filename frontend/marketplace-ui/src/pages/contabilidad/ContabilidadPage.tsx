@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { BookOpen, Scale, CheckCircle2, FileSpreadsheet, RefreshCw, ChevronRight } from 'lucide-react';
+import { BookOpen, Scale, CheckCircle2, MinusCircle, FileSpreadsheet, RefreshCw, ChevronRight } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
 import { contabilidadApi, type BalanceComprobacion } from '../../api/contabilidad';
@@ -46,6 +46,8 @@ export default function ContabilidadPage() {
   const totalDebeGlobal = partidas.reduce((acc, p) => acc + p.totalDebe, 0);
   const totalHaberGlobal = partidas.reduce((acc, p) => acc + p.totalHaber, 0);
   const estaCuadrado = !loading && !errorCarga && partidas.length > 0 && Math.abs(totalDebeGlobal - totalHaberGlobal) < 0.01;
+  const estadoCuadre = loading ? 'Cargando...' : partidas.length === 0 ? 'Sin movimientos' : estaCuadrado ? '100% Cuadrado' : 'Discrepante';
+  const colorCuadre = loading || partidas.length === 0 ? 'var(--text-muted)' : estaCuadrado ? 'var(--green)' : 'var(--red)';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -111,9 +113,9 @@ export default function ContabilidadPage() {
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Partida Doble Cuadrada</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem' }}>
-            <CheckCircle2 size={22} style={{ color: estaCuadrado ? 'var(--green)' : 'var(--red)' }} />
-            <span style={{ fontSize: '1.3rem', fontWeight: 700, color: estaCuadrado ? 'var(--green)' : 'var(--red)' }}>
-              {estaCuadrado ? '100% Cuadrado' : 'Discrepante'}
+            {partidas.length === 0 || loading ? <MinusCircle size={22} style={{ color: colorCuadre }} /> : <CheckCircle2 size={22} style={{ color: colorCuadre }} />}
+            <span style={{ fontSize: '1.3rem', fontWeight: 700, color: colorCuadre }}>
+              {estadoCuadre}
             </span>
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Debe == Haber</div>
