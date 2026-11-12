@@ -57,8 +57,8 @@ jobs:
         run: dotnet restore MarketplaceERP.sln
 
       # 4. Build en modo Release
-      - name: Build solution
-        run: dotnet build MarketplaceERP.sln --no-restore --configuration Release
+      - name: Build solution (QA harness for test compilation)
+        run: dotnet build MarketplaceERP.sln --no-restore --configuration Release -p:CheckoutQaHarness=true
 
       # 4.1 Validar que TEST_PG_CONNECTION estÃ© configurada
       - name: Verify TEST_PG_CONNECTION is set
@@ -71,6 +71,10 @@ jobs:
       # 5. Ejecutar tests unitarios
       - name: Run tests
         run: dotnet test MarketplaceERP.sln --no-build --configuration Release --logger "trx;LogFilePrefix=test-results" --results-directory ./TestResults
+
+      # Verificar aparte el ensamblado desplegable sin controladores ni helpers QA.
+      - name: Build production API without QA harness
+        run: dotnet build src/MarketplaceERP.API/MarketplaceERP.API.csproj --no-restore --configuration Release -p:CheckoutQaHarness=false
 
       # Las pruebas nunca deben reescribir el CSV versionado del catálogo de 500 SKUs.
       - name: Assert catalog fixture did not overwrite tracked CSV
