@@ -24,15 +24,16 @@ public static class DatabaseConnectionConfiguration
 
             var credentials = uri.UserInfo.Split(':', 2);
             var database = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/'));
+            var port = uri.Port == -1 ? 5432 : uri.Port;
             if (credentials.Length != 2 || string.IsNullOrEmpty(credentials[0]) ||
                 string.IsNullOrEmpty(credentials[1]) || string.IsNullOrWhiteSpace(database) ||
-                database.Contains('/') || uri.Port is < 1 or > 65535)
+                database.Contains('/') || port is < 1 or > 65535)
                 throw new FormatException();
 
             return new NpgsqlConnectionStringBuilder
             {
                 Host = uri.Host,
-                Port = uri.Port,
+                Port = port,
                 Database = database,
                 Username = Uri.UnescapeDataString(credentials[0]),
                 Password = Uri.UnescapeDataString(credentials[1]),

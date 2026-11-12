@@ -31,10 +31,26 @@ function readUncertainIds(): Set<string> | null {
   }
 }
 
+function isSplitDetalle(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const split = value as Record<string, unknown>;
+  return typeof split.splitPagoId === 'string'
+    && typeof split.ordenId === 'string'
+    && ['montoTotal', 'montoVendedor', 'comisionMarketplace']
+      .every(field => typeof split[field] === 'number'
+        && Number.isFinite(split[field]) && (split[field] as number) >= 0);
+}
+
 function isLiquidacion(value: unknown): value is Liquidacion {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Record<string, unknown>;
-  return typeof row.id === 'string' && typeof row.vendedorId === 'string'
+  return (row.cantidadSplits === undefined
+      || (Number.isInteger(row.cantidadSplits) && (row.cantidadSplits as number) >= 0))
+    && (row.desgloseVerificado === undefined || typeof row.desgloseVerificado === 'boolean')
+    && (row.splits === undefined || (Array.isArray(row.splits)
+      && row.splits.every(isSplitDetalle)
+      && (row.cantidadSplits === undefined || row.splits.length === row.cantidadSplits)))
+    && typeof row.id === 'string' && typeof row.vendedorId === 'string'
     && typeof row.periodo === 'string'
     && typeof row.estado === 'string'
     && ['Pendiente', 'EnProceso', 'Completada', 'Fallida'].includes(row.estado)
@@ -55,6 +71,7 @@ export default function LiquidacionesPage() {
 
   // Modal procesar
   const [selectedLiq, setSelectedLiq] = useState<Liquidacion | null>(null);
+  const [detalleLiq, setDetalleLiq] = useState<Liquidacion | null>(null);
   const [processing, setProcessing] = useState(false);
   const processingRef = useRef(false);
   const loadRequestId = useRef(0);
@@ -76,6 +93,7 @@ export default function LiquidacionesPage() {
     setLoadError(null);
     setDataReady(false);
     setSelectedLiq(null);
+    setDetalleLiq(null);
     setPendientes([]);
     setHistorial([]);
     try {
@@ -107,7 +125,8 @@ export default function LiquidacionesPage() {
 
   const handleProcesarPago = async () => {
     if (!isAdmin || !selectedLiq || selectedLiq.estado !== 'Pendiente'
-      || processingRef.current || !dataReady || loading || uncertainIds === null) return;
+      || processingRef.current || !dataReady || loading || uncertainIds === null
+      || selectedLiq.desgloseVerificado !== true || !selectedLiq.cantidadSplits) return;
     const id = selectedLiq.id;
     const currentLocks = readUncertainIds();
     if (currentLocks === null || currentLocks.has(id)) {
@@ -147,6 +166,26 @@ export default function LiquidacionesPage() {
       processingRef.current = false;
       setProcessing(false);
     }
+  };
+
+  const desgloseSeguro = (liq: Liquidacion) =>
+    liq.desgloseVerificado === true && Number.isInteger(liq.cantidadSplits)
+    && (liq.cantidadSplits ?? 0) > 0 && Array.isArray(liq.splits)
+    && liq.splits.length === liq.cantidadSplits
+    && liq.splits.every(split => split.montoVendedor > 0)
+    && Math.abs(liq.splits.reduce((total, split) => total + split.montoVendedor, 0)
+      - liq.montoLiquidar) <= 0.01;
+  const detalleColumna = {
+    header: 'Splits',
+    accessor: 'id' as const,
+    render: (row: Liquidacion) => (
+      <button type="button" onClick={() => setDetalleLiq(row)}
+        style={{ border: '1px solid var(--border)', background: 'var(--bg-surface)',
+          color: 'var(--text-primary)', padding: '0.3rem 0.5rem', borderRadius: 6,
+          cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        {desgloseSeguro(row) ? `${row.cantidadSplits} splits · Ver desglose` : 'Desglose no verificado'}
+      </button>
+    ),
   };
 
   const totalPendienteLiquidar = pendientes.reduce((acc, p) => acc + p.montoLiquidar, 0);
@@ -321,6 +360,7 @@ export default function LiquidacionesPage() {
               accessor: 'periodo',
               render: (row) => <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{row.periodo}</span>,
             },
+            detalleColumna,
             {
               header: 'Ventas Totales ($)',
               accessor: 'montoVentas',
@@ -361,8 +401,8 @@ export default function LiquidacionesPage() {
                   <span style={{ color: 'var(--text-muted)' }}>Bloqueado: resultado por verificar</span>
                 ) : (
                 <button
-                  onClick={() => { if (!processingRef.current && dataReady && !loading && row.estado === 'Pendiente') setSelectedLiq(row); }}
-                  disabled={processing || loading || row.estado !== 'Pendiente'}
+                  onClick={() => { if (!processingRef.current && dataReady && !loading && row.estado === 'Pendiente' && desgloseSeguro(row)) setSelectedLiq(row); }}
+                  disabled={processing || loading || row.estado !== 'Pendiente' || !desgloseSeguro(row)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -374,7 +414,7 @@ export default function LiquidacionesPage() {
                     color: 'var(--accent)',
                     fontSize: '0.8rem',
                     fontWeight: 600,
-                    cursor: processing || loading || row.estado !== 'Pendiente' ? 'not-allowed' : 'pointer',
+                    cursor: processing || loading || row.estado !== 'Pendiente' || !desgloseSeguro(row) ? 'not-allowed' : 'pointer',
                   }}
                 >
                   <Play size={13} />
@@ -405,6 +445,7 @@ export default function LiquidacionesPage() {
               accessor: 'periodo',
               render: (row) => <span style={{ fontWeight: 600 }}>{row.periodo}</span>,
             },
+            detalleColumna,
             {
               header: 'Ventas Totales',
               accessor: 'montoVentas',
@@ -438,6 +479,63 @@ export default function LiquidacionesPage() {
         />
       )}
 
+      {/* Desglose read-only: nunca asume que la ancla histórica equivale a todo el lote. */}
+      {isAdmin && detalleLiq && (
+        <Modal
+          title={`Desglose de liquidación — ${detalleLiq.id}`}
+          isOpen={true}
+          onClose={() => setDetalleLiq(null)}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+              Lote del vendedor {detalleLiq.vendedorId} · Monto interno: ${detalleLiq.montoLiquidar.toFixed(2)}
+            </div>
+            {!desgloseSeguro(detalleLiq) && (
+              <div role="alert" style={{ color: 'var(--yellow)', fontSize: '0.85rem' }}>
+                El desglose no está disponible o sus importes no están verificados.
+                Debe conciliarse antes de registrar una liquidación interna.
+              </div>
+            )}
+            {(detalleLiq.splits?.length ?? 0) > 0 ? (
+              <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                  <thead>
+                    <tr>
+                      {['Orden', 'Split', 'Venta', 'Comisión', 'Vendedor'].map(head =>
+                        <th key={head} style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid var(--border)' }}>{head}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalleLiq.splits?.map(split => (
+                      <tr key={split.splitPagoId}>
+                        <td style={{ padding: 8, fontFamily: 'var(--font-mono)' }} title={split.ordenId}>{split.ordenId.slice(0, 8)}</td>
+                        <td style={{ padding: 8, fontFamily: 'var(--font-mono)' }} title={split.splitPagoId}>{split.splitPagoId.slice(0, 8)}</td>
+                        <td style={{ padding: 8 }}>${split.montoTotal.toFixed(2)}</td>
+                        <td style={{ padding: 8 }}>${split.comisionMarketplace.toFixed(2)}</td>
+                        <td style={{ padding: 8 }}>${split.montoVendedor.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                No hay registros individuales de splits disponibles para este lote.
+              </div>
+            )}
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Estos datos representan distribución contable interna; no acreditan una transferencia bancaria.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setDetalleLiq(null)}
+                style={{ padding: '0.5rem 0.85rem', borderRadius: 6,
+                  border: '1px solid var(--border)', background: 'var(--bg-surface)',
+                  color: 'var(--text-primary)', cursor: 'pointer' }}>Cerrar</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {/* Confirmación de registro interno */}
       {isAdmin && selectedLiq && (
         <Modal
@@ -449,6 +547,9 @@ export default function LiquidacionesPage() {
             <div style={{ background: 'var(--bg-surface)', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Período de Liquidación:</div>
               <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginTop: '0.2rem' }}>{selectedLiq.periodo}</div>
+              <div style={{ color: 'var(--text-secondary)', marginTop: 6 }}>
+                {selectedLiq.cantidadSplits ?? 0} splits verificados en el lote
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', background: 'var(--bg-card)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
@@ -491,7 +592,7 @@ export default function LiquidacionesPage() {
               <button
                 type="button"
                 onClick={handleProcesarPago}
-                disabled={processing || uncertainIds === null || uncertainIds.has(selectedLiq.id)}
+                disabled={processing || uncertainIds === null || uncertainIds.has(selectedLiq.id) || !desgloseSeguro(selectedLiq)}
                 style={{
                   padding: '0.5rem 1.25rem',
                   borderRadius: '6px',

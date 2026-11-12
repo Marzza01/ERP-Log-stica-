@@ -96,7 +96,11 @@ builder.Services.AddCatalogServices(builder.Configuration);
 builder.Services.AddFinanceServices(builder.Configuration, builder.Environment.IsDevelopment());
 builder.Services.AddScoped<MarketplaceERP.API.Services.ReservasExpiracionService>();
 
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        // Recuperación selectiva de concurrencia histórica: solo conflictos EF a HTTP 409.
+        options.Filters.Add<MarketplaceERP.API.Filters.ConcurrencyExceptionFilter>();
+    })
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
@@ -200,13 +204,16 @@ app.MapGet("/health/ready", async (
         // a representative module table and each EF migration history table.
         coreOk = await coreDb.Database.CanConnectAsync() &&
             await ReadinessSchemaProbe.RequiredTablesExistAsync(
-                coreDb, "core.usuarios", "core.\"__EFMigrationsHistory\"");
+                coreDb, "core.usuarios", "core.\"__EFMigrationsHistory\"") &&
+            await ReadinessSchemaProbe.CurrentMigrationsAppliedAsync(coreDb);
         catalogOk = await catalogDb.Database.CanConnectAsync() &&
             await ReadinessSchemaProbe.RequiredTablesExistAsync(
-                catalogDb, "catalog.productos", "catalog.\"__EFMigrationsHistory\"");
+                catalogDb, "catalog.productos", "catalog.\"__EFMigrationsHistory\"") &&
+            await ReadinessSchemaProbe.CurrentMigrationsAppliedAsync(catalogDb);
         financeOk = await financeDb.Database.CanConnectAsync() &&
             await ReadinessSchemaProbe.RequiredTablesExistAsync(
-                financeDb, "finance.ordenes_compra", "finance.\"__EFMigrationsHistory\"");
+                financeDb, "finance.ordenes_compra", "finance.\"__EFMigrationsHistory\"") &&
+            await ReadinessSchemaProbe.CurrentMigrationsAppliedAsync(financeDb);
     }
     catch
     {

@@ -51,8 +51,9 @@ public class ReabastecimientoController : ControllerBase
 
         var comprasAbiertas = await _financeDb.OrdenesCompra
             .AsNoTracking()
-            .Where(po => po.Estado == EstadoOrdenCompra.Borrador ||
-                         po.Estado == EstadoOrdenCompra.Enviada ||
+            // Solo POs enviadas o con recepción parcial son compromisos reales.
+            // Un borrador aún no se ha enviado al proveedor y no debe proyectar cobertura.
+            .Where(po => po.Estado == EstadoOrdenCompra.Enviada ||
                          po.Estado == EstadoOrdenCompra.RecibidaParcial)
             .SelectMany(po => po.Items.Select(item => new
             {

@@ -39,6 +39,89 @@ public class OrdenesController : ControllerBase
         _logger = logger;
     }
 
+    // Ruta nueva y separada: NO reutilizar el listado/KPIs global de Admin.
+    // La identidad del vendedor debe venir solo del JWT, nunca de query/body.
+    [HttpGet("mis-ordenes", Name = "ListarMisOrdenesVendedor")]
+    [Authorize(Roles = "Vendedor")]
+    public async Task<IActionResult> ListarMisOrdenes(
+        [FromQuery] string? estado = null,
+        [FromQuery] int pagina = 1,
+        [FromQuery] int tamano = 50,
+        CancellationToken cancellationToken = default)
+    {
+        var vendedorId = ObtenerVendedorIdSeguro();
+        if (!vendedorId.HasValue) return Forbid();
+
+        if (pagina < 1 || tamano is < 1 or > 100 ||
+            ((long)pagina - 1) * tamano > int.MaxValue)
+            return BadRequest(new { mensaje = "Paginacion invalida." });
+
+        var query = _db.Ordenes.AsNoTracking()
+            .Where(o => o.VendedorId == vendedorId.Value);
+
+        if (!string.IsNullOrWhiteSpace(estado))
+        {
+            if (!Enum.TryParse<EstadoOrden>(estado, true, out var valor) ||
+                !Enum.IsDefined(valor))
+                return BadRequest(new { mensaje = "Estado no valido." });
+            query = query.Where(o => o.Estado == valor);
+        }
+
+        // Filtrar ANTES de Count, Skip, Take y la proyeccion.
+        var total = await query.CountAsync(cancellationToken);
+        var page = await query
+            .OrderByDescending(o => o.FechaCreacion).ThenBy(o => o.Id)
+            .Skip((pagina - 1) * tamano).Take(tamano)
+            .Select(o => new
+            {
+                o.Id, o.NumeroOrden, o.Estado, o.TipoCliente,
+                o.MontoTotal, o.Moneda, o.FechaCreacion,
+                TotalItems = o.Items.Count
+            })
+            .ToListAsync(cancellationToken);
+
+        var ordenes = page.Select(o => new OrdenVendedorResumenResponse(
+            o.Id, o.NumeroOrden, o.Estado.ToString(), o.TipoCliente.ToString(),
+            o.MontoTotal, o.Moneda, o.FechaCreacion, o.TotalItems)).ToArray();
+
+        return Ok(new { total, pagina, tamano, ordenes });
+    }
+
+    [HttpGet("mis-ordenes/{id:guid}", Name = "ObtenerMiOrdenVendedor")]
+    [Authorize(Roles = "Vendedor")]
+    public async Task<IActionResult> ObtenerMiOrden(
+        Guid id, CancellationToken cancellationToken)
+    {
+        var vendedorId = ObtenerVendedorIdSeguro();
+        if (!vendedorId.HasValue) return Forbid();
+
+        // Una orden ajena y una inexistente dan exactamente el mismo 404.
+        var propia = await _db.Ordenes.AsNoTracking()
+            .Where(o => o.Id == id && o.VendedorId == vendedorId.Value)
+            .Include(o => o.Items)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (propia is null) return NotFound();
+
+        return Ok(new OrdenVendedorDetalleResponse(
+            propia.Id, propia.NumeroOrden, propia.Estado.ToString(),
+            propia.TipoCliente.ToString(), propia.MontoTotal, propia.Moneda,
+            propia.FechaCreacion,
+            propia.Items.OrderBy(i => i.Id).Select(i => new ItemOrdenVendedorResponse(
+                i.ProductoId, i.SkuReferencia, i.NombreProducto,
+                i.Cantidad, i.PrecioUnitario)).ToArray()));
+    }
+
+    private Guid? ObtenerVendedorIdSeguro()
+    {
+        if (User.Identity?.IsAuthenticated != true || !User.IsInRole("Vendedor"))
+            return null;
+
+        // Se rechazan claims faltantes, vacios, repetidos o ambiguos.
+        var claims = User.FindAll("VendedorId").Select(c => c.Value).ToArray();
+        return claims.Length == 1 && Guid.TryParse(claims[0], out var id) &&
+            id != Guid.Empty ? id : null;
+    }
+
     // ── GET /api/ordenes ──────────────────────────────────────────────────────
     /// <summary>Lista todas las órdenes con KPIs de tiempo de ciclo.</summary>
     [HttpGet(Name = "ListarOrdenes")]
@@ -142,10 +225,46 @@ public class OrdenesController : ControllerBase
         if (req.Items == null || req.Items.Count == 0)
             return BadRequest(new { mensaje = "Una orden debe tener al menos un ítem." });
 
+        // La creación manual sigue reservada al rol Admin, pero nunca debe
+        // aceptar cantidades negativas, dinero inválido o totales que no
+        // pueden almacenarse en numeric(18,2). Esto NO habilita un pago.
+        const decimal montoMaximo = 9999999999999999.99m;
+        static bool ImporteValido(decimal valor) =>
+            valor >= 0m && valor <= montoMaximo &&
+            decimal.Round(valor, 2) == valor;
+
+        if (req.CompradorId == Guid.Empty || req.VendedorId == Guid.Empty ||
+            !Enum.IsDefined(req.TipoCliente) ||
+            req.Items.Any(item => item.ProductoId == Guid.Empty ||
+                item.Cantidad <= 0 || !ImporteValido(item.PrecioUnitario)) ||
+            (req.CostoEnvio.HasValue && !ImporteValido(req.CostoEnvio.Value)))
+            return BadRequest(new { mensaje = "Datos de orden, cantidades o importes no válidos." });
+
+        decimal subtotalValidado = 0m;
+        try
+        {
+            foreach (var item in req.Items)
+                subtotalValidado = checked(subtotalValidado + item.Cantidad * item.PrecioUnitario);
+        }
+        catch (OverflowException)
+        {
+            return BadRequest(new { mensaje = "Importe total excede los límites permitidos." });
+        }
+
+        var ivaValidado = decimal.Round(subtotalValidado * 0.13m, 2);
+        var envioValidado = req.CostoEnvio ?? 5m;
+        if (!ImporteValido(subtotalValidado) ||
+            !ImporteValido(ivaValidado) ||
+            !ImporteValido(subtotalValidado + ivaValidado + envioValidado))
+            return BadRequest(new { mensaje = "Importe total excede los límites permitidos." });
+
+        // El identificador visible usa el mismo GUID que la PK de la orden.
+        // No usar un rango aleatorio de 90,000 valores compartido por dia.
+        var ordenId = Guid.NewGuid();
         var orden = new Orden
         {
-            Id = Guid.NewGuid(),
-            NumeroOrden = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(10000, 99999)}",
+            Id = ordenId,
+            NumeroOrden = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{ordenId:N}",
             CompradorId = req.CompradorId,
             VendedorId = req.VendedorId,
             Estado = EstadoOrden.Pendiente,
@@ -159,7 +278,6 @@ public class OrdenesController : ControllerBase
             Moneda = "USD",
         };
 
-        decimal subtotal = 0m;
         foreach (var item in req.Items)
         {
             var lineaOrden = new ItemOrden
@@ -173,12 +291,11 @@ public class OrdenesController : ControllerBase
                 NombreProducto = item.Nombre ?? "Producto",
             };
             orden.Items.Add(lineaOrden);
-            subtotal += item.Cantidad * item.PrecioUnitario;
         }
 
-        orden.SubTotal = subtotal;
-        orden.ImpuestoIva = Math.Round(subtotal * 0.13m, 2);
-        orden.CostoEnvio = req.CostoEnvio ?? 5m;
+        orden.SubTotal = subtotalValidado;
+        orden.ImpuestoIva = ivaValidado;
+        orden.CostoEnvio = envioValidado;
         orden.MontoTotal = orden.SubTotal + orden.ImpuestoIva + orden.CostoEnvio;
 
         _db.Ordenes.Add(orden);
@@ -200,11 +317,29 @@ public class OrdenesController : ControllerBase
     public async Task<IActionResult> TransicionarEstado(
         Guid id, [FromBody] TransicionEstadoRequest req, CancellationToken cancellationToken)
     {
-        var orden = await _db.Ordenes.FindAsync([id], cancellationToken);
+        // Una transición OMS y su asiento contable se deben confirmar juntos.
+        // PostgreSQL bloquea la fila ANTES de leer su estado, de forma que un
+        // segundo request concurrente observe el estado ya confirmado.
+        await using var transaction = _db.Database.IsRelational()
+            ? await _db.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+
+        var orden = _db.Database.IsRelational()
+            ? (await _db.Ordenes.FromSqlInterpolated(
+                $@"SELECT * FROM finance.ordenes WHERE ""Id"" = {id} FOR UPDATE")
+                .AsTracking().ToListAsync(cancellationToken)).SingleOrDefault()
+            : await _db.Ordenes.FindAsync([id], cancellationToken);
         if (orden == null) return NotFound(new { mensaje = $"Orden {id} no encontrada." });
 
         if (!Enum.TryParse<EstadoOrden>(req.NuevoEstado, true, out var nuevoEstado))
             return BadRequest(new { mensaje = $"Estado '{req.NuevoEstado}' no es válido." });
+
+        if (orden.Estado == nuevoEstado)
+            return Conflict(new
+            {
+                mensaje = "La orden ya se encuentra en el estado solicitado.",
+                codigo = "ESTADO_YA_APLICADO"
+            });
 
         // Validación de máquina de estados
         var transicionesValidas = new Dictionary<EstadoOrden, EstadoOrden[]>
@@ -223,9 +358,12 @@ public class OrdenesController : ControllerBase
         var estadoAnterior = orden.Estado;
         orden.Estado = nuevoEstado;
 
-        // Timestamps del ciclo OMS
-        switch (nuevoEstado)
+        // Un error del asiento deja intacto el estado en PostgreSQL.
+        try
         {
+            // Timestamps del ciclo OMS
+            switch (nuevoEstado)
+            {
             case EstadoOrden.Aprobada:
                 orden.FechaAprobacion = DateTime.UtcNow;
                 // Generar asiento contable automático al aprobar
@@ -234,14 +372,39 @@ public class OrdenesController : ControllerBase
                 break;
             case EstadoOrden.Enviada:
                 orden.FechaEnvio = DateTime.UtcNow;
-                orden.GuiaEnvio = req.GuiaEnvio ?? $"GU-{Random.Shared.Next(100000, 999999)}";
+                // Si OMS carece de guia externa, usar un identificador estable
+                // derivado del Id de la orden, no un valor aleatorio corto.
+                orden.GuiaEnvio = req.GuiaEnvio ?? $"GU-{orden.Id:N}";
                 break;
             case EstadoOrden.Entregada:
                 orden.FechaEntregaReal = DateTime.UtcNow;
                 break;
         }
 
-        await _db.SaveChangesAsync(cancellationToken);
+            await _db.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (
+            ex.InnerException is Npgsql.PostgresException pg &&
+            pg.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation &&
+            pg.ConstraintName == "UX_FIN08_asiento_venta_orden")
+        {
+            return Conflict(new
+            {
+                mensaje = "La venta ya fue contabilizada por otra solicitud; consulte el estado de la orden.",
+                codigo = "ASIENTO_VENTA_DUPLICADO"
+            });
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.StartsWith("La orden ya tiene un asiento Venta", StringComparison.Ordinal))
+        {
+            return Conflict(new
+            {
+                mensaje = "La orden ya contiene un asiento de Venta con datos incompatibles; requiere conciliación.",
+                codigo = "ASIENTO_VENTA_INCONSISTENTE"
+            });
+        }
 
         _logger.LogInformation("Orden {NumeroOrden}: {De} → {A}", orden.NumeroOrden, estadoAnterior, nuevoEstado);
 

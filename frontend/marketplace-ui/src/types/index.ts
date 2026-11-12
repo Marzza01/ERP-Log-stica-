@@ -399,6 +399,14 @@ export interface PartidaContable {
 // Pendiente=0, EnProceso=1, Completada=2, Fallida=3
 export type EstadoLiquidacion = 'Pendiente' | 'EnProceso' | 'Completada' | 'Fallida';
 
+export interface LiquidacionSplitDetalle {
+  splitPagoId: string;
+  ordenId: string;
+  montoTotal: number;
+  montoVendedor: number;
+  comisionMarketplace: number;
+}
+
 export interface Liquidacion {
   id: string;
   vendedorId: string;
@@ -409,6 +417,10 @@ export interface Liquidacion {
   estado: EstadoLiquidacion;
   fechaCreacion: string;
   fechaProcesado?: string;
+  // Opcionales para compatibilidad con historiales/API anteriores a FIN09.
+  cantidadSplits?: number;
+  desgloseVerificado?: boolean;
+  splits?: LiquidacionSplitDetalle[];
 }
 
 // ── PRODUCTOS ─────────────────────────────────────────────────────────────────
@@ -443,7 +455,8 @@ export interface Producto {
   dimensionesCm: string;
   unidadMedida: string;
   estadoProducto: string;
-  codigoEAN: string;
+  // PostgreSQL/catalog permite productos sin EAN físico verificado.
+  codigoEAN: string | null;
   descripcion: string;
   vendedorId: string;
   categoriaId: string;

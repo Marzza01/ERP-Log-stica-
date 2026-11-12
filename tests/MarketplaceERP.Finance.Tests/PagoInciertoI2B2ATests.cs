@@ -128,6 +128,7 @@ public sealed class PagoInciertoI2B2ATests
                 .ReturnsAsync(new PagoResult(false, null, "Rechazado"));
 
         var controller = new CheckoutController(orchestrator, finance, catalog,
+            new ContabilidadService(finance, NullLogger<ContabilidadService>.Instance),
             NullLogger<CheckoutController>.Instance)
         {
             ControllerContext = new ControllerContext

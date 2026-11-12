@@ -19,6 +19,33 @@ namespace MarketplaceERP.Catalog.Tests;
 public class RmaInventoryIntegrationTests
 {
     [Fact]
+    public async Task NumeroRMA_EstaDerivadoDelGuidUnico_YRespetaVarchar50()
+    {
+        await using var db = CrearDb();
+        var producto = CrearProducto("RMA-UNICO-QA");
+        db.Productos.Add(producto);
+        await db.SaveChangesAsync();
+
+        var sut = CrearRmaService(db);
+        var orden = Guid.NewGuid();
+        var primero = await sut.RegistrarSolicitudRmaAsync(
+            new RegistrarRmaRequest(orden, producto.Id, 1, "Ensayo A"));
+        var segundo = await sut.RegistrarSolicitudRmaAsync(
+            new RegistrarRmaRequest(orden, producto.Id, 1, "Ensayo B"));
+
+        Assert.NotEqual(primero.Id, segundo.Id);
+        Assert.NotEqual(primero.NumeroRMA, segundo.NumeroRMA);
+        Assert.All(new[] { primero, segundo }, rma =>
+        {
+            Assert.StartsWith("RMA-", rma.NumeroRMA);
+            Assert.EndsWith(rma.Id.ToString("N"), rma.NumeroRMA);
+            Assert.Equal(45, rma.NumeroRMA.Length);
+            Assert.True(rma.NumeroRMA.Length <= 50);
+        });
+        Assert.Equal(2, await db.DevolucionesRMA.CountAsync());
+    }
+
+    [Fact]
     public async Task ReStock_DebeAumentarUbicacionSeleccionadaYCrearMovimiento()
     {
         await using var db = CrearDb();

@@ -157,20 +157,118 @@ public class ContabilidadService : IContabilidadService
     /// <summary>
     /// Genera el asiento contable para una venta del OMS.
     /// Factura de Consumidor Final o Crédito Fiscal (diferencia en cuenta destino).
-    ///   DEBE: 1101 Caja / 1105 CxC por el total con IVA
-    ///   HABER: 4101 Ingresos por el subtotal sin IVA
+    ///   DEBE: 1101 Caja / 1105 CxC por el total de la orden
+    ///   HABER: 2108 Pasivo del vendedor, cuando existe SplitPago
+    ///   HABER: 4101 Comisión marketplace + envío (o subtotal + envío sin split)
     ///   HABER: 2105 IVA Débito Fiscal por el IVA
     /// </summary>
     public async Task<PartidaContable> GenerarAsientoVentaAsync(
         Guid ordenId, decimal montoVenta, decimal iva,
         string tipoComprobante, CancellationToken cancellationToken = default)
     {
-        decimal totalConIva = montoVenta + iva;
+        // El SplitPago distribuye el subtotal entre vendedor y marketplace.
+        // IVA y envío pertenecen a la orden y se contabilizan por separado.
+        var orden = await _dbContext.Ordenes.AsNoTracking()
+            .Include(o => o.SplitPago)
+            .SingleOrDefaultAsync(o => o.Id == ordenId, cancellationToken);
+        var envio = orden?.CostoEnvio ?? 0m;
+        var pasivoVendedor = 0m;
+        var ingresoVenta = montoVenta + envio;
+
+        if (orden?.SplitPago is { } split)
+        {
+            if (split.MontoTotal != orden.SubTotal ||
+                split.MontoTotal != montoVenta ||
+                split.MontoVendedor <= 0m ||
+                split.MontoMarketplace < 0m ||
+                split.MontoVendedor + split.MontoMarketplace != split.MontoTotal ||
+                orden.MontoTotal != montoVenta + iva + envio)
+            {
+                throw new InvalidOperationException(
+                    "El SplitPago no coincide con el subtotal o el total persistido de la orden; requiere conciliación manual.");
+            }
+
+            pasivoVendedor = split.MontoVendedor;
+            // La comisión es ingreso del marketplace; el envío conserva el
+            // tratamiento de ingreso adoptado en F149 hasta validación contable externa.
+            ingresoVenta = split.MontoMarketplace + envio;
+        }
+
+        decimal totalConIva = montoVenta + envio + iva;
+
+        // Proteccion para reintentos secuenciales. La concurrencia verdadera requiere
+        // adicionalmente un indice parcial UNIQUE (TipoOperacion=Venta, ReferenciaOrigenId)
+        // sobre una migracion validada contra datos historicos.
+        var existente = await _dbContext.PartidasContables
+            .Include(p => p.Lineas)
+            .FirstOrDefaultAsync(p => p.TipoOperacion == "Venta" &&
+                                      p.ReferenciaOrigenId == ordenId, cancellationToken);
+        if (existente is not null)
+        {
+            var ingreso = existente.Lineas
+                .Where(l => l.CodigoCuenta == INGRESOS_VENTAS).Sum(l => l.Haber);
+            var ivaRegistrado = existente.Lineas
+                .Where(l => l.CodigoCuenta == IVA_DEBITO).Sum(l => l.Haber);
+            var pasivoRegistrado = existente.Lineas
+                .Where(l => l.CodigoCuenta == PASIVO_VENDEDORES).Sum(l => l.Haber);
+            if (existente.TotalDebe != totalConIva ||
+                existente.TotalHaber != totalConIva ||
+                ingreso != ingresoVenta ||
+                ivaRegistrado != iva ||
+                pasivoRegistrado != pasivoVendedor)
+                throw new InvalidOperationException(
+                    "La orden ya tiene un asiento Venta con importes diferentes.");
+
+            return existente;
+        }
+
         bool esFacturaCredito = tipoComprobante.Contains("Crédito", StringComparison.OrdinalIgnoreCase)
                              || tipoComprobante.Contains("Credito", StringComparison.OrdinalIgnoreCase)
                              || tipoComprobante.Contains("CCF", StringComparison.OrdinalIgnoreCase);
         string cuentaActivo = esFacturaCredito ? CXC_CLIENTES : CAJA_BANCOS;
         string numeroPartida = await GenerarNumeroPartidaAsync("VTA", cancellationToken);
+
+        var lineas = new List<LineaPartidaContable>
+        {
+            new() { Id = Guid.NewGuid(), CodigoCuenta = cuentaActivo,
+                    NombreCuenta = NombresCuenta[cuentaActivo],
+                    Debe = totalConIva, Haber = 0m,
+                    Glosa = $"Cobro venta {tipoComprobante}" },
+        };
+
+        if (pasivoVendedor > 0m)
+        {
+            lineas.Add(new LineaPartidaContable
+            {
+                Id = Guid.NewGuid(),
+                CodigoCuenta = PASIVO_VENDEDORES,
+                NombreCuenta = NombresCuenta[PASIVO_VENDEDORES],
+                Debe = 0m,
+                Haber = pasivoVendedor,
+                Glosa = $"Obligación pendiente con vendedor de orden {orden?.NumeroOrden ?? ordenId.ToString("N")}"
+            });
+        }
+
+        lineas.Add(new LineaPartidaContable
+        {
+            Id = Guid.NewGuid(),
+            CodigoCuenta = INGRESOS_VENTAS,
+            NombreCuenta = NombresCuenta[INGRESOS_VENTAS],
+            Debe = 0m,
+            Haber = ingresoVenta,
+            Glosa = pasivoVendedor > 0m
+                ? "Comisión marketplace más envío"
+                : "Ingreso neto por venta y envío"
+        });
+        lineas.Add(new LineaPartidaContable
+        {
+            Id = Guid.NewGuid(),
+            CodigoCuenta = IVA_DEBITO,
+            NombreCuenta = NombresCuenta[IVA_DEBITO],
+            Debe = 0m,
+            Haber = iva,
+            Glosa = "IVA Débito Fiscal 13%"
+        });
 
         var partida = new PartidaContable
         {
@@ -184,21 +282,7 @@ public class ContabilidadService : IContabilidadService
             TotalDebe = totalConIva,
             TotalHaber = totalConIva,
             FechaRegistro = DateTime.UtcNow,
-            Lineas = new List<LineaPartidaContable>
-            {
-                new() { Id = Guid.NewGuid(), CodigoCuenta = cuentaActivo,
-                        NombreCuenta = NombresCuenta[cuentaActivo],
-                        Debe = totalConIva, Haber = 0m,
-                        Glosa = $"Cobro venta {tipoComprobante}" },
-                new() { Id = Guid.NewGuid(), CodigoCuenta = INGRESOS_VENTAS,
-                        NombreCuenta = NombresCuenta[INGRESOS_VENTAS],
-                        Debe = 0m, Haber = montoVenta,
-                        Glosa = "Ingreso neto por venta" },
-                new() { Id = Guid.NewGuid(), CodigoCuenta = IVA_DEBITO,
-                        NombreCuenta = NombresCuenta[IVA_DEBITO],
-                        Debe = 0m, Haber = iva,
-                        Glosa = "IVA Débito Fiscal 13%" },
-            }
+            Lineas = lineas
         };
 
         _dbContext.PartidasContables.Add(partida);

@@ -37,7 +37,9 @@ const vite = spawn(process.execPath, [
 try {
   await ready(backend + '/health/ready');
   await ready(origin + '/login');
-  browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  browser = await chromium.launch({ headless: true,
+    channel: process.env.F101_CHROME_CHANNEL || undefined,
+    args: ['--no-sandbox'] });
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -184,14 +186,16 @@ try {
   await page.getByPlaceholder('nombre@ejemplo.com').fill(sellerEmail);
   await page.locator('input[type=password]').fill(sellerPassword);
   await page.getByRole('button', { name: 'Ingresar al sistema' }).click();
-  await page.waitForURL('**/ordenes', { timeout: 15000 });
+  await page.waitForURL('**/productos', { timeout: 15000 });
+  await page.goto(origin + '/ordenes', { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: 'Acceso no autorizado' }).waitFor({ timeout: 15000 });
   await page.goto(origin + '/wms', { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'Acceso no autorizado' }).waitFor({ timeout: 15000 });
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
   await page.waitForURL('**/login', { timeout: 15000 });
   assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), null);
   console.log('P2_LOCAL_SELLER_EVIDENCE=' + JSON.stringify({
-    completed: true, realJwt: true, sellerUiRoute: '/ordenes',
+    completed: true, realJwt: true, sellerUiRoute: '/productos',
     adminRouteDenied: true, fixture: 'disposable-postgresql-only',
     payments: 'not-executed', stagingTouched: false, productionTouched: false,
   }));

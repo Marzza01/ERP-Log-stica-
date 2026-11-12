@@ -57,6 +57,7 @@ public sealed class CheckoutContratoI2ATests
                 Stock.Object, Comision.Object, Pago.Object, Finance,
                 NullLogger<CheckoutOrchestrator>.Instance);
             Controller = new CheckoutController(orquestador, Finance, Catalog,
+                new ContabilidadService(Finance, NullLogger<ContabilidadService>.Instance),
                 NullLogger<CheckoutController>.Instance);
             EstablecerCompradorAutenticado();
         }

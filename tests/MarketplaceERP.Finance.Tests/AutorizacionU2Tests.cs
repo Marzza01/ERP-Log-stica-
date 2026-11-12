@@ -93,7 +93,7 @@ public class AutorizacionU2Tests
 
     [Theory]
     [InlineData(typeof(ComprasController), "ListarPO", false)]
-    [InlineData(typeof(ComprasController), "EjecutarMatch", true)]
+    [InlineData(typeof(ComprasController), "EjecutarMatch", false)]
     [InlineData(typeof(ContabilidadController), "LibroDiario", false)]
     [InlineData(typeof(ContabilidadController), "AsientoManual", true)]
     [InlineData(typeof(LiquidacionesController), "Historial", false)]
@@ -185,15 +185,36 @@ public class AutorizacionU2Tests
         {
             actions++;
             var publicLogin = controller == typeof(AuthController) && action.Name == nameof(AuthController.Login);
-            var buyerCheckout = controller == typeof(CheckoutController) && action.Name == nameof(CheckoutController.ProcesarCheckout);
+            // Las dos acciones V2 solo existen en sandbox QA y conservan
+            // exactamente la misma matriz de Comprador que checkout V1.
+            // El acceso de Admin, Vendedor y anónimo debe seguir prohibido.
+            var buyerCheckout =
+                (controller == typeof(CheckoutController) &&
+                    action.Name == nameof(CheckoutController.ProcesarCheckout)) ||
+                (controller == typeof(CheckoutV2QaQuoteController) &&
+                    action.Name == nameof(CheckoutV2QaQuoteController.CotizarSoloQa)) ||
+                (controller == typeof(CheckoutV2QaSimulatedController) &&
+                    action.Name == nameof(CheckoutV2QaSimulatedController.ComprarSimulado));
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
             var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
+            var sellerOwnOrders = controller == typeof(OrdenesController) && (
+                action.Name == nameof(OrdenesController.ListarMisOrdenes) ||
+                action.Name == nameof(OrdenesController.ObtenerMiOrden));
+            if (sellerOwnOrders)
+                Assert.Equal("Vendedor", action.GetCustomAttribute<AuthorizeAttribute>()?.Roles);
             var isProductController = controller == typeof(ProductosController);
+            if (isProductController && action.Name == nameof(ProductosController.ValidarCsv))
+            {
+                // La simulación no escribe, pero sigue recibiendo archivos del usuario:
+                // acceso explícito solo para Admin, nunca Vendedor/Comprador.
+                Assert.Equal("Admin", action.GetCustomAttribute<AuthorizeAttribute>()?.Roles);
+            }
             var isProductCatalogRead = isProductController && (
                 action.Name == nameof(ProductosController.GetPublicados) ||
                 action.Name == nameof(ProductosController.Buscar) ||
                 action.Name == nameof(ProductosController.GetById));
             var isProductSellerOp = isProductController && (
+                action.Name == nameof(ProductosController.OpcionesAlta) ||
                 action.Name == nameof(ProductosController.Create) ||
                 action.Name == nameof(ProductosController.Update) ||
                 action.Name == nameof(ProductosController.Delete) ||
@@ -201,7 +222,7 @@ public class AutorizacionU2Tests
                 action.Name == nameof(ProductosController.GetAlertasStock) ||
                 action.Name == nameof(ProductosController.GetCatalogoB2B));
 
-            var allowsSeller = publicLogin || isProductCatalogRead || isProductSellerOp;
+            var allowsSeller = publicLogin || isProductCatalogRead || isProductSellerOp || sellerOwnOrders;
             var allowsBuyer = publicLogin || buyerCheckout || buyerTracking || buyerOrder || isProductCatalogRead;
 
             var metadata = controller.GetCustomAttributes(inherit: true).Concat(action.GetCustomAttributes(inherit: true)).ToArray();
@@ -215,7 +236,8 @@ public class AutorizacionU2Tests
                 Assert.Equal(publicLogin ? 200 : 401, await Probe(controller, action.Name, null));
                 Assert.Equal(allowsSeller ? 200 : 403, await Probe(controller, action.Name, "Vendedor"));
                 Assert.Equal(allowsBuyer ? 200 : 403, await Probe(controller, action.Name, "Comprador"));
-                Assert.Equal(buyerCheckout ? 403 : 200, await Probe(controller, action.Name, "Admin"));
+                Assert.Equal(buyerCheckout || sellerOwnOrders ? 403 : 200,
+                    await Probe(controller, action.Name, "Admin"));
                 if (!publicLogin)
                 {
                     Assert.Equal(401, await Probe(controller, action.Name, "Admin", "expired"));
@@ -223,9 +245,14 @@ public class AutorizacionU2Tests
                 }
             }
         }
-        Assert.Equal(23, controllers.Length);
-        Assert.Equal(84, actions);
-        Assert.Equal(85, routes); // Productos/GetAlertasStock has two aliases.
+        // Base original: 23 controladores / 85 acciones / 86 rutas.
+        // SOLO en sandbox: +2 endpoints QA de comprador y +1 endpoint
+        // de referencias reales de producto para Admin/Vendedor.
+        // Ninguna autorización queda implícita.
+        Assert.Equal(25, controllers.Length);
+        // F103 agrega dos GET exclusivos de Vendedor sin ampliar rutas Admin.
+        Assert.Equal(90, actions);
+        Assert.Equal(91, routes); // Productos/GetAlertasStock tiene dos alias.
     }
 
     [Theory]

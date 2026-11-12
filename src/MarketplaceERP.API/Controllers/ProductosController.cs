@@ -8,6 +8,7 @@ using MarketplaceERP.API.Contracts;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
+using MarketplaceERP.Core.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -24,15 +25,18 @@ namespace MarketplaceERP.API.Controllers;
 public class ProductosController : ControllerBase
 {
     private readonly CatalogDbContext _dbContext;
+    private readonly CoreDbContext? _coreDb;
     private readonly ICatalogImportService _importService;
     private readonly ILogger<ProductosController> _logger;
 
     public ProductosController(
         CatalogDbContext dbContext,
         ICatalogImportService importService,
-        ILogger<ProductosController> logger)
+        ILogger<ProductosController> logger,
+        CoreDbContext? coreDb = null)
     {
         _dbContext = dbContext;
+        _coreDb = coreDb;
         _importService = importService;
         _logger = logger;
     }
@@ -265,6 +269,32 @@ public class ProductosController : ControllerBase
     }
 
     /// <summary>
+    /// Revisa el esquema y valores del CSV sin guardar productos ni tocar el WMS.
+    /// La simulación no comprueba constraints de PostgreSQL ni reserva inventario.
+    /// </summary>
+    [HttpPost("validar-csv")]
+    [Authorize(Roles = "Admin")]
+    [RequestSizeLimit(10_000_000)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ValidarCsv(
+        IFormFile archivo, CancellationToken cancellationToken)
+    {
+        if (archivo is null || archivo.Length == 0 || archivo.Length > 8_000_000)
+            return BadRequest(new { mensaje = "El CSV debe contener entre 1 byte y 8 MB." });
+
+        using var stream = archivo.OpenReadStream();
+        var resultado = await _importService.ValidarCatalogoCsvAsync(stream, cancellationToken);
+        return Ok(new
+        {
+            Modo = "SoloValidacion",
+            NoModificaDatos = true,
+            Advertencia = "Solo se validan encabezados y campos CSV; no se comprueban restricciones o concurrencia de la base de datos.",
+            Resultado = resultado
+        });
+    }
+
+    /// <summary>
     /// Carga masiva de los 500 productos mediante archivo CSV multipart (PDF 2 - Sección 3).
     /// </summary>
     [HttpPost("importar-csv")]
@@ -364,6 +394,41 @@ public class ProductosController : ControllerBase
     /// <summary>
     /// Publica un nuevo producto. Requiere rol Vendedor o Admin.
     /// </summary>
+    /// <summary>
+    /// Solo datos de referencia reales para el formulario de alta. No
+    /// inventar vendedores/categorias ni filtrar productos por nombres.
+    /// Vendedor solo recibe su identidad; Admin solo vendedores activos.
+    /// </summary>
+    [HttpGet("opciones-alta")]
+    [Authorize(Roles = "Admin,Vendedor")]
+    public async Task<IActionResult> OpcionesAlta(
+        [FromServices] CoreDbContext core, CancellationToken ct)
+    {
+        var esAdmin = User.IsInRole("Admin");
+        Guid? vendedorActual = null;
+        if (!esAdmin)
+        {
+            vendedorActual = ObtenerVendedorIdActual();
+            if (!vendedorActual.HasValue) return Forbid();
+        }
+
+        var vendedores = await core.Vendedores.AsNoTracking()
+            .Where(v => v.EstaActivo && (esAdmin ||
+                (vendedorActual.HasValue && v.Id == vendedorActual.Value)))
+            .OrderBy(v => v.NombreEmpresa)
+            .Select(v => new { id = v.Id, nombre = v.NombreEmpresa })
+            .ToListAsync(ct);
+        var categorias = await core.Categorias.AsNoTracking()
+            .OrderBy(c => c.Nombre)
+            .Select(c => new { id = c.Id, nombre = c.Nombre })
+            .ToListAsync(ct);
+
+        if (!esAdmin && vendedores.Count != 1)
+            return Forbid();
+
+        return Ok(new { vendedores, categorias });
+    }
+
     [HttpPost]
     [Authorize(Roles = "Admin,Vendedor")]
     [ProducesResponseType(typeof(Producto), StatusCodes.Status201Created)]
@@ -372,6 +437,16 @@ public class ProductosController : ControllerBase
     {
         if (producto is null)
             return BadRequest(new { mensaje = "El producto no puede ser nulo." });
+
+        // Los GUID de plantilla no representan registros Core reales.
+        // Esto es una barrera mínima de integridad, no sustituye
+        // validación de existencia/autorización de Core en cada POST.
+        var vendedorPlantilla = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var categoriaPlantilla = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        if (producto.VendedorId == vendedorPlantilla ||
+            producto.CategoriaId == Guid.Empty ||
+            producto.CategoriaId == categoriaPlantilla)
+            return BadRequest(new { mensaje = "Vendedor o categoría de plantilla/no definida." });
 
         var vendedorId = producto.VendedorId;
         if (!User.IsInRole("Admin"))
@@ -385,6 +460,28 @@ public class ProductosController : ControllerBase
                 return Forbid();
 
             vendedorId = vendedorAutenticado.Value;
+        }
+
+        // Un Admin sí debe indicar un vendedor concreto de Core; un
+        // Vendedor normal se deriva de su identidad autenticada.
+        if (vendedorId == Guid.Empty)
+            return BadRequest(new { mensaje = "Debe seleccionar un vendedor válido." });
+
+        // En HTTP real siempre debe haber Core registrado: si no lo hay,
+        // fallar cerrado. Los tests unitarios antiguos pueden instanciar el
+        // controlador directamente sin IoC y se verifican por separado.
+        if (_coreDb is null && HttpContext?.RequestServices is not null)
+            return StatusCode(503, new { mensaje = "Validación de Core no disponible." });
+
+        if (_coreDb is not null)
+        {
+            var vendedorActivo = await _coreDb.Vendedores.AsNoTracking()
+                .AnyAsync(v => v.Id == vendedorId && v.EstaActivo);
+            var categoriaConNombre = await _coreDb.Categorias.AsNoTracking()
+                .AnyAsync(c => c.Id == producto.CategoriaId &&
+                    c.Nombre == producto.CategoriaNombre);
+            if (!vendedorActivo || !categoriaConNombre)
+                return BadRequest(new { mensaje = "El vendedor o la categoría no existen en Core." });
         }
 
         // Lista blanca de campos maestros. Producto es una entidad EF con

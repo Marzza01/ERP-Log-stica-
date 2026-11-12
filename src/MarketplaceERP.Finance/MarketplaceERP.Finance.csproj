@@ -24,6 +24,23 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
   </ItemGroup>
 
+  <!-- La migración QA previa se conserva para los ensayos históricos, pero NO
+       se compila en Finance desplegable. La nueva migración tiene ID distinto. -->
+  <ItemGroup Condition="'$(LegacyQaFinanceMigration)' != 'true'">
+    <Compile Remove="Migrations\20261108060000_QaMultiSkuIntentoReservas.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(LegacyQaFinanceMigration)' == 'true'">
+    <Compile Remove="Migrations\20261108060000_IntentoReservasMultiSku.cs" />
+  </ItemGroup>
+
+  <!-- La auditoria QA original (incluido Designer) se conserva como fuente.
+       NUNCA se incluye en la asamblea desplegable; la nueva migracion tiene
+       nombre y tabla de producto distintos, con Down fail-closed. -->
+  <ItemGroup>
+    <Compile Remove="Migrations\20261109203804_Qa09CancelacionPreEnvioAuditable.cs" />
+    <Compile Remove="Migrations\20261109203804_Qa09CancelacionPreEnvioAuditable.Designer.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- Finance puede ver Shared y Core (para las interfaces y DTOs compartidos) -->
     <!-- REGLA DE ORO: Finance NO puede referenciar Catalog -->

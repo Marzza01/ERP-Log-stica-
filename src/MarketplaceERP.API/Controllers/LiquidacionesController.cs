@@ -3,6 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
+using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Finance.Services;
 using MarketplaceERP.API.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -108,19 +109,7 @@ public class LiquidacionesController : ControllerBase
     public async Task<IActionResult> Historial([FromQuery] Guid? vendedorId = null, CancellationToken ct = default)
     {
         var historial = await _liquidaciones.ObtenerHistorialAsync(vendedorId, ct);
-        var result = historial.Select(l => new
-        {
-            id = l.Id,
-            vendedorId = l.VendedorId,
-            periodo = l.FechaCreacion.ToString("'Semana' WW (dd MMM - ") + l.FechaLiquidacion?.ToString("dd MMM yyyy)") ?? l.FechaCreacion.ToString("'Período' yyyy-MM"),
-            montoVentas = l.MontoLiquidar / 0.9m,
-            comisionMarketplace = l.MontoLiquidar / 0.9m * 0.1m,
-            montoLiquidar = l.MontoLiquidar,
-            estado = l.Estado.ToString(),
-            fechaCreacion = l.FechaCreacion,
-            fechaProcesado = l.FechaLiquidacion,
-            transferenciaBancariaConfirmada = false
-        }).ToList();
+        var result = historial.Select(ResumenConDesglose).ToList();
         return Ok(result);
     }
 
@@ -154,21 +143,58 @@ public class LiquidacionesController : ControllerBase
     {
         var historial = await _liquidaciones.ObtenerHistorialAsync(null, ct);
         var pendientes = historial
-            .Where(l => l.Estado == MarketplaceERP.Finance.Entities.EstadoLiquidacion.Pendiente)
-            .Select(l => new
-            {
-                id = l.Id,
-                vendedorId = l.VendedorId,
-                periodo = l.FechaCreacion.ToString("yyyy-MM"),
-                montoVentas = l.MontoLiquidar / 0.9m,
-                comisionMarketplace = l.MontoLiquidar / 0.9m * 0.1m,
-                montoLiquidar = l.MontoLiquidar,
-                estado = l.Estado.ToString(),
-                fechaCreacion = l.FechaCreacion,
-                fechaProcesado = l.FechaLiquidacion,
-                transferenciaBancariaConfirmada = false
-            }).ToList();
+            .Where(l => l.Estado == EstadoLiquidacion.Pendiente)
+            .Select(ResumenConDesglose).ToList();
         return Ok(pendientes);
+    }
+
+    /// <summary>
+    /// El desglose se obtiene de la FK 1:N, NO de la antigua ancla 1:1.
+    /// Conserva los campos JSON históricos para clientes previos, pero identifica
+    /// explícitamente una relación sin backfill o con importes incompatibles.
+    /// </summary>
+    private static object ResumenConDesglose(Liquidacion l)
+    {
+        var splits = l.SplitsPago
+            .OrderBy(s => s.OrdenId)
+            .ThenBy(s => s.Id)
+            .ToList();
+        var montoVendedor = splits.Sum(s => s.MontoVendedor);
+        var verificado = splits.Count > 0 &&
+            montoVendedor == l.MontoLiquidar &&
+            splits.All(s => s.LiquidacionId == l.Id
+                && s.Orden is not null && s.Orden.VendedorId == l.VendedorId
+                && s.MontoTotal > 0m && s.MontoVendedor > 0m
+                && s.MontoMarketplace >= 0m
+                && Math.Abs(s.MontoTotal - s.MontoVendedor - s.MontoMarketplace) <= 0.01m);
+        // Únicamente por compatibilidad de la respuesta antigua: si falta el
+        // backfill, se marcan las cifras como NO verificadas, nunca como pagos.
+        var ventas = verificado ? splits.Sum(s => s.MontoTotal) : l.MontoLiquidar / 0.9m;
+        var comision = verificado ? splits.Sum(s => s.MontoMarketplace)
+            : l.MontoLiquidar / 0.9m * 0.1m;
+        return new
+        {
+            id = l.Id,
+            vendedorId = l.VendedorId,
+            periodo = l.FechaCreacion.ToString("yyyy-MM"),
+            montoVentas = ventas,
+            comisionMarketplace = comision,
+            montoLiquidar = l.MontoLiquidar,
+            estado = l.Estado.ToString(),
+            fechaCreacion = l.FechaCreacion,
+            fechaProcesado = l.FechaLiquidacion,
+            cantidadSplits = splits.Count,
+            desgloseVerificado = verificado,
+            splits = splits.Select(s => new
+            {
+                splitPagoId = s.Id,
+                ordenId = s.OrdenId,
+                montoTotal = s.MontoTotal,
+                montoVendedor = s.MontoVendedor,
+                comisionMarketplace = s.MontoMarketplace
+            }).ToList(),
+            transferenciaBancariaConfirmada = false
+        };
     }
 }
 

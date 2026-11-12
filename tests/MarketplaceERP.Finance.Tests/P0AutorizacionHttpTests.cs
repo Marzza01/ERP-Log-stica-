@@ -14,6 +14,8 @@ using MarketplaceERP.Finance.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -147,6 +149,91 @@ public class P0AutorizacionHttpTests
         Assert.Equal(0, await finance.FacturasProveedor.CountAsync());
         Assert.Equal(0, await finance.MatchesTridireccionales.CountAsync());
         Assert.Equal(0, await finance.PartidasContables.CountAsync());
+    }
+
+    [Fact]
+    public async Task AllMappedPrivateHttpRoutes_RejectAnonymousRequests()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Secret));
+        using var server = new TestServer(new WebHostBuilder()
+            .ConfigureServices(services =>
+            {
+                services.AddLogging();
+                services.AddDbContext<FinanceDbContext>(o =>
+                    o.UseInMemoryDatabase("p0-route-finance-" + suffix));
+                services.AddDbContext<CoreDbContext>(o =>
+                    o.UseInMemoryDatabase("p0-route-core-" + suffix));
+                services.AddSingleton(Mock.Of<ITresWayMatchingService>());
+                services.AddSingleton(Mock.Of<ILiquidacionService>());
+                services.AddSingleton(new PaymentOperationsMode(false));
+                services.AddSingleton(Mock.Of<IContabilidadService>());
+                services.AddSingleton(Mock.Of<IInventoryService>());
+                services.AddMarketplaceSecurity(new JwtSettings
+                {
+                    Key = Secret, Issuer = Issuer, Audience = Audience,
+                    ExpirationMinutes = 5
+                });
+                services.AddControllers().AddApplicationPart(typeof(ComprasController).Assembly);
+            })
+            .Configure(app =>
+            {
+                app.UseRouting();
+                app.UseAuthentication();
+                app.UseAuthorization();
+                app.UseEndpoints(endpoints => endpoints.MapControllers());
+            }));
+
+        var dataSources = server.Services.GetServices<EndpointDataSource>();
+        var endpoints = dataSources.SelectMany(x => x.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Where(x => x.Metadata.GetMetadata<IAllowAnonymous>() is null)
+            .ToArray();
+        Assert.NotEmpty(endpoints);
+
+        using var client = server.CreateClient();
+        var checkedRoutes = 0;
+        foreach (var endpoint in endpoints)
+        {
+            var raw = endpoint.RoutePattern.RawText ?? "/";
+            var path = System.Text.RegularExpressions.Regex.Replace(raw, @"\{([^{}]+)\}", match =>
+            {
+                var parameter = match.Groups[1].Value;
+                var optional = parameter.EndsWith("?", StringComparison.Ordinal);
+                var clean = optional ? parameter[..^1] : parameter;
+                if (optional) return string.Empty;
+
+                var pieces = clean.Split(':', 2);
+                var name = pieces[0].TrimStart('*');
+                var constraint = pieces.Length > 1 ? pieces[1] : string.Empty;
+                if (constraint.Contains("guid", StringComparison.OrdinalIgnoreCase)
+                    || name.EndsWith("Id", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("id", StringComparison.OrdinalIgnoreCase))
+                    return Guid.Empty.ToString();
+                if (constraint.Contains("int", StringComparison.OrdinalIgnoreCase)
+                    || constraint.Contains("long", StringComparison.OrdinalIgnoreCase))
+                    return "1";
+                return "test";
+            });
+            if (!path.StartsWith("/", StringComparison.Ordinal)) path = "/" + path;
+
+            var methods = endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods
+                ?? new[] { "GET" };
+            foreach (var method in methods.Where(x => x is not "OPTIONS" and not "TRACE"))
+            {
+                using var request = new HttpRequestMessage(new HttpMethod(method), path);
+                if (method is "POST" or "PUT" or "PATCH")
+                    request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+
+                using var response = await client.SendAsync(request);
+                Assert.True(response.StatusCode == HttpStatusCode.Unauthorized,
+                    $"Anonymous request reached {method} {path}: {(int)response.StatusCode}");
+                checkedRoutes++;
+            }
+        }
+
+        Assert.True(checkedRoutes >= 80,
+            $"Expected at least 80 private HTTP routes; only {checkedRoutes} were checked.");
     }
 
     private static string CrearJwt(string rol, SecurityKey key)

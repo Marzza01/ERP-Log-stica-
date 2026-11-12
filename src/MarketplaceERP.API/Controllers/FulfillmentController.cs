@@ -46,9 +46,14 @@ public class FulfillmentController : ControllerBase
         if (orden is null)
             return NotFound(new { mensaje = $"Orden con ID {ordenId} no encontrada." });
 
+        // Solo una orden aprobada puede entrar a preparación. Evita reactivar canceladas
+        // o entregadas y rechaza solicitudes repetidas sobre EnProceso.
+        if (orden.Estado != EstadoOrden.Aprobada)
+            return Conflict(new { mensaje = "Solo una orden aprobada puede generar una PickList." });
+
         var itemsSolicitud = orden.Items.Select(i => new ItemPickingSolicitud(
             ProductoId: i.ProductoId,
-            Sku: $"SKU-{i.ProductoId.ToString()[..8].ToUpper()}",
+            Sku: i.SkuReferencia,
             NombreProducto: i.NombreProducto,
             Cantidad: i.Cantidad
         )).ToList();
@@ -90,7 +95,33 @@ public class FulfillmentController : ControllerBase
         [FromBody] List<ConfirmarItemPickingRequest> confirmaciones,
         CancellationToken cancellationToken)
     {
-        var pickList = await _fulfillmentService.ConfirmarPickingAsync(pickListId, confirmaciones, cancellationToken);
+        PickList? pickList;
+        try
+        {
+            pickList = await _fulfillmentService.ConfirmarPickingAsync(
+                pickListId, confirmaciones, cancellationToken);
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.StartsWith("Una PickList completada no admite modificaciones.",
+                StringComparison.Ordinal))
+        {
+            return Conflict(new
+            {
+                mensaje = ex.Message,
+                codigo = "PICKING_COMPLETADO"
+            });
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.StartsWith("Cantidad de picking inválida",
+                StringComparison.Ordinal))
+        {
+            return BadRequest(new
+            {
+                mensaje = ex.Message,
+                codigo = "PICKING_CANTIDAD_INVALIDA"
+            });
+        }
+
         if (pickList is null)
             return NotFound(new { mensaje = "Pick List no encontrada." });
 
@@ -119,7 +150,29 @@ public class FulfillmentController : ControllerBase
         if (orden is null)
             return NotFound(new { mensaje = "Orden no encontrada." });
 
-        var paquete = await _fulfillmentService.EmpacarYRotularAsync(request, cancellationToken);
+        // El identificador del cuerpo nunca debe dirigir WMS a otra orden.
+        if (request.OrdenId != ordenId)
+            return BadRequest(new { mensaje = "OrdenId del cuerpo no coincide con la ruta." });
+
+        if (request.NumeroOrden != orden.NumeroOrden)
+            return BadRequest(new { mensaje = "NumeroOrden del cuerpo no coincide con la orden." });
+
+        if (orden.Estado != EstadoOrden.EnProceso)
+            return Conflict(new { mensaje = "Solo una orden en preparación puede empacarse." });
+
+        PaqueteDespacho paquete;
+        try
+        {
+            paquete = await _fulfillmentService.EmpacarYRotularAsync(request, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new
+            {
+                mensaje = ex.Message,
+                codigo = "EMPAQUE_CONFLICTO"
+            });
+        }
 
         // Asignar guía y transportista a la orden en el OMS
         orden.GuiaEnvio = paquete.NumeroGuia;

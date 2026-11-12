@@ -49,53 +49,76 @@ public class LiquidacionService : ILiquidacionService
         if (vendedorId == Guid.Empty)
             throw new ArgumentException("El vendedor de la liquidación es obligatorio.", nameof(vendedorId));
 
-        // Finance almacena una relación Liquidacion <-> SplitPago 1:1. No se puede
-        // agrupar más de un split en MontoLiquidar sin cambiar el modelo y su
-        // migración: los splits no referenciados quedarían disponibles de nuevo.
-        // Emitir una liquidación por split hasta implementar 1:N de forma atómica.
-        var splitPendiente = await _db.SplitsPago
+        // Misma transacción: se bloquea por vendedor antes de consultar splits
+        // para evitar que dos instancias reclamen el mismo lote.
+        await using var transaction = _db.Database.IsRelational()
+            ? await _db.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+
+        if (_db.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var lockKey = BitConverter.ToInt64(vendedorId.ToByteArray(), 0);
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({lockKey})", cancellationToken);
+        }
+
+        var pendientes = await _db.SplitsPago
+            .Include(s => s.Orden)
             .Where(s => s.Orden.VendedorId == vendedorId
-                     && s.Liquidacion == null
+                     && s.LiquidacionId == null
                      && s.Orden.Estado == EstadoOrden.Entregada)
             .OrderBy(s => s.FechaProcesado)
             .ThenBy(s => s.Id)
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
 
-        if (splitPendiente is null)
+        if (pendientes.Count == 0)
             throw new InvalidOperationException(
                 $"El vendedor {vendedorId} no tiene saldos pendientes de liquidación.");
 
-        if (splitPendiente.MontoVendedor <= 0m)
-            throw new InvalidOperationException("El split pendiente tiene un monto vendedor inválido.");
+        if (pendientes.Any(s => s.MontoVendedor <= 0m ||
+                                s.Orden.VendedorId != vendedorId ||
+                                s.Orden.Moneda != "USD"))
+            throw new InvalidOperationException(
+                "El lote contiene splits de importe, propietario o moneda inconsistentes.");
 
         var liquidacion = new Liquidacion
         {
             Id = Guid.NewGuid(),
             VendedorId = vendedorId,
-            SplitPagoId = splitPendiente.Id,
-            MontoLiquidar = splitPendiente.MontoVendedor,
+            // Ancla 1:1 de lectura histórica hasta contraer el esquema.
+            SplitPagoId = pendientes[0].Id,
+            MontoLiquidar = pendientes.Sum(s => s.MontoVendedor),
             Moneda = "USD",
             Estado = EstadoLiquidacion.Pendiente,
             FechaCreacion = DateTime.UtcNow,
         };
 
+        // Cada split pertenece a una única liquidación gracias a su FK.
+        // El vínculo y la liquidación se insertan en una sola transacción.
         _db.Liquidaciones.Add(liquidacion);
+        foreach (var split in pendientes)
+        {
+            split.LiquidacionId = liquidacion.Id;
+            split.LiquidacionGrupo = liquidacion;
+        }
+
         try
         {
-            // El índice UNIQUE de finance.liquidaciones.SplitPagoId impide que
-            // dos solicitudes concurrentes liquiden el mismo split en PostgreSQL.
             await _db.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
         }
         catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException pg &&
-            pg.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation)
+            (pg.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation ||
+             pg.SqlState == Npgsql.PostgresErrorCodes.ForeignKeyViolation))
         {
             throw new InvalidOperationException(
-                "El split ya fue reclamado por otra liquidación; consulte el historial antes de reintentar.", ex);
+                "El lote fue reclamado o modificado por otra solicitud; consulte el historial.", ex);
         }
 
-        _logger.LogInformation("Liquidación {Id} generada para vendedor {VendedorId}. Monto={Monto:C}",
-            liquidacion.Id, vendedorId, liquidacion.MontoLiquidar);
-
+        _logger.LogInformation(
+            "Liquidación {Id} agrupada para vendedor {VendedorId}. Splits={Count}, Monto={Monto:C}",
+            liquidacion.Id, vendedorId, pendientes.Count, liquidacion.MontoLiquidar);
         return liquidacion;
     }
 
@@ -121,24 +144,28 @@ public class LiquidacionService : ILiquidacionService
             throw new InvalidOperationException(
                 $"La liquidación {liquidacionId} ya está en estado {liquidacion.Estado}.");
 
-        // Verificar nuevamente el split original antes de contabilizar; los
-        // registros históricos creados con la suma incorrecta quedan bloqueados.
-        var split = await _db.SplitsPago.AsNoTracking()
-            .Where(s => s.Id == liquidacion.SplitPagoId)
+        // La FK 1:N es la única fuente autoritativa. Un ancla histórica
+        // sin backfill NO permite desembolso ni siquiera en simulación.
+        var splits = await _db.SplitsPago.AsNoTracking()
+            .Where(s => s.LiquidacionId == liquidacion.Id)
             .Select(s => new
             {
+                s.Id,
                 s.MontoVendedor,
                 VendedorId = s.Orden.VendedorId,
-                EstadoOrden = s.Orden.Estado
+                EstadoOrden = s.Orden.Estado,
+                Moneda = s.Orden.Moneda
             })
-            .SingleOrDefaultAsync(cancellationToken);
-        if (split is null ||
-            split.VendedorId != liquidacion.VendedorId ||
-            split.EstadoOrden != EstadoOrden.Entregada ||
-            split.MontoVendedor <= 0m ||
-            split.MontoVendedor != liquidacion.MontoLiquidar)
+            .ToListAsync(cancellationToken);
+        if (splits.Count == 0 ||
+            !splits.Any(s => s.Id == liquidacion.SplitPagoId) ||
+            splits.Any(s => s.VendedorId != liquidacion.VendedorId ||
+                            s.EstadoOrden != EstadoOrden.Entregada ||
+                            s.MontoVendedor <= 0m ||
+                            s.Moneda != liquidacion.Moneda) ||
+            splits.Sum(s => s.MontoVendedor) != liquidacion.MontoLiquidar)
             throw new InvalidOperationException(
-                "Liquidación con split, propietario, estado o importe inconsistentes; requiere revisión manual.");
+                "Liquidación con splits, propietario, estado o importe inconsistentes; requiere revisión manual.");
 
         if (await _db.PartidasContables.AsNoTracking().AnyAsync(p =>
             p.TipoOperacion == "Liquidacion" && p.ReferenciaOrigenId == liquidacion.Id,
@@ -208,6 +235,9 @@ public class LiquidacionService : ILiquidacionService
             query = query.Where(l => l.VendedorId == vendedorId.Value);
 
         return await query
+            .AsNoTracking()
+            .Include(l => l.SplitsPago)
+                .ThenInclude(s => s.Orden)
             .OrderByDescending(l => l.FechaCreacion)
             .ToListAsync(cancellationToken);
     }

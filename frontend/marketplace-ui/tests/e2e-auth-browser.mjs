@@ -86,6 +86,26 @@ function setupApi(page) {
         body: JSON.stringify({ total: items.length, pagina, tamano,
           items: items.slice((pagina - 1) * tamano, pagina * tamano) }) });
     }
+    if (url.pathname === '/api/ordenes/mis-ordenes') {
+      // Servidor simulado entrega solo registros propios; el cliente no pasa vendedorId.
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ total: 1, pagina: 1, tamano: 20, ordenes: [{
+          id: '11111111-1111-4111-8111-111111111111',
+          numeroOrden: 'F104-OWN-A', estado: 'Pendiente', tipoCliente: 'B2C',
+          montoTotal: 15, moneda: 'USD', fechaCreacion: '2026-11-10T12:00:00Z',
+          totalItems: 1
+        }] }) });
+    }
+    if (url.pathname === '/api/ordenes/mis-ordenes/11111111-1111-4111-8111-111111111111') {
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({
+          id: '11111111-1111-4111-8111-111111111111',
+          numeroOrden: 'F104-OWN-A', estado: 'Pendiente', tipoCliente: 'B2C',
+          montoTotal: 15, moneda: 'USD', fechaCreacion: '2026-11-10T12:00:00Z',
+          items: [{ productoId: '22222222-2222-4222-8222-222222222222',
+            sku: 'SKU-OWN-A', nombre: 'Producto propio A', cantidad: 1, precioUnitario: 15 }]
+        }) });
+    }
     if (url.pathname.startsWith('/api/ordenes')) {
       return route.fulfill({ status: 200, contentType: 'application/json',
         body: JSON.stringify({ total: 0, items: [], pagina: 1 }) });
@@ -104,7 +124,9 @@ async function signIn(page, email, password = 'ci-fixture-password') {
 
 async function run() {
   await awaitVite();
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  const browser = await chromium.launch({ headless: true,
+    channel: process.env.F101_CHROME_CHANNEL || undefined,
+    args: ['--no-sandbox'] });
   const failures = [];
   try {
     const page = await browser.newPage();
@@ -136,6 +158,8 @@ async function run() {
     await page.waitForURL('**/dashboard');
     assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), firstToken);
     console.log('OK P1 Chromium: Admin login and persisted refresh');
+    await page.goto(baseUrl + '/mis-ordenes');
+    await page.getByRole('heading', { name: 'Acceso no autorizado' }).waitFor();
 
     // P3: validar que la UI alcanza el SKU 500 mediante búsqueda del servidor
     // y no calcula el total global a partir de la primera página.
@@ -165,12 +189,25 @@ async function run() {
 
     scenarios.status(200);
     await signIn(page, 'seller-fixture@example.invalid');
-    await page.waitForURL('**/ordenes');
+    await page.waitForURL('**/productos');
     assert.equal(await page.locator('.sidebar-nav').getByText('WMS / Bodega').count(), 0);
+    assert.equal(await page.locator('.sidebar-nav').getByText('Órdenes').count(), 0);
+    await page.getByRole('link', { name: 'Mis órdenes' }).click();
+    await page.waitForURL('**/mis-ordenes');
+    await page.getByRole('heading', { name: 'Mis órdenes' }).waitFor();
+    await page.getByText('F104-OWN-A').first().waitFor();
+    assert.equal(await page.getByText('F104-FOREIGN-B').count(), 0);
+    await page.getByRole('button', { name: 'Ver detalle de F104-OWN-A' }).click();
+    await page.getByText('SKU-OWN-A').waitFor();
+    assert.equal(await page.getByText('DATOS_PRIVADOS_COMPRADOR_B').count(), 0);
+    assert.ok(scenarios.requests.some(r => r.path === '/api/ordenes/mis-ordenes' && r.method === 'GET'));
+    assert.equal(scenarios.requests.some(r => r.path === '/api/ordenes' && r.method === 'POST'), false);
+    await page.goto(baseUrl + '/ordenes');
+    await page.getByRole('heading', { name: 'Acceso no autorizado' }).waitFor();
     await page.goto(baseUrl + '/wms');
     await page.getByRole('heading', { name: 'Acceso no autorizado' }).waitFor();
     await page.getByRole('button', { name: 'Volver al inicio permitido' }).click();
-    await page.waitForURL('**/ordenes');
+    await page.waitForURL('**/productos');
     await page.getByRole('button', { name: 'Cerrar sesión' }).click();
     await page.waitForURL('**/login');
     assert.equal(await page.evaluate(() => localStorage.getItem('erp_token')), null);

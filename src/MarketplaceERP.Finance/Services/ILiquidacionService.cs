@@ -24,7 +24,7 @@ public record KpiVendedor(
 public interface ILiquidacionService
 {
     /// <summary>
-    /// Genera un registro interno pendiente de liquidación para un SplitPago del vendedor.
+    /// Genera un registro interno pendiente de liquidación para los splits elegibles de un vendedor.
     /// No genera asiento ni ejecuta transferencia bancaria en esta etapa.
     /// </summary>
     Task<Liquidacion> GenerarLiquidacionAsync(Guid vendedorId, CancellationToken cancellationToken = default);

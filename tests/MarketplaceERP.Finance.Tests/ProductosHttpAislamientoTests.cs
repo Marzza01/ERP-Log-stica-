@@ -10,6 +10,8 @@ using MarketplaceERP.API.Security;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
+using MarketplaceERP.Core.Data;
+using MarketplaceERP.Core.Entities;
 using MarketplaceERP.Shared.Settings;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -34,6 +36,7 @@ public class ProductosHttpAislamientoTests
         private readonly JwtSettings _jwt;
         public Guid SellerA { get; } = Guid.NewGuid();
         public Guid SellerB { get; } = Guid.NewGuid();
+        public Guid CategoryA { get; } = Guid.NewGuid();
         public Guid ProductA { get; } = Guid.NewGuid();
         public Guid ProductB { get; } = Guid.NewGuid();
         public Guid DraftB { get; } = Guid.NewGuid();
@@ -62,6 +65,8 @@ public class ProductosHttpAislamientoTests
                     services.AddRouting();
                     services.AddDbContext<CatalogDbContext>(options =>
                         options.UseInMemoryDatabase(database));
+                    services.AddDbContext<CoreDbContext>(options =>
+                        options.UseInMemoryDatabase(database + "-core"));
                     services.AddSingleton(Mock.Of<ICatalogImportService>());
                     services.AddMarketplaceSecurity(jwt);
                     services.AddControllers().AddApplicationPart(typeof(ProductosController).Assembly);
@@ -77,6 +82,17 @@ public class ProductosHttpAislamientoTests
             var fixture = new Fixture(server, jwt);
             using var scope = server.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var core = scope.ServiceProvider.GetRequiredService<CoreDbContext>();
+            core.Vendedores.AddRange(
+                new Vendedor { Id = fixture.SellerA, NombreEmpresa = "QA vendedor A",
+                    Email = "qa-a@example.invalid", EstaActivo = true },
+                new Vendedor { Id = fixture.SellerB, NombreEmpresa = "QA vendedor B",
+                    Email = "qa-b@example.invalid", EstaActivo = true });
+            core.Categorias.Add(new Categoria
+            {
+                Id = fixture.CategoryA, Nombre = "Tecnología"
+            });
+            await core.SaveChangesAsync();
             db.Productos.AddRange(
                 fixture.Product(fixture.ProductA, fixture.SellerA, "HTTP-OWN-A", "Laptop propia", true, null),
                 fixture.Product(fixture.ProductB, fixture.SellerB, "HTTP-FOREIGN-B", "Laptop ajena", true, "7891234567895"),
@@ -261,6 +277,39 @@ public class ProductosHttpAislamientoTests
     }
 
     [Fact]
+    public async Task Http_OpcionesAlta_RespetaJwtRolesYNoExponeDatosPrivadosDeVendedores()
+    {
+        using var fixture = await Fixture.CreateAsync();
+        using var anon = fixture.Client();
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await anon.GetAsync("/api/productos/opciones-alta")).StatusCode);
+        using var buyer = fixture.Client("Comprador");
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await buyer.GetAsync("/api/productos/opciones-alta")).StatusCode);
+
+        using var sellerA = fixture.Client("Vendedor", fixture.SellerA.ToString());
+        using var sellerResponse = await sellerA.GetAsync("/api/productos/opciones-alta");
+        Assert.Equal(HttpStatusCode.OK, sellerResponse.StatusCode);
+        var contenidoSeller = await sellerResponse.Content.ReadAsStringAsync();
+        Assert.Contains("QA vendedor A", contenidoSeller);
+        Assert.DoesNotContain("QA vendedor B", contenidoSeller);
+        Assert.DoesNotContain("qa-a@example.invalid", contenidoSeller);
+
+        using var admin = fixture.Client("Admin");
+        using var adminResponse = await admin.GetAsync("/api/productos/opciones-alta");
+        Assert.Equal(HttpStatusCode.OK, adminResponse.StatusCode);
+        var contenidoAdmin = await adminResponse.Content.ReadAsStringAsync();
+        Assert.Contains("QA vendedor A", contenidoAdmin);
+        Assert.Contains("QA vendedor B", contenidoAdmin);
+        Assert.Contains("Tecnología", contenidoAdmin);
+        Assert.DoesNotContain("qa-b@example.invalid", contenidoAdmin);
+
+        using var malformed = fixture.Client("Vendedor", "no-guid");
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await malformed.GetAsync("/api/productos/opciones-alta")).StatusCode);
+    }
+
+    [Fact]
     public async Task Http_EanNulo_EnBusquedaNoProvoca500NiFiltraCoincidenciasAjenas()
     {
         using var fixture = await Fixture.CreateAsync();
@@ -322,7 +371,7 @@ public class ProductosHttpAislamientoTests
             descripcion = "Ficha del producto",
             categoriaNombre = "Tecnología",
             subcategoria = "Laptops",
-            categoriaId = Guid.NewGuid(),
+            categoriaId = fixture.CategoryA,
             vendedorId = fixture.SellerA,
             precioB2C = 50m,
             precioB2B = 40m,

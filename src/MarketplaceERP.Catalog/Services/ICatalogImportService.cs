@@ -10,5 +10,10 @@ public record ImportResult(int TotalProcesados, int Exitosos, int Errores, List<
 public interface ICatalogImportService
 {
     Task<ImportResult> ImportarCatalogoCsvAsync(Stream csvStream, Guid defaultVendedorId, Guid defaultCategoriaId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Simulación de la validación del archivo. No crea ni modifica productos,
+    /// ubicaciones ni saldos WMS; no garantiza integridad referencial en BD.
+    /// </summary>
+    Task<ImportResult> ValidarCatalogoCsvAsync(Stream csvStream, CancellationToken cancellationToken = default);
     Task<ImportResult> ImportarCatalogoDesdeArchivoAsync(string rutaArchivo, Guid defaultVendedorId, Guid defaultCategoriaId, CancellationToken cancellationToken = default);
 }

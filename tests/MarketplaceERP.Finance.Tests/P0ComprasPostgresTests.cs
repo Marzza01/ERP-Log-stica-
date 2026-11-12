@@ -66,12 +66,22 @@ public class P0ComprasPostgresTests
             Database = database
         }.ConnectionString;
 
+        // La base efímera SIEMPRE debe eliminarse, incluso si fallan migraciones,
+        // aserciones o peticiones HTTP. Los contextos/servidor declarados dentro
+        // de este bloque se liberan antes del finally.
+        try
+        {
         await using (var root = new NpgsqlConnection(admin.ConnectionString))
         {
             await root.OpenAsync();
             await using var command = new NpgsqlCommand($"CREATE DATABASE {database}", root);
             await command.ExecuteNonQueryAsync();
         }
+
+        // Inyección opcional, exclusiva de QA local, para comprobar que el
+        // finally elimina la base incluso ante una excepción temprana.
+        if (Environment.GetEnvironmentVariable("P0_QA_FORCE_FAILURE_AFTER_CREATE") == "1")
+            throw new InvalidOperationException("QA_TEARDOWN_FAILURE_INYECTADO");
 
         var coreOptions = new DbContextOptionsBuilder<CoreDbContext>()
             .UseNpgsql(testConnection).Options;
@@ -519,8 +529,8 @@ public class P0ComprasPostgresTests
             RequestRaceAsync(Guid.NewGuid()), RequestRaceAsync(Guid.NewGuid()));
         try
         {
-            Assert.Single(pendientes.Where(r => r.StatusCode == HttpStatusCode.OK));
-            Assert.Single(pendientes.Where(r => r.StatusCode == HttpStatusCode.Conflict));
+            Assert.Single(pendientes, r => r.StatusCode == HttpStatusCode.OK);
+            Assert.Single(pendientes, r => r.StatusCode == HttpStatusCode.Conflict);
         }
         finally
         {
@@ -535,5 +545,59 @@ public class P0ComprasPostgresTests
         Assert.Equal(87, await raceCatalog.StockFisico.SumAsync(x => x.CantidadTotal));
         Assert.Equal(6, await raceCatalog.MovimientosInventario.CountAsync(
             x => x.TipoMovimiento == TipoMovimientoInventario.RecepcionInbound));
+        }
+        finally
+        {
+            // La conexión administrativa es exclusivamente a postgres local.
+            // No se terminan sesiones ni se utiliza DROP ... WITH (FORCE).
+            if (!database.StartsWith("p0_flow_", StringComparison.Ordinal) ||
+                database.Length != "p0_flow_".Length + 32)
+                throw new InvalidOperationException("Nombre de BD temporal inválido.");
+
+            // Npgsql conserva conexiones inactivas en su pool aun después de
+            // Dispose de los DbContext. Vaciar SOLO el pool de esta BD QA;
+            // nunca cerrar sesiones arbitrarias de otras bases.
+            await using (var pooled = new NpgsqlConnection(testConnection))
+                NpgsqlConnection.ClearPool(pooled);
+
+            await using var cleanup = new NpgsqlConnection(admin.ConnectionString);
+            await cleanup.OpenAsync();
+            // TestServer/EF pueden terminar de devolver la última conexión
+            // al pool justo después de salir del bloque try. Esperar un margen
+            // acotado evita un falso fallo de teardown bajo carga paralela;
+            // nunca se terminan sesiones ni se fuerza el DROP.
+            var limiteDrenaje = DateTime.UtcNow.AddSeconds(5);
+            var activas = -1;
+            do
+            {
+                await using var sesiones = new NpgsqlCommand(
+                    "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = @db", cleanup);
+                sesiones.Parameters.AddWithValue("db", database);
+                activas = Convert.ToInt32(await sesiones.ExecuteScalarAsync());
+                if (activas == 0) break;
+                await Task.Delay(100);
+            } while (DateTime.UtcNow < limiteDrenaje);
+
+            if (activas != 0)
+            {
+                await using var diagnostico = new NpgsqlCommand("""
+                    SELECT COALESCE(string_agg(
+                        format('pid=%s state=%s app=%s wait=%s query=%s',
+                            pid, state, application_name,
+                            COALESCE(wait_event, ''),
+                            LEFT(query, 120)), '; '), '')
+                    FROM pg_stat_activity
+                    WHERE datname = @db;
+                    """, cleanup);
+                diagnostico.Parameters.AddWithValue("db", database);
+                var detalle = Convert.ToString(await diagnostico.ExecuteScalarAsync());
+                throw new InvalidOperationException(
+                    $"No se elimina {database}: tiene {activas} conexiones activas tras 5 s. {detalle}");
+            }
+
+            await using var drop = new NpgsqlCommand(
+                $"DROP DATABASE IF EXISTS \"{database}\"", cleanup);
+            await drop.ExecuteNonQueryAsync();
+        }
     }
 }

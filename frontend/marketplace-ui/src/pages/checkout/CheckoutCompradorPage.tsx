@@ -9,8 +9,9 @@ import { checkoutApi, type CheckoutErrorResponse, type CheckoutSeguimiento } fro
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import type { Producto } from '../../types';
+import { hayOperacionPendiente } from './carritoV2Qa';
 import {
-  borrarPendiente, esGuid, guardarPendiente, leerOrdenes, leerPendiente,
+  actualizarPendiente, borrarPendiente, esGuid, guardarPendiente, leerOrdenes, leerPendiente,
   nuevaClaveIdempotencia, pendienteResuelto, recordarOrden, type CheckoutPendiente,
 } from './checkoutState';
 import './checkout.css';
@@ -39,6 +40,7 @@ export default function CheckoutCompradorPage() {
   const [cantidad, setCantidad] = useState(1);
   const [procesando, setProcesando] = useState(false);
   const [pendiente, setPendiente] = useState<CheckoutPendiente | null>(() => leerPendiente(cuenta));
+  const [, avisarCambioStorage] = useState(0);
   const [ordenes, setOrdenes] = useState<string[]>(() => leerOrdenes(cuenta));
   const [mensaje, setMensaje] = useState('');
   const [resultado, setResultado] = useState<CheckoutSeguimiento | null>(null);
@@ -100,8 +102,29 @@ export default function CheckoutCompradorPage() {
     }
   }, [cuenta]);
 
+  // Detecta incluso registros V1 ilegibles o operaciones V2 en otra pestaña.
+  const bloqueado = !!pendiente || hayOperacionPendiente(cuenta);
+
+  useEffect(() => {
+    const actualizadoEnOtraPestana = (event: StorageEvent) => {
+      if (event.key === null ||
+          event.key.startsWith('logimkt_checkout_b2c_v1:') ||
+          event.key.startsWith('logimkt_checkout_b2c_v2_qa:')) {
+        setPendiente(leerPendiente(cuenta));
+        avisarCambioStorage(n => n + 1);
+      }
+    };
+    window.addEventListener('storage', actualizadoEnOtraPestana);
+    return () => window.removeEventListener('storage', actualizadoEnOtraPestana);
+  }, [cuenta]);
+
   const confirmar = async () => {
-    if (!envioHabilitado || !cuenta || !producto || procesando || envioActivo.current || pendiente) return;
+    if (!envioHabilitado || !cuenta || !producto || procesando || envioActivo.current) return;
+    if (hayOperacionPendiente(cuenta)) {
+      toast.warning('Operación anterior sin cerrar',
+        'Existe un intento pendiente V1/V2 o ilegible. Verifica su estado antes de otra compra.');
+      return;
+    }
     if (!esGuid(producto.id) || !activo(producto) || !Number.isSafeInteger(cantidad) || cantidad < 1 || cantidad > 9999) {
       toast.warning('Selección inválida', 'Selecciona un producto activo y una cantidad entre 1 y 9999.');
       return;
@@ -134,7 +157,7 @@ export default function CheckoutCompradorPage() {
         const lista = recordarOrden(cuenta, id);
         setOrdenes(lista);
         setOrdenConsulta(id);
-        borrarPendiente(cuenta);
+        borrarPendiente(cuenta, nuevo.clave);
         setPendiente(null);
         setMensaje(`Solicitud aprobada por el servidor. Orden ${id}. El despacho sigue siendo un proceso separado.`);
         toast.success('Checkout aprobado', 'Consulta el seguimiento para revisar el estado de tu pedido.');
@@ -150,7 +173,7 @@ export default function CheckoutCompradorPage() {
         const actualizado = { ...nuevo, ordenId: id };
         setPendiente(actualizado);
         try {
-          guardarPendiente(cuenta, actualizado);
+          actualizarPendiente(cuenta, actualizado);
           setOrdenes(recordarOrden(cuenta, id));
           setOrdenConsulta(id);
         } catch { /* La clave original ya estaba persistida: bloquear de todos modos. */ }
@@ -161,7 +184,7 @@ export default function CheckoutCompradorPage() {
       const rechazoDefinitivo = apiError?.status === 400 ||
         (apiError?.status === 409 && ['StockInsuficiente', 'PagoRechazado'].includes(datos.tipo ?? ''));
       if (rechazoDefinitivo) {
-        try { borrarPendiente(cuenta); setPendiente(null); } catch { /* Preferir bloqueo si localStorage falla. */ }
+        try { borrarPendiente(cuenta, nuevo.clave); setPendiente(null); } catch { /* Preferir bloqueo si localStorage falla. */ }
         setMensaje(datos.mensaje || apiError?.message || 'La solicitud fue rechazada por el servidor.');
       } else {
         setMensaje(id
@@ -177,9 +200,10 @@ export default function CheckoutCompradorPage() {
   const cerrarPendienteResuelto = () => {
     if (!pendiente || !resultado || resultado.ordenId !== pendiente.ordenId ||
         !pendienteResuelto(resultado.estadoOrden, resultado.estadoPago,
-          resultado.estadoReembolso, resultado.cantidadReservadaPendiente)) return;
+          resultado.estadoReembolso, resultado.cantidadReservadaPendiente,
+          resultado.requiereRevision)) return;
     try {
-      borrarPendiente(cuenta);
+      borrarPendiente(cuenta, pendiente.clave);
       setPendiente(null);
       setMensaje('Operación anterior verificada y cerrada. Ya puedes iniciar una compra distinta.');
     } catch {
@@ -191,7 +215,8 @@ export default function CheckoutCompradorPage() {
   const precioEstimado = useMemo(() => producto ? producto.precioB2C * cantidad : 0, [producto, cantidad]);
   const desbloqueable = !!(pendiente && resultado && pendiente.ordenId === resultado.ordenId &&
     pendienteResuelto(resultado.estadoOrden, resultado.estadoPago,
-      resultado.estadoReembolso, resultado.cantidadReservadaPendiente));
+      resultado.estadoReembolso, resultado.cantidadReservadaPendiente,
+      resultado.requiereRevision));
 
   return (
     <div className="ck-page">
@@ -206,6 +231,11 @@ export default function CheckoutCompradorPage() {
       <div className="ck-banner"><AlertCircle size={18} />
         <span>El servidor valida precio y existencias. Los pagos solo podrán aprobarse si la pasarela está habilitada en el entorno. Un pago incierto nunca se reintenta automáticamente. {envioHabilitado ? 'El envío está habilitado para este entorno.' : 'Las compras están deshabilitadas hasta configurar y validar una pasarela de pagos.'}</span>
       </div>
+
+      {bloqueado && !pendiente && <section className="ck-card ck-warning" aria-live="polite">
+        <h2><AlertCircle size={18} /> Operación guardada sin datos legibles</h2>
+        <p>Se detectó una operación V1 o V2 aún sin conciliar, o no se pudo verificar el almacenamiento del navegador. Para evitar otro cobro, esta pantalla bloquea nuevas compras. Solicita revisión con administración; no borres manualmente el registro de seguridad.</p>
+      </section>}
 
       {pendiente && <section className="ck-card ck-warning" aria-live="polite">
         <h2><AlertCircle size={18} /> Operación anterior pendiente de verificación</h2>
@@ -235,7 +265,7 @@ export default function CheckoutCompradorPage() {
           {cargando ? <div className="ck-loading"><Loader2 size={18} className="ck-spin" /> Consultando catálogo...</div>
             : productos.length === 0 ? <div className="ck-empty">No hay productos comerciales disponibles para este filtro.</div>
             : <div className="ck-products">{productos.map(p => <button type="button" className={`ck-product ${producto?.id === p.id ? 'ck-product-selected' : ''}`} key={p.id}
-              disabled={!!pendiente || procesando} onClick={() => { setProducto(p); setCantidad(1); }}>
+              disabled={bloqueado || procesando} onClick={() => { setProducto(p); setCantidad(1); }}>
               <span className="ck-product-title">{p.nombre}</span><span className="ck-product-meta">{p.sku} · {p.categoriaNombre}</span>
               <span className="ck-product-price">{money(p.precioB2C)} <small>USD / {p.unidadMedida || 'unidad'}</small></span>
             </button>)}</div>}
@@ -251,11 +281,11 @@ export default function CheckoutCompradorPage() {
             <strong>{producto.nombre}</strong><span className="ck-small">{producto.sku}</span>
             <label htmlFor="ck-cantidad" className="form-label">Cantidad</label>
             <input id="ck-cantidad" className="form-input" type="number" min={1} max={9999} step={1} value={cantidad}
-              disabled={!!pendiente || procesando} onChange={e => setCantidad(e.target.value === '' ? 0 : Number(e.target.value))} />
+              disabled={bloqueado || procesando} onChange={e => setCantidad(e.target.value === '' ? 0 : Number(e.target.value))} />
             <div className="ck-line"><span>Precio unitario referencial</span><strong>{money(producto.precioB2C)}</strong></div>
             <div className="ck-total"><span>Total estimado</span><strong>{Number.isFinite(precioEstimado) ? money(precioEstimado) : '—'}</strong></div>
             <p className="ck-small">El importe definitivo se calcula en la API; no se envían precios desde el navegador.</p>
-            <button type="button" className="btn btn-primary ck-buy" onClick={() => void confirmar()} disabled={!envioHabilitado || !!pendiente || procesando || !Number.isSafeInteger(cantidad) || cantidad < 1 || cantidad > 9999}>
+            <button type="button" className="btn btn-primary ck-buy" onClick={() => void confirmar()} disabled={!envioHabilitado || bloqueado || procesando || !Number.isSafeInteger(cantidad) || cantidad < 1 || cantidad > 9999}>
               {procesando ? <><Loader2 className="ck-spin" size={16} /> Procesando...</> : <><ShieldCheck size={16} /> {envioHabilitado ? 'Confirmar compra' : 'Pago no habilitado'}</>}
             </button>
           </> : <p className="ck-empty">Selecciona un producto del catálogo para comenzar.</p>}

@@ -9,7 +9,7 @@ import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
 import AlertBanner from '../../components/ui/AlertBanner';
 import { useToast } from '../../context/ToastContext';
-import { productosApi, type CrearProductoRequest } from '../../api/productos';
+import { productosApi, type CrearProductoRequest, type OpcionesAltaProducto } from '../../api/productos';
 import type { Producto } from '../../types';
 
 export default function ProductosPage() {
@@ -45,6 +45,8 @@ export default function ProductosPage() {
     estaPublicado: true,
   });
   const [saving, setSaving] = useState(false);
+  const [opcionesAlta, setOpcionesAlta] = useState<OpcionesAltaProducto | null>(null);
+  const [errorOpciones, setErrorOpciones] = useState('');
   // Confirm delete
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -76,6 +78,27 @@ export default function ProductosPage() {
 
   useEffect(() => { void loadData(); return () => { lastRequest.current++; }; }, [loadData]);
 
+  // Datos reales desde Core, solo para ALTA. No inventar GUID y no
+  // exigir modificar categorías/vendedores al editar productos existentes.
+  useEffect(() => {
+    if (!modalOpen || editingId) return;
+    let vigente = true;
+    setOpcionesAlta(null);
+    setErrorOpciones('');
+    void productosApi.opcionesAlta().then(ref => {
+      if (!vigente) return;
+      setOpcionesAlta(ref);
+      setForm(f => ({
+        ...f,
+        vendedorId: ref.vendedores.length === 1 ? ref.vendedores[0].id : '',
+        categoriaId: '',
+      }));
+    }).catch(e => {
+      if (vigente) setErrorOpciones(e instanceof Error ? e.message : 'No se pudo verificar la referencia en Core.');
+    });
+    return () => { vigente = false; };
+  }, [modalOpen, editingId]);
+
   const totalDisponibles = productos.reduce((acc, p) => acc + (p.stock?.cantidadDisponible ?? 0), 0);
   const totalReservados = productos.reduce((acc, p) => acc + (p.stock?.cantidadReservada ?? 0), 0);
   const skusCriticos = productos.filter(p => (p.stock?.cantidadDisponible ?? 0) < 10).length;
@@ -98,6 +121,8 @@ export default function ProductosPage() {
       unidadMedida: 'Unidad',
       estadoProducto: 'Activo',
       estaPublicado: true,
+      vendedorId: '',
+      categoriaId: '',
     });
     setModalOpen(true);
   };
@@ -133,6 +158,10 @@ export default function ProductosPage() {
         await productosApi.actualizar(editingId, form);
         toast.success('Producto Actualizado', `El SKU ${form.sku} se actualizó correctamente.`);
       } else {
+        if (!opcionesAlta ||
+            !opcionesAlta.vendedores.some(v => v.id === form.vendedorId) ||
+            !opcionesAlta.categorias.some(c => c.id === form.categoriaId))
+          throw new Error('Selecciona vendedor y categoría disponibles desde Core.');
         await productosApi.crear(form);
         toast.success('Producto Creado', `El SKU ${form.sku} se agregó al catálogo comercial.`);
       }
@@ -408,6 +437,41 @@ export default function ProductosPage() {
             }}
             style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
           >
+            {!editingId && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {errorOpciones && (
+                  <AlertBanner variant="danger" title="Referencias de Core no disponibles" message={errorOpciones} />
+                )}
+                {!opcionesAlta && !errorOpciones && <p>Verificando vendedores y categorías reales...</p>}
+                {opcionesAlta && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <label>
+                      Vendedor activo
+                      <select required value={form.vendedorId ?? ''}
+                        onChange={e => setForm(f => ({ ...f, vendedorId: e.target.value }))}
+                        style={{ display: 'block', width: '100%' }}>
+                        <option value="">Seleccionar vendedor</option>
+                        {opcionesAlta.vendedores.map(v => <option key={v.id} value={v.id}>{v.nombre}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      Categoría de Core
+                      <select required value={form.categoriaId ?? ''}
+                        onChange={e => {
+                          const categoria = opcionesAlta.categorias.find(c => c.id === e.target.value);
+                          setForm(f => ({ ...f, categoriaId: e.target.value,
+                            categoriaNombre: categoria?.nombre ?? '' }));
+                        }}
+                        style={{ display: 'block', width: '100%' }}>
+                        <option value="">Seleccionar categoría</option>
+                        {opcionesAlta.categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '0.75rem' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
@@ -457,14 +521,24 @@ export default function ProductosPage() {
                 </label>
                 <select
                   value={form.categoriaNombre}
+                  disabled={!editingId}
                   onChange={e => setForm(f => ({ ...f, categoriaNombre: e.target.value }))}
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 >
-                  <option value="Tecnología">Tecnología</option>
-                  <option value="Audio & Video">Audio & Video</option>
-                  <option value="Periféricos Gamer">Periféricos Gamer</option>
-                  <option value="Cómputo">Cómputo</option>
-                  <option value="Accesorios">Accesorios</option>
+                  {!editingId && (
+                    <option value={form.categoriaNombre}>
+                      {form.categoriaId ? form.categoriaNombre : 'Selecciona una categoría de Core arriba'}
+                    </option>
+                  )}
+                  {editingId && (
+                    <>
+                      <option value="Tecnología">Tecnología</option>
+                      <option value="Audio & Video">Audio & Video</option>
+                      <option value="Periféricos Gamer">Periféricos Gamer</option>
+                      <option value="Cómputo">Cómputo</option>
+                      <option value="Accesorios">Accesorios</option>
+                    </>
+                  )}
                 </select>
               </div>
 
@@ -510,7 +584,9 @@ export default function ProductosPage() {
               </button>
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || (!editingId && (!opcionesAlta ||
+                  !opcionesAlta.vendedores.some(v => v.id === form.vendedorId) ||
+                  !opcionesAlta.categorias.some(c => c.id === form.categoriaId)))}
                 style={{
                   padding: '0.5rem 1.25rem',
                   borderRadius: '6px',

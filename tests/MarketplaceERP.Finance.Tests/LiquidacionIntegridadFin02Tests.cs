@@ -44,7 +44,7 @@ public sealed class LiquidacionIntegridadFin02Tests
     }
 
     [Fact]
-    public async Task DosSplits_GeneranDosLiquidacionesCadaUnaConSuImporte()
+    public async Task DosSplits_GeneranUnaLiquidacionAgrupadaSinReclamarDosVeces()
     {
         await using var db = Db();
         var seller = Guid.NewGuid();
@@ -54,17 +54,43 @@ public sealed class LiquidacionIntegridadFin02Tests
         await db.SaveChangesAsync();
 
         var service = Service(db);
-        var first = await service.GenerarLiquidacionAsync(seller);
-        var second = await service.GenerarLiquidacionAsync(seller);
+        var group = await service.GenerarLiquidacionAsync(seller);
 
-        Assert.Equal(a.Id, first.SplitPagoId);
-        Assert.Equal(35m, first.MontoLiquidar);
-        Assert.Equal(b.Id, second.SplitPagoId);
-        Assert.Equal(80m, second.MontoLiquidar);
-        Assert.NotEqual(first.SplitPagoId, second.SplitPagoId);
-        Assert.Equal(2, await db.Liquidaciones.CountAsync());
+        Assert.Equal(a.Id, group.SplitPagoId);
+        Assert.Equal(115m, group.MontoLiquidar);
+        Assert.Equal(group.Id, a.LiquidacionId);
+        Assert.Equal(group.Id, b.LiquidacionId);
+        Assert.Equal(1, await db.Liquidaciones.CountAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.GenerarLiquidacionAsync(seller));
+    }
+
+    // F151: historical checkout contract — no seller liquidation before delivery.
+    [Fact]
+    public async Task OrdenNoEntregada_NoGeneraLiquidacion_HastaConfirmarEntrega()
+    {
+        await using var db = Db();
+        var seller = Guid.NewGuid();
+        var split = NuevoSplit(seller, 90m, 1);
+        split.Orden.Estado = EstadoOrden.Aprobada;
+        db.SplitsPago.Add(split);
+        await db.SaveChangesAsync();
+
+        var service = Service(db);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.GenerarLiquidacionAsync(seller));
+
+        Assert.Empty(await db.Liquidaciones.ToListAsync());
+        Assert.Null(split.LiquidacionId);
+
+        split.Orden.Estado = EstadoOrden.Entregada;
+        await db.SaveChangesAsync();
+
+        var liquidation = await service.GenerarLiquidacionAsync(seller);
+        Assert.Equal(90m, liquidation.MontoLiquidar);
+        Assert.Equal(split.Id, liquidation.SplitPagoId);
+        Assert.Equal(liquidation.Id, split.LiquidacionId);
+        Assert.Single(await db.Liquidaciones.ToListAsync());
     }
 
     [Fact]
@@ -100,26 +126,21 @@ public sealed class LiquidacionIntegridadFin02Tests
         await db.SaveChangesAsync();
 
         var service = Service(db);
-        var first = await service.GenerarLiquidacionAsync(seller);
-        var second = await service.GenerarLiquidacionAsync(seller);
-
+        var group = await service.GenerarLiquidacionAsync(seller);
+        Assert.Equal(100m, group.MontoLiquidar);
         Assert.Equal(EstadoLiquidacion.Completada,
-            (await service.ProcesarPagoAsync(first.Id)).Estado);
+            (await service.ProcesarPagoAsync(group.Id)).Estado);
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.ProcesarPagoAsync(first.Id));
-        Assert.Equal(EstadoLiquidacion.Completada,
-            (await service.ProcesarPagoAsync(second.Id)).Estado);
+            () => service.ProcesarPagoAsync(group.Id));
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.GenerarLiquidacionAsync(seller));
 
         var ledger = await db.PartidasContables.Include(p => p.Lineas).ToListAsync();
-        Assert.Equal(2, ledger.Count);
-        Assert.Equal(2, ledger.Select(p => p.NumeroPartida).Distinct().Count());
-        Assert.All(ledger, p =>
-        {
-            Assert.StartsWith("LIQ-", p.NumeroPartida);
-            Assert.Equal(p.TotalDebe, p.TotalHaber);
-            Assert.Equal(2, p.Lineas.Count);
-        });
-        Assert.Equal(100m, ledger.Sum(p => p.TotalDebe));
+        var entry = Assert.Single(ledger);
+        Assert.StartsWith("LIQ-", entry.NumeroPartida);
+        Assert.Equal(entry.TotalDebe, entry.TotalHaber);
+        Assert.Equal(2, entry.Lineas.Count);
+        Assert.Equal(100m, entry.TotalDebe);
     }
 
     [Fact]

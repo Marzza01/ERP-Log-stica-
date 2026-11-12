@@ -36,7 +36,6 @@ public class P0GuardiasFinancierasTests
     {
         var protegidas = new[]
         {
-            (typeof(ComprasController), "EjecutarMatch"),
             (typeof(ContabilidadController), "AsientoManual"),
             (typeof(LiquidacionesController), "Generar"),
             (typeof(LiquidacionesController), "ProcesarPago")
@@ -47,5 +46,12 @@ public class P0GuardiasFinancierasTests
             Assert.NotNull(method);
             Assert.NotNull(method!.GetCustomAttribute<PaymentOperationsGuardAttribute>());
         }
+
+        // El 3-Way Match es conciliación/contabilidad, no una llamada a la
+        // pasarela. Tiene un guard staging independiente, limitado por allowlist.
+        var match = typeof(ComprasController).GetMethod("EjecutarMatch");
+        Assert.NotNull(match);
+        Assert.NotNull(match!.GetCustomAttribute<StagingThreeWayMatchGuardAttribute>());
+        Assert.Null(match.GetCustomAttribute<PaymentOperationsGuardAttribute>());
     }
 }
