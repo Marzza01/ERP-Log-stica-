@@ -93,7 +93,7 @@ public class AutorizacionU2Tests
 
     [Theory]
     [InlineData(typeof(ComprasController), "ListarPO", false)]
-    [InlineData(typeof(ComprasController), "EjecutarMatch", true)]
+    [InlineData(typeof(ComprasController), "EjecutarMatch", false)]
     [InlineData(typeof(ContabilidadController), "LibroDiario", false)]
     [InlineData(typeof(ContabilidadController), "AsientoManual", true)]
     [InlineData(typeof(LiquidacionesController), "Historial", false)]

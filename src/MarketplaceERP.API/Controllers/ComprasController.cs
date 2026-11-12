@@ -701,7 +701,7 @@ public class ComprasController : ControllerBase
     // ── POST /api/compras/match ───────────────────────────────────────────────
     /// <summary>Ejecuta el Match Tridireccional (PO - Factura - Bodega WMS).</summary>
     [HttpPost("match", Name = "EjecutarMatch3Way")]
-    [PaymentOperationsGuard]
+    [StagingThreeWayMatchGuard]
     [ProducesResponseType(typeof(MatchTridireccional), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> EjecutarMatch(

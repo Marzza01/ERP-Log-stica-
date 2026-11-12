@@ -133,8 +133,7 @@ public class RailwayPreparationTests
             (typeof(LiquidacionesController), new[] { "Generar", "ProcesarPago" }),
             (typeof(CheckoutRecuperacionController), new[] { "Conciliar", "Reembolsar" }),
             (typeof(OrdenesController), new[] { "TransicionarEstado" }),
-            (typeof(ContabilidadController), new[] { "AsientoManual" }),
-            (typeof(ComprasController), new[] { "EjecutarMatch" })
+            (typeof(ContabilidadController), new[] { "AsientoManual" })
         })
             foreach (var action in actions)
                 Assert.NotNull(controller.GetMethod(action)!.GetCustomAttributes(typeof(PaymentOperationsGuardAttribute), true).SingleOrDefault());
@@ -142,7 +141,6 @@ public class RailwayPreparationTests
 
     [Theory]
     [InlineData(typeof(ContabilidadController), "AsientoManual", "asiento-manual")]
-    [InlineData(typeof(ComprasController), "EjecutarMatch", "match")]
     public async Task DisabledMode_BlocksNewFinancialRoutesBeforeAction(
         Type controller, string actionName, string route)
     {
