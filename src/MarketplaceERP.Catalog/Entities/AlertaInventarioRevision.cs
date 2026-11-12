@@ -15,7 +15,8 @@ public enum TipoAlertaInventario
 /// <summary>
 /// Persistencia mínima del reconocimiento de una alerta derivada.
 /// La alerta no se almacena como hecho independiente: se recalcula desde el stock real.
-/// Cuando la condición cambia o se resuelve, esta revisión deja de aplicar y se elimina.
+/// GET no elimina ni actualiza esta revisión. Un movimiento de inventario posterior
+/// invalida lógicamente el reconocimiento; el registro se conserva como auditoría.
 /// </summary>
 public class AlertaInventarioRevision
 {

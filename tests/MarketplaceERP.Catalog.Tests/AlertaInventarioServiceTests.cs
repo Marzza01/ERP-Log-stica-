@@ -84,7 +84,7 @@ public class AlertaInventarioServiceTests
     }
 
     [Fact]
-    public async Task ResolverYReactivar_DebeEliminarReconocimientoAnterior()
+    public async Task ResolverYReactivar_TrasMovimiento_ReabreSinMutarDesdeGet()
     {
         await using var db = Db();
         var producto = Producto("ALT-005", 5);
@@ -95,16 +95,44 @@ public class AlertaInventarioServiceTests
 
         var sut = Sut(db);
         await sut.ReconocerAsync(producto.Id, TipoAlertaInventario.CriticalStock, "admin");
+        var revision = await db.AlertasInventarioRevision.SingleAsync();
 
-        stock.CantidadTotal = 20; // resuelve
+        stock.CantidadTotal = 20; // resuelve la condición mediante un movimiento auditado
+        db.MovimientosInventario.Add(new MovimientoInventario
+        {
+            Id = Guid.NewGuid(),
+            ProductoId = producto.Id,
+            Producto = producto,
+            TipoMovimiento = TipoMovimientoInventario.AjustePositivo,
+            Cantidad = 16,
+            Referencia = "QA-ALERTA-RESUELVE",
+            Observaciones = "Movimiento sintético de regresión.",
+            FechaMovimiento = revision.ReconocidaEn.AddSeconds(1)
+        });
         await db.SaveChangesAsync();
+
         (await sut.ObtenerActivasAsync()).Should().BeEmpty();
-        (await db.AlertasInventarioRevision.CountAsync()).Should().Be(0);
+        (await db.AlertasInventarioRevision.CountAsync()).Should().Be(1);
 
-        stock.CantidadTotal = 4; // misma condición vuelve a aparecer
+        stock.CantidadTotal = 4; // la condición vuelve tras otro movimiento
+        db.MovimientosInventario.Add(new MovimientoInventario
+        {
+            Id = Guid.NewGuid(),
+            ProductoId = producto.Id,
+            Producto = producto,
+            TipoMovimiento = TipoMovimientoInventario.AjusteNegativo,
+            Cantidad = 16,
+            Referencia = "QA-ALERTA-REACTIVA",
+            Observaciones = "Movimiento sintético de regresión.",
+            FechaMovimiento = revision.ReconocidaEn.AddSeconds(2)
+        });
         await db.SaveChangesAsync();
+
         var reactivada = (await sut.ObtenerActivasAsync()).Single();
         reactivada.Estado.Should().Be(EstadoAlertaInventario.Open);
+        reactivada.ReconocidaEn.Should().BeNull();
+        reactivada.ReconocidaPor.Should().BeNull();
+        (await db.AlertasInventarioRevision.CountAsync()).Should().Be(1);
     }
 
     private static AlertaInventarioService Sut(CatalogDbContext db) => new(db);
