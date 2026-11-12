@@ -58,7 +58,7 @@ jobs:
 
       # 4. Build en modo Release
       - name: Build solution (QA harness for test compilation)
-        run: dotnet build MarketplaceERP.sln --no-restore --configuration Release -p:CheckoutQaHarness=true
+        run: dotnet build MarketplaceERP.sln --no-restore --configuration Release -p:CheckoutQaHarness=true -m:1
 
       # 4.1 Validar que TEST_PG_CONNECTION estÃ© configurada
       - name: Verify TEST_PG_CONNECTION is set
