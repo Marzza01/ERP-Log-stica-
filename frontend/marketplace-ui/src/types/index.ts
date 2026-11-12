@@ -345,6 +345,8 @@ export interface FacturaProveedor {
   numeroFactura: string;
   montoTotal: number;
   fechaEmision: string;
+  aprobadaParaPago?: boolean;
+  pagada?: boolean;
 }
 
 export interface MatchTridireccional {

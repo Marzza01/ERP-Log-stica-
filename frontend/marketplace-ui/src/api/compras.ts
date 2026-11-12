@@ -17,6 +17,15 @@ interface BackendItemOrdenCompra {
   totalLinea: number;
 }
 
+interface BackendFacturaProveedor {
+  id: string;
+  numeroFactura: string;
+  montoTotal: number;
+  fechaEmision: string;
+  aprobadaParaPago?: boolean;
+  pagada?: boolean;
+}
+
 interface BackendOrdenCompra {
   id: string;
   numeroPO: string;
@@ -29,6 +38,7 @@ interface BackendOrdenCompra {
   fechaEmision: string;
   fechaEntregaEsperada?: string;
   items: BackendItemOrdenCompra[];
+  facturas?: BackendFacturaProveedor[];
 }
 
 interface BackendMatch {
@@ -136,6 +146,14 @@ const mapOrden = (po: BackendOrdenCompra): OrdenCompra => ({
     cantidadRecibida: item.cantidadRecibida ?? 0,
     precioUnitario: item.precioUnitarioAcordado,
     total: item.totalLinea,
+  })),
+  facturas: (po.facturas ?? []).map(factura => ({
+    id: factura.id,
+    numeroFactura: factura.numeroFactura,
+    montoTotal: factura.montoTotal,
+    fechaEmision: factura.fechaEmision,
+    aprobadaParaPago: factura.aprobadaParaPago ?? false,
+    pagada: factura.pagada ?? false,
   })),
 });
 
