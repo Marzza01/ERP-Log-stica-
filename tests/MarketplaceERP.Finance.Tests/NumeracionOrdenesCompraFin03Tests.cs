@@ -1,4 +1,6 @@
 using MarketplaceERP.API.Controllers;
+using MarketplaceERP.Catalog.Data;
+using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Core.Data;
 using MarketplaceERP.Core.Entities;
@@ -24,6 +26,17 @@ public sealed class NumeracionOrdenesCompraFin03Tests
         await using var finance = new FinanceDbContext(
             new DbContextOptionsBuilder<FinanceDbContext>()
                 .UseInMemoryDatabase("fin03-finance-" + Guid.NewGuid()).Options);
+        await using var catalog = new CatalogDbContext(
+            new DbContextOptionsBuilder<CatalogDbContext>()
+                .UseInMemoryDatabase("fin03-catalog-" + Guid.NewGuid()).Options);
+        catalog.Productos.Add(new Producto
+        {
+            Id = Guid.NewGuid(), Sku = "SKU-TEST", Nombre = "Producto",
+            CategoriaNombre = "Pruebas", Subcategoria = "QA",
+            PrecioB2C = 12m, PrecioB2B = 10m, Moneda = "USD",
+            EstadoProducto = "Activo", VendedorId = Guid.NewGuid(), CategoriaId = Guid.NewGuid()
+        });
+        await catalog.SaveChangesAsync();
 
         var proveedor = new Proveedor
         {
@@ -39,7 +52,8 @@ public sealed class NumeracionOrdenesCompraFin03Tests
             Mock.Of<IContabilidadService>(),
             Mock.Of<IInventoryService>(),
             core,
-            NullLogger<ComprasController>.Instance);
+            NullLogger<ComprasController>.Instance,
+            catalog);
 
         for (var i = 0; i < 50; i++)
         {

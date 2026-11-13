@@ -1,4 +1,6 @@
 using MarketplaceERP.API.Controllers;
+using MarketplaceERP.Catalog.Data;
+using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Core.Data;
 using MarketplaceERP.Core.Entities;
@@ -15,13 +17,23 @@ namespace MarketplaceERP.Finance.Tests;
 
 public sealed class ComprasValidacionFin05Tests
 {
-    private static (CoreDbContext Core, FinanceDbContext Finance,
+    private static (CoreDbContext Core, FinanceDbContext Finance, CatalogDbContext Catalog,
         ComprasController Controller, Guid ProveedorId) Crear()
     {
         var core = new CoreDbContext(new DbContextOptionsBuilder<CoreDbContext>()
             .UseInMemoryDatabase("fin05-core-" + Guid.NewGuid()).Options);
         var finance = new FinanceDbContext(new DbContextOptionsBuilder<FinanceDbContext>()
             .UseInMemoryDatabase("fin05-finance-" + Guid.NewGuid()).Options);
+        var catalog = new CatalogDbContext(new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseInMemoryDatabase("fin05-catalog-" + Guid.NewGuid()).Options);
+        catalog.Productos.Add(new Producto
+        {
+            Id = Guid.NewGuid(), Sku = "SKU-TEST", Nombre = "Producto",
+            CategoriaNombre = "Pruebas", Subcategoria = "QA",
+            PrecioB2C = 12m, PrecioB2B = 10m, Moneda = "USD",
+            EstadoProducto = "Activo", VendedorId = Guid.NewGuid(), CategoriaId = Guid.NewGuid()
+        });
+        catalog.SaveChanges();
 
         var proveedorId = Guid.NewGuid();
         core.Proveedores.Add(new Proveedor
@@ -35,8 +47,8 @@ public sealed class ComprasValidacionFin05Tests
 
         var controller = new ComprasController(
             finance, Mock.Of<ITresWayMatchingService>(), Mock.Of<IContabilidadService>(),
-            Mock.Of<IInventoryService>(), core, NullLogger<ComprasController>.Instance);
-        return (core, finance, controller, proveedorId);
+            Mock.Of<IInventoryService>(), core, NullLogger<ComprasController>.Instance, catalog);
+        return (core, finance, catalog, controller, proveedorId);
     }
 
     private static CrearPORequest NuevaPO(Guid proveedorId,
@@ -77,6 +89,7 @@ public sealed class ComprasValidacionFin05Tests
     public async Task POConDatosInvalidos_Devuelve400SinPersistir(string caso)
     {
         var setup = Crear();
+        await using var catalog = setup.Catalog;
         await using var core = setup.Core;
         await using var finance = setup.Finance;
         var (cantidad, precio, sku, nombre) = caso switch
@@ -106,6 +119,7 @@ public sealed class ComprasValidacionFin05Tests
     public async Task POValida_CalculaSubtotalIvaYTotalExactos()
     {
         var setup = Crear();
+        await using var catalog = setup.Catalog;
         await using var core = setup.Core;
         await using var finance = setup.Finance;
         Assert.IsType<CreatedAtActionResult>(await setup.Controller.CrearPO(
@@ -130,6 +144,7 @@ public sealed class ComprasValidacionFin05Tests
     public async Task FacturaInvalida_NoGeneraRegistro(string caso)
     {
         var setup = Crear();
+        await using var catalog = setup.Catalog;
         await using var core = setup.Core;
         await using var finance = setup.Finance;
         var poId = await RegistrarPO(finance, setup.ProveedorId);
@@ -163,6 +178,7 @@ public sealed class ComprasValidacionFin05Tests
     public async Task FacturaValida_ReintentoMismoNumeroNoDuplicaDocumento()
     {
         var setup = Crear();
+        await using var catalog = setup.Catalog;
         await using var core = setup.Core;
         await using var finance = setup.Finance;
         var poId = await RegistrarPO(finance, setup.ProveedorId);

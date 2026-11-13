@@ -4,6 +4,7 @@
  */
 
 using MarketplaceERP.API.Services;
+using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Finance.Entities;
 using MarketplaceERP.Core.Data;
@@ -37,6 +38,7 @@ public class ComprasController : ControllerBase
     private readonly IContabilidadService _contabilidad;
     private readonly IInventoryService _inventory;
     private readonly CoreDbContext _coreDb;
+    private readonly CatalogDbContext? _catalogDb;
     private readonly ILogger<ComprasController> _logger;
 
     public ComprasController(
@@ -45,7 +47,8 @@ public class ComprasController : ControllerBase
         IContabilidadService contabilidad,
         IInventoryService inventory,
         CoreDbContext coreDb,
-        ILogger<ComprasController> logger)
+        ILogger<ComprasController> logger,
+        CatalogDbContext? catalogDb = null)
     {
         _db = db;
         _matching = matching;
@@ -53,6 +56,7 @@ public class ComprasController : ControllerBase
         _inventory = inventory;
         _coreDb = coreDb;
         _logger = logger;
+        _catalogDb = catalogDb;
     }
 
     // ── GET /api/compras/po ───────────────────────────────────────────────────
@@ -164,6 +168,25 @@ public class ComprasController : ControllerBase
         if (proveedor is null)
             return BadRequest(new { mensaje = "El proveedor seleccionado no existe o está inactivo en el maestro corporativo." });
 
+        // ProductoId es NOT NULL y debe corresponder a un producto del catalogo.
+        // Resolver cada SKU contra la fuente maestra antes de crear la PO.
+        // Fallar cerrado evita persistir GUID vacios o referencias inexistentes.
+        if (_catalogDb is null)
+            return BadRequest(new { mensaje = "No se puede crear la PO sin validar sus SKU contra el catǭlogo maestro." });
+
+        var skusSolicitados = req.Items.Select(i => i.Sku.Trim()).ToArray();
+        var productosCatalogo = await _catalogDb.Productos
+            .AsNoTracking()
+            .Where(p => skusSolicitados.Contains(p.Sku))
+            .ToListAsync(cancellationToken);
+        var productosPorSku = productosCatalogo.ToDictionary(
+            p => p.Sku, StringComparer.OrdinalIgnoreCase);
+        foreach (var item in req.Items)
+        {
+            if (!productosPorSku.ContainsKey(item.Sku.Trim()))
+                return BadRequest(new { mensaje = $"El SKU '{item.Sku.Trim()}' no existe en el catǭlogo maestro." });
+        }
+
         var nombreProveedor = !string.IsNullOrWhiteSpace(proveedor.RazonSocial)
             ? proveedor.RazonSocial
             : proveedor.NombreComercial;
@@ -196,6 +219,7 @@ public class ComprasController : ControllerBase
             {
                 Id = Guid.NewGuid(),
                 OrdenCompraId = po.Id,
+                ProductoId = productosPorSku[item.Sku.Trim()].Id,
                 Sku = item.Sku.Trim(),
                 NombreProducto = item.NombreProducto.Trim(),
                 CantidadSolicitada = item.Cantidad,

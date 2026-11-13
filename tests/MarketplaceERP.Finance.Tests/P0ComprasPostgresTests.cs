@@ -142,7 +142,7 @@ public class P0ComprasPostgresTests
             finance, NullLogger<ContabilidadService>.Instance);
         var controller = new ComprasController(
             finance, matching, ledger, inventory, core,
-            NullLogger<ComprasController>.Instance);
+            NullLogger<ComprasController>.Instance, catalog);
 
         Assert.IsType<CreatedAtActionResult>(await controller.CrearPO(
             new CrearPORequest(proveedor.Id, "Proveedor ficticio P0", null,
@@ -283,7 +283,7 @@ public class P0ComprasPostgresTests
             var ctrl = new ComprasController(f,
                 new TresWayMatchingService(f, NullLogger<TresWayMatchingService>.Instance),
                 new ContabilidadService(f, NullLogger<ContabilidadService>.Instance),
-                inv, k, NullLogger<ComprasController>.Instance);
+                inv, k, NullLogger<ComprasController>.Instance, c);
             return await ctrl.RecibirMercaderia(poConcurrencia.Id,
                 new RecibirMercaderiaRequest(new()
                 {
