@@ -295,6 +295,58 @@ test('navegación y control de acceso: reabastecimiento solo admite Admin (Vende
 });
 
 
+test('matriz de navegación: los 15 módulos Admin y las rutas de Vendedor/Comprador coinciden con Sidebar', () => {
+  const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
+  const sidebarSource = fs.readFileSync(path.join(root, 'src/components/layout/Sidebar.tsx'), 'utf8');
+  const routes = [
+    ['checkout', ['Comprador']],
+    ['dashboard', ['Admin']],
+    ['ordenes', ['Admin']],
+    ['mis-ordenes', ['Vendedor']],
+    ['wms', ['Admin']],
+    ['reabastecimiento', ['Admin']],
+    ['proveedores', ['Admin']],
+    ['ajustes', ['Admin']],
+    ['conteos', ['Admin']],
+    ['alertas-inventario', ['Admin']],
+    ['bloqueos-inventario', ['Admin']],
+    ['fulfillment', ['Admin']],
+    ['rma', ['Admin']],
+    ['compras', ['Admin']],
+    ['contabilidad', ['Admin']],
+    ['liquidaciones', ['Admin']],
+    ['productos', ['Admin', 'Vendedor']],
+  ];
+
+  for (const [route, expectedRoles] of routes) {
+    const routeMatch = appSource.match(new RegExp(
+      `<Route\\s+path="${route}"\\s+element=\\{<RoleRouteGuard\\s+allowedRoles=\\{([^}]+)\\}>`,
+    ));
+    assert.ok(routeMatch, `App.tsx: /${route} debe estar protegida por RoleRouteGuard`);
+    assert.deepEqual(eval(routeMatch[1]), expectedRoles, `App.tsx: roles de /${route}`);
+
+    const sidebarRouteIndex = sidebarSource.indexOf("to: '/" + route + "'");
+    assert.notEqual(sidebarRouteIndex, -1, `Sidebar.tsx: /${route} debe estar en navGroups`);
+    const nextSidebarRouteIndex = sidebarSource.indexOf("to: '/", sidebarRouteIndex + 1);
+    const sidebarItem = sidebarSource.slice(sidebarRouteIndex, nextSidebarRouteIndex === -1 ? undefined : nextSidebarRouteIndex);
+    const rolesStart = sidebarItem.indexOf('allowedRoles:');
+    assert.notEqual(rolesStart, -1, `Sidebar.tsx: /${route} debe declarar allowedRoles`);
+    const openBracket = sidebarItem.indexOf('[', rolesStart);
+    const closeBracket = sidebarItem.indexOf(']', openBracket);
+    assert.ok(openBracket >= 0 && closeBracket > openBracket, `Sidebar.tsx: roles inválidos para /${route}`);
+    const sidebarRoles = eval(sidebarItem.slice(openBracket, closeBracket + 1));
+    assert.deepEqual(sidebarRoles, expectedRoles, `Sidebar.tsx: roles de /${route}`);
+  }
+
+  assert.equal(routes.filter(([, roles]) => roles.includes('Admin')).length, 15,
+    'Admin debe tener exactamente los 15 módulos administrativos');
+  assert.equal(routes.filter(([, roles]) => roles.includes('Vendedor')).length, 2,
+    'Vendedor debe tener Productos y Mis órdenes');
+  assert.equal(routes.filter(([, roles]) => roles.includes('Comprador')).length, 1,
+    'Comprador debe tener únicamente Checkout');
+});
+
+
 test('Preview enruta readiness al backend real en el mismo origen', async () => {
   const urls = [];
   await withProxyEnvironment('preview', 'https://marketplaceerp-api-staging.onrender.com',

@@ -65,6 +65,19 @@ public class UsuariosRolesCanonicosTests
         Assert.Equal(rolCanonico, entity.Rol);
         Assert.Equal(rolCanonico == "Vendedor" ? sellerId : (Guid?)null, entity.VendedorId);
 
+        if (rolCanonico == "Comprador")
+        {
+            var comprador = Assert.Single(db.Compradores);
+            Assert.Equal(entity.Id, comprador.Id);
+            Assert.Equal(entity.Email, comprador.Email);
+            Assert.Equal(entity.Nombre, comprador.NombreCompleto);
+            Assert.True(comprador.EstaActivo);
+        }
+        else
+        {
+            Assert.Empty(db.Compradores);
+        }
+
         var authResult = await Auth(db).Login(
             new LoginRequest(email, Password), CancellationToken.None);
         var ok = Assert.IsType<OkObjectResult>(authResult);
@@ -75,11 +88,85 @@ public class UsuariosRolesCanonicosTests
         var claims = new JwtSecurityTokenHandler().ReadJwtToken(login.Token).Claims;
         Assert.Contains(claims, claim =>
             claim.Type == ClaimTypes.Role && claim.Value == rolCanonico);
+        if (rolCanonico == "Comprador")
+            Assert.Contains(claims, claim =>
+                claim.Type == ClaimTypes.NameIdentifier && claim.Value == entity.Id.ToString());
         if (rolCanonico == "Vendedor")
             Assert.Contains(claims, claim =>
                 claim.Type == "VendedorId" && claim.Value == sellerId.ToString());
         else
             Assert.DoesNotContain(claims, claim => claim.Type == "VendedorId");
+    }
+
+    [Fact]
+    public async Task CrearUsuarioComprador_ReutilizaPerfilActivoPorEmail()
+    {
+        await using var db = Db();
+        var buyerId = Guid.NewGuid();
+        var email = $"perfil-{Guid.NewGuid():N}@ci.invalid";
+        db.Compradores.Add(new Comprador
+        {
+            Id = buyerId, Email = email, NombreCompleto = "Comprador existente",
+            DireccionEnvio = "Dirección de prueba", EstaActivo = true
+        });
+        await db.SaveChangesAsync();
+
+        var controller = new UsuariosController(db, NullLogger<UsuariosController>.Instance);
+        var response = await controller.Crear(
+            new CrearUsuarioRequest(email, Password, "Comprador", "Cuenta nueva"),
+            CancellationToken.None);
+
+        var created = Assert.IsType<ObjectResult>(response);
+        Assert.Equal(201, created.StatusCode);
+        var user = Assert.Single(db.Usuarios);
+        var profile = Assert.Single(db.Compradores);
+        Assert.Equal(buyerId, user.Id);
+        Assert.Equal(buyerId, profile.Id);
+        Assert.Equal("Comprador existente", profile.NombreCompleto);
+        Assert.Equal("Dirección de prueba", profile.DireccionEnvio);
+    }
+
+    [Fact]
+    public async Task CrearUsuarioComprador_PerfilInactivoNoSeReactivaAutomaticamente()
+    {
+        await using var db = Db();
+        db.Compradores.Add(new Comprador
+        {
+            Id = Guid.NewGuid(), Email = "inactivo@ci.invalid",
+            NombreCompleto = "Perfil inactivo", EstaActivo = false
+        });
+        await db.SaveChangesAsync();
+
+        var controller = new UsuariosController(db, NullLogger<UsuariosController>.Instance);
+        var response = await controller.Crear(
+            new CrearUsuarioRequest("inactivo@ci.invalid", Password, "Comprador", "Cuenta"),
+            CancellationToken.None);
+
+        Assert.IsType<ConflictObjectResult>(response);
+        Assert.Empty(db.Usuarios);
+        Assert.False(Assert.Single(db.Compradores).EstaActivo);
+    }
+
+    [Fact]
+    public async Task CrearUsuarioVendedor_NoPermiteVincularVendedorInactivo()
+    {
+        await using var db = Db();
+        var sellerId = Guid.NewGuid();
+        db.Vendedores.Add(new Vendedor
+        {
+            Id = sellerId, NombreEmpresa = "Vendedor inactivo",
+            Email = "seller-inactivo@ci.invalid", EstaActivo = false
+        });
+        await db.SaveChangesAsync();
+
+        var controller = new UsuariosController(db, NullLogger<UsuariosController>.Instance);
+        var response = await controller.Crear(
+            new CrearUsuarioRequest("seller-user@ci.invalid", Password, "Vendedor", "Cuenta",
+                sellerId),
+            CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(response);
+        Assert.Empty(db.Usuarios);
     }
 
     [Fact]

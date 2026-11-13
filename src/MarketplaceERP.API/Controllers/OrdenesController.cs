@@ -222,7 +222,7 @@ public class OrdenesController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Crear([FromBody] CrearOrdenRequest req, CancellationToken cancellationToken)
     {
-        if (req.Items == null || req.Items.Count == 0)
+        if (req.Items == null || req.Items.Count is < 1 or > 20)
             return BadRequest(new { mensaje = "Una orden debe tener al menos un ítem." });
 
         // La creación manual sigue reservada al rol Admin, pero nunca debe
@@ -235,7 +235,7 @@ public class OrdenesController : ControllerBase
 
         if (req.CompradorId == Guid.Empty || req.VendedorId == Guid.Empty ||
             !Enum.IsDefined(req.TipoCliente) ||
-            req.Items.Any(item => item.ProductoId == Guid.Empty ||
+            req.Items.Any(item => item is null || item.ProductoId == Guid.Empty ||
                 item.Cantidad <= 0 || !ImporteValido(item.PrecioUnitario)) ||
             (req.CostoEnvio.HasValue && !ImporteValido(req.CostoEnvio.Value)))
             return BadRequest(new { mensaje = "Datos de orden, cantidades o importes no válidos." });
@@ -258,54 +258,32 @@ public class OrdenesController : ControllerBase
             !ImporteValido(subtotalValidado + ivaValidado + envioValidado))
             return BadRequest(new { mensaje = "Importe total excede los límites permitidos." });
 
-        // El identificador visible usa el mismo GUID que la PK de la orden.
-        // No usar un rango aleatorio de 90,000 valores compartido por dia.
-        var ordenId = Guid.NewGuid();
-        var orden = new Orden
+        var service = HttpContext?.RequestServices?.GetService<OrdenEvaluacionService>();
+        if (service is null)
+            return StatusCode(503, new { mensaje = "Creación segura de órdenes no disponible." });
+        var identities = User.FindAll(ClaimTypes.NameIdentifier).Select(c => c.Value).ToArray();
+        // Login emite sub y NameIdentifier con la misma identidad. El mapeo JWT
+        // puede producir ambos claims: aceptar solo si TODOS son válidos e iguales.
+        if (identities.Length == 0 || identities.Any(value =>
+                !Guid.TryParse(value, out var parsed) || parsed == Guid.Empty) ||
+            identities.Select(Guid.Parse).Distinct().Count() != 1)
+            return Unauthorized();
+        var actor = Guid.Parse(identities[0]);
+        var keys = Request.Headers["Idempotency-Key"];
+        if (keys.Count != 1 || string.IsNullOrWhiteSpace(keys[0]))
+            return BadRequest(new { mensaje = "Idempotency-Key es obligatoria; conservarla al reintentar." });
+        try
         {
-            Id = ordenId,
-            NumeroOrden = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{ordenId:N}",
-            CompradorId = req.CompradorId,
-            VendedorId = req.VendedorId,
-            Estado = EstadoOrden.Pendiente,
-            TipoCliente = req.TipoCliente,
-            TipoComprobante = req.TipoComprobante ?? "FacturaConsumidorFinal",
-            CondicionPago = req.CondicionPago ?? "Inmediato",
-            Transportista = req.Transportista ?? "LOGIMKT Express",
-            ZonaEnvio = req.ZonaEnvio ?? "San Salvador y AMSS",
-            DireccionEntrega = req.DireccionEntrega ?? "",
-            FechaCreacion = DateTime.UtcNow,
-            Moneda = "USD",
-        };
-
-        foreach (var item in req.Items)
-        {
-            var lineaOrden = new ItemOrden
-            {
-                Id = Guid.NewGuid(),
-                OrdenId = orden.Id,
-                ProductoId = item.ProductoId,
-                Cantidad = item.Cantidad,
-                PrecioUnitario = item.PrecioUnitario,
-                SkuReferencia = item.Sku ?? "",
-                NombreProducto = item.Nombre ?? "Producto",
-            };
-            orden.Items.Add(lineaOrden);
+            var orden = await service.CreateAsync(req, actor, keys[0]!, cancellationToken);
+            _logger.LogInformation("Orden evaluación {OrdenId} confirmada para Actor={Actor}", orden.Id, actor);
+            return CreatedAtAction(nameof(Obtener), new { id = orden.Id },
+                new { orden.Id, orden.NumeroOrden, orden.MontoTotal });
         }
-
-        orden.SubTotal = subtotalValidado;
-        orden.ImpuestoIva = ivaValidado;
-        orden.CostoEnvio = envioValidado;
-        orden.MontoTotal = orden.SubTotal + orden.ImpuestoIva + orden.CostoEnvio;
-
-        _db.Ordenes.Add(orden);
-        await _db.SaveChangesAsync(cancellationToken);
-
-        _logger.LogInformation("Orden {NumeroOrden} creada. Total={Total:C}", orden.NumeroOrden, orden.MontoTotal);
-
-        return CreatedAtAction(nameof(Obtener), new { id = orden.Id }, new { orden.Id, orden.NumeroOrden, orden.MontoTotal });
+        catch (EvaluacionOrdenException ex)
+        {
+            return StatusCode(ex.StatusCode, new { mensaje = ex.Message });
+        }
     }
-
     // ── PUT /api/ordenes/{id}/estado ──────────────────────────────────────────
     /// <summary>Transiciona la orden entre estados del OMS.</summary>
     [HttpPut("{id:guid}/estado", Name = "TransicionarEstadoOrden")]

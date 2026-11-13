@@ -23,6 +23,9 @@ export default defineConfig({
         target: 'http://localhost:5000',
         changeOrigin: true,
         secure: false,
+        // Misma traducción de salud que el middleware de Vercel.
+        rewrite: requestPath => requestPath === '/api/health' ? '/health'
+          : requestPath === '/api/health/ready' ? '/health/ready' : requestPath,
       },
       '/health': {
         target: 'http://localhost:5000',

@@ -4,8 +4,10 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronRight, Plus } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
+import NuevaOrdenEvaluacion from './NuevaOrdenEvaluacion';
+import { apiClient } from '../../api/client';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
@@ -181,6 +183,19 @@ export default function OrdenesPage() {
     }
   };
 
+  const cancelarEvaluacion = async (id: string) => {
+    if (savingRef.current || !isAdmin) return;
+    savingRef.current = true; setSaving(true);
+    try {
+      const result = await apiClient.post<{ id: string; estado: string }>(`/api/ordenes/evaluacion/${id}/cancelar`);
+      if (result.id !== id || result.estado !== 'Cancelada') throw new Error('Resultado no confirmado.');
+      toast.success('Orden cancelada', 'Se liberaron todas las reservas sin realizar pagos.');
+      await load();
+    } catch {
+      toast.error('Cancelación sin confirmar', 'Reintenta esta misma cancelación para consultar o completar su resultado.');
+    } finally { savingRef.current = false; setSaving(false); }
+  };
+
   const abrirTransicion = (orden: OrdenVista) => {
     if (!isAdmin || savingRef.current || uncertainIds === null || uncertainIds.has(orden.id)) return;
     const siguientes = TRANSICIONES[orden.estado];
@@ -264,6 +279,8 @@ export default function OrdenesPage() {
     { key: 'guiaEnvio', header: 'Guía', render: (row: OrdenVista) => row.guiaEnvio || '—' },
     { key: 'fechaCreacion', header: 'Fecha', render: (row: OrdenVista) => fmt(row.fechaCreacion) },
     { key: 'acciones', header: '', sortable: false, render: (row: OrdenVista) => {
+      if (row.numeroOrden.startsWith('TEST-')) return <button className="btn btn-secondary btn-sm"
+        onClick={event => { event.stopPropagation(); void abrirDetalle(row); }}>Detalle</button>;
       if (!TRANSICIONES[row.estado]?.length) return null;
       if (uncertainIds === null || uncertainIds.has(row.id)) return <span>Transición bloqueada: resultado por verificar</span>;
       return (
@@ -294,9 +311,7 @@ export default function OrdenesPage() {
             <option value="">Todos los estados</option>
             {ESTADOS.map(estado => <option key={estado} value={estado}>{estado}</option>)}
           </select>
-          <button className="btn btn-primary" disabled title="La creación manual requiere comprador, vendedor y producto reales.">
-            <Plus size={13} /> Nueva Orden no disponible
-          </button>
+          {isAdmin && usuario && <NuevaOrdenEvaluacion actorId={usuario.email} onCreated={() => void load()} />}
         </div>
       </div>
 
@@ -345,7 +360,12 @@ export default function OrdenesPage() {
                 </div>
               ))}
             </div>
-            {TRANSICIONES[selectedOrden.estado]?.length && (
+            {selectedOrden.numeroOrden.startsWith('TEST-') && selectedOrden.estado === 'Pendiente' && (
+              <button className="btn btn-secondary" disabled={saving} onClick={() => void cancelarEvaluacion(selectedOrden.id)}>
+                Cancelar evaluación y liberar reservas
+              </button>
+            )}
+            {!selectedOrden.numeroOrden.startsWith('TEST-') && !!TRANSICIONES[selectedOrden.estado]?.length && (
               <button className="btn btn-primary"
                 disabled={uncertainIds === null || uncertainIds.has(selectedOrden.id)}
                 onClick={() => abrirTransicion(selectedOrden)}>

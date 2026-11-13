@@ -123,44 +123,19 @@ public sealed class OrdenesPostAlternativoHttpQaTests
     }
 
     [Fact]
-    public async Task PostOrdenes_AdminValidoConserva201_PeroOperacionFinancieraBloqueada()
+    public async Task PostOrdenes_SinServicioSeguro_DeniegaSinPersistirOrdenes()
     {
         using var server = CreateServer(out _);
         using var admin = server.CreateClient();
-        admin.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", Token("Admin"));
-        var payload = new CrearOrdenRequest(Guid.NewGuid(), Guid.NewGuid(),
-            TipoCliente.B2C, null, null, null, null, null, 5m,
-            new List<ItemOrdenRequest>
-            {
-                new(Guid.NewGuid(), "SKU-QA", "QA", 2, 10m)
-            });
-        using var create = await admin.PostAsJsonAsync("/api/ordenes", payload);
-        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
-        Guid orderId;
-        using (var scope = server.Services.CreateScope())
-        {
-            var order = await scope.ServiceProvider.GetRequiredService<FinanceDbContext>()
-                .Ordenes.AsNoTracking().SingleAsync();
-            orderId = order.Id;
-            Assert.Equal($"ORD-{order.FechaCreacion:yyyyMMdd}-{order.Id:N}", order.NumeroOrden);
-            Assert.Equal(45, order.NumeroOrden.Length);
-            Assert.Equal(20m, order.SubTotal);
-            Assert.Equal(2.60m, order.ImpuestoIva);
-            Assert.Equal(27.60m, order.MontoTotal);
-            Assert.Equal(EstadoOrden.Pendiente, order.Estado);
-        }
-        using var transition = await admin.PutAsJsonAsync(
-            $"/api/ordenes/{orderId}/estado",
-            new TransicionEstadoRequest("Aprobada", null));
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, transition.StatusCode);
-        using var verifyScope = server.Services.CreateScope();
-        var finance = verifyScope.ServiceProvider.GetRequiredService<FinanceDbContext>();
-        Assert.Equal(EstadoOrden.Pendiente,
-            (await finance.Ordenes.AsNoTracking().SingleAsync()).Estado);
-        Assert.Equal(0, await finance.PartidasContables.CountAsync());
+        admin.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token("Admin"));
+        var payload = new CrearOrdenRequest(Guid.NewGuid(), Guid.NewGuid(), TipoCliente.B2C,
+            null, null, null, null, "Entrega sintética", 5m,
+            new List<ItemOrdenRequest> { new(Guid.NewGuid(), "QA", "QA", 1, 10m) });
+        using var response = await admin.PostAsJsonAsync("/api/ordenes", payload);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        using var scope = server.Services.CreateScope();
+        Assert.Empty(await scope.ServiceProvider.GetRequiredService<FinanceDbContext>().Ordenes.ToListAsync());
     }
-
     private static TestServer CreateServer(out string databaseName)
     {
         databaseName = "qa-orders-" + Guid.NewGuid().ToString("N");

@@ -91,7 +91,7 @@ public class UsuariosController : ControllerBase
             return Conflict(new { mensaje = $"El correo '{normalizedEmail}' ya está registrado en el sistema." });
         }
 
-        // Si el rol es Vendedor, VendedorId es obligatorio y debe existir en core.vendedores
+        // Si el rol es Vendedor, VendedorId es obligatorio y debe estar activo en core.vendedores.
         Guid? vendedorIdAsignado = null;
         if (rolCanonico == "Vendedor")
         {
@@ -100,18 +100,56 @@ public class UsuariosController : ControllerBase
                 return BadRequest(new { mensaje = "Para usuarios con rol 'Vendedor', el campo 'VendedorId' es obligatorio." });
             }
 
-            var existeVendedor = await _coreDb.Vendedores.AnyAsync(v => v.Id == request.VendedorId.Value, cancellationToken);
-            if (!existeVendedor)
+            var vendedorActivo = await _coreDb.Vendedores.AnyAsync(
+                v => v.Id == request.VendedorId.Value && v.EstaActivo, cancellationToken);
+            if (!vendedorActivo)
             {
-                return BadRequest(new { mensaje = $"El VendedorId '{request.VendedorId.Value}' especificado no existe en el sistema." });
+                return BadRequest(new { mensaje = $"El VendedorId '{request.VendedorId.Value}' no existe o está inactivo." });
             }
 
             vendedorIdAsignado = request.VendedorId.Value;
         }
 
+        // El checkout identifica al comprador con el mismo GUID que usa
+        // core.compradores. Crear ambos registros en un único SaveChanges evita
+        // usuarios Comprador que luego no aparecen en Nueva Orden de evaluación.
+        var usuarioId = Guid.NewGuid();
+        if (rolCanonico == "Comprador")
+        {
+            var perfilExistente = await _coreDb.Compradores
+                .SingleOrDefaultAsync(c => c.Email == normalizedEmail, cancellationToken);
+
+            if (perfilExistente is not null)
+            {
+                if (!perfilExistente.EstaActivo)
+                    return Conflict(new { mensaje = "El perfil comprador existente está inactivo y requiere reactivación administrativa." });
+
+                var idEnUso = await _coreDb.Usuarios
+                    .AnyAsync(u => u.Id == perfilExistente.Id, cancellationToken);
+                if (idEnUso)
+                    return Conflict(new { mensaje = "El perfil comprador ya está vinculado a otra cuenta." });
+
+                usuarioId = perfilExistente.Id;
+                if (string.IsNullOrWhiteSpace(perfilExistente.NombreCompleto))
+                    perfilExistente.NombreCompleto = request.Nombre.Trim();
+            }
+            else
+            {
+                _coreDb.Compradores.Add(new Comprador
+                {
+                    Id = usuarioId,
+                    NombreCompleto = request.Nombre.Trim(),
+                    Email = normalizedEmail,
+                    DireccionEnvio = string.Empty,
+                    EstaActivo = true,
+                    FechaRegistro = DateTime.UtcNow
+                });
+            }
+        }
+
         var nuevoUsuario = new Usuario
         {
-            Id = Guid.NewGuid(),
+            Id = usuarioId,
             Email = normalizedEmail,
             Nombre = request.Nombre.Trim(),
             Rol = rolCanonico,

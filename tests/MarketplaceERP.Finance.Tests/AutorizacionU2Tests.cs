@@ -249,10 +249,11 @@ public class AutorizacionU2Tests
         // SOLO en sandbox: +2 endpoints QA de comprador y +1 endpoint
         // de referencias reales de producto para Admin/Vendedor.
         // Ninguna autorización queda implícita.
-        Assert.Equal(25, controllers.Length);
+        // OMS evaluación: +1 controlador y +2 rutas, ambas exclusivamente Admin.
+        Assert.Equal(26, controllers.Length);
         // F103 agrega dos GET exclusivos de Vendedor sin ampliar rutas Admin.
-        Assert.Equal(90, actions);
-        Assert.Equal(91, routes); // Productos/GetAlertasStock tiene dos alias.
+        Assert.Equal(92, actions);
+        Assert.Equal(93, routes); // Productos/GetAlertasStock tiene dos alias.
     }
 
     [Theory]
