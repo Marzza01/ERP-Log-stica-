@@ -113,6 +113,51 @@ public class StagingDatabaseTargetGuardTests
     }
 
     [Fact]
+    public void RuntimeResolvedDefaultConnection_DoesNotCountAsSecondExplicitSource()
+    {
+        var config = Configuration();
+        // Program resuelve y valida la única fuente antes de copiarla para EF.
+        var chosen = DatabaseConnectionConfiguration.Resolve(config);
+        Check(config);
+        config["ConnectionStrings:DefaultConnection"] = chosen;
+
+        // El guard estricto de arranque sigue rechazando una segunda fuente.
+        Assert.Throws<InvalidOperationException>(() => Check(config));
+        // Solo la reverificación runtime permite la copia idéntica de EF.
+        StagingDatabaseTargetGuard.ValidateRuntime(config,
+            StagingDatabaseTargetGuard.ServiceName, "Production", chosen);
+    }
+
+    [Fact]
+    public void RuntimeResolvedDefaultConnection_FailsClosedIfDifferentOrUntrusted()
+    {
+        var config = Configuration();
+        var chosen = DatabaseConnectionConfiguration.Resolve(config);
+        config["ConnectionStrings:DefaultConnection"] = Connection(database: "wrong_database");
+        Assert.Throws<InvalidOperationException>(() =>
+            StagingDatabaseTargetGuard.ValidateRuntime(config,
+                StagingDatabaseTargetGuard.ServiceName, "Production", chosen));
+
+        config["ConnectionStrings:DefaultConnection"] = chosen;
+        config["DATABASE_URL"] = "postgresql://qa.invalid/other";
+        Assert.Throws<InvalidOperationException>(() =>
+            StagingDatabaseTargetGuard.ValidateRuntime(config,
+                StagingDatabaseTargetGuard.ServiceName, "Production", chosen));
+        config["DATABASE_URL"] = null;
+
+        Assert.Throws<InvalidOperationException>(() =>
+            StagingDatabaseTargetGuard.ValidateRuntime(config,
+                StagingDatabaseTargetGuard.ServiceName, "Production",
+                Connection(host: SharedProductionHost)));
+        Assert.Throws<InvalidOperationException>(() =>
+            StagingDatabaseTargetGuard.ValidateRuntime(config,
+                "marketplaceerp-api", "Production", chosen));
+        Assert.Throws<InvalidOperationException>(() =>
+            StagingDatabaseTargetGuard.ValidateRuntime(config,
+                StagingDatabaseTargetGuard.ServiceName, "Development", chosen));
+    }
+
+    [Fact]
     public void ConflictingConnectionSources_AreRejected() =>
         Assert.Throws<InvalidOperationException>(() =>
             Check(Configuration(otherUrl: "postgresql://example.invalid/other")));

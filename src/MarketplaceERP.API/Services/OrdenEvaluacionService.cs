@@ -54,7 +54,7 @@ public sealed class OrdenEvaluacionService(
                 configuration["Deployment:Target"] != StagingDatabaseTargetGuard.TargetMarker ||
                 configuration[StagingDatabaseTargetGuard.ApprovedHostConfiguration] != IsolatedHost)
                 throw new EvaluacionOrdenException(503, "Destino de evaluación no autorizado.");
-            StagingDatabaseTargetGuard.Validate(configuration,
+            StagingDatabaseTargetGuard.ValidateRuntime(configuration,
                 configuration["RENDER_SERVICE_NAME"], environment.EnvironmentName,
                 finance.Database.GetDbConnection().ConnectionString);
         }

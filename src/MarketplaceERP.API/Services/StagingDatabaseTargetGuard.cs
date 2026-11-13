@@ -87,6 +87,43 @@ public static class StagingDatabaseTargetGuard
     }
 
     /// <summary>
+    /// Verificación repetida durante HTTP: Program ya validó CONNECTION_STRING
+    /// como fuente única antes de materializarla en DefaultConnection para EF.
+    /// La copia runtime solo se acepta cuando coincide byte por byte con la
+    /// fuente explícita; DATABASE_URL sigue prohibida y se repite el guard TLS.
+    /// No cambia la validación estricta de arranque ni la de mantenimiento.
+    /// </summary>
+    public static void ValidateRuntime(
+        IConfiguration configuration,
+        string? renderServiceName,
+        string environmentName,
+        string? resolvedConnection)
+    {
+        var explicitConnection = configuration["CONNECTION_STRING"];
+        var derivedConnection = configuration.GetConnectionString("DefaultConnection");
+
+        if (string.IsNullOrWhiteSpace(explicitConnection) ||
+            !string.Equals(explicitConnection, derivedConnection, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "La conexión interna de STAGING no coincide con la fuente explícita validada.");
+
+        // Proyectar únicamente las claves de seguridad originales: el valor
+        // derivado por Program no es una segunda fuente de configuración.
+        var startupSource = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CONNECTION_STRING"] = explicitConnection,
+                ["DATABASE_URL"] = configuration["DATABASE_URL"],
+                ["Deployment:Target"] = configuration["Deployment:Target"],
+                [ApprovedHostConfiguration] = configuration[ApprovedHostConfiguration],
+                ["Payments:Provider"] = configuration["Payments:Provider"]
+            })
+            .Build();
+
+        Validate(startupSource, renderServiceName, environmentName, resolvedConnection);
+    }
+
+    /// <summary>
     /// Las operaciones de mantenimiento remoto solo pueden usar el endpoint
     /// aislado de STAGING identificado completamente; no permiten PROD.
     /// localhost se admite únicamente para ensayos locales sin ningún marcador.
