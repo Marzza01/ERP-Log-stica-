@@ -35,10 +35,19 @@ public sealed class OrdenEvaluacionService(
             throw new EvaluacionOrdenException(503, "Creación de órdenes de evaluación no autorizada.");
 
         var descriptor = new Npgsql.NpgsqlConnectionStringBuilder(finance.Database.GetDbConnection().ConnectionString);
-        var localRehearsal = environment.IsDevelopment() &&
-            descriptor.Host is "localhost" or "127.0.0.1" or "::1" &&
-            descriptor.Database?.StartsWith("ci_oms_evaluation_", StringComparison.Ordinal) == true &&
-            configuration["RENDER_SERVICE_NAME"] is null && configuration["Deployment:Target"] is null;
+        var localHost = descriptor.Host is "localhost" or "127.0.0.1" or "::1";
+        var isolatedTestDatabase = descriptor.Database?.StartsWith("ci_oms_evaluation_", StringComparison.Ordinal) == true;
+        // GitHub Actions usa una BD postgres local recién creada para el E2E
+        // de F105. Este permiso exige simultáneamente CI + GITHUB_ACTIONS,
+        // Development, loopback:5432 y ausencia de identidad/configuración Render.
+        var githubActionsDatabase = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"),
+                "true", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(descriptor.Database, "postgres", StringComparison.OrdinalIgnoreCase);
+        var localRehearsal = environment.IsDevelopment() && localHost && descriptor.Port == 5432 &&
+            (isolatedTestDatabase || githubActionsDatabase) &&
+            string.IsNullOrWhiteSpace(configuration["RENDER_SERVICE_NAME"]) &&
+            string.IsNullOrWhiteSpace(configuration["Deployment:Target"]);
         if (!localRehearsal)
         {
             if (configuration["RENDER_SERVICE_NAME"] != StagingDatabaseTargetGuard.ServiceName ||

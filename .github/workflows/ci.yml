@@ -245,6 +245,7 @@ jobs:
       Payments__EnableMock: "false"
       ASPNETCORE_ENVIRONMENT: "Development"
       PORT: "5000"
+      CI: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -302,6 +303,21 @@ jobs:
               "--expected-database=postgres" \
               "--confirm-target=$FP"
           done
+
+      - name: Seed F105 two-seller products and physical stock in disposable PostgreSQL
+        env:
+          TEST_PG_CONNECTION: ${{ env.CONNECTION_STRING }}
+          F105_SEED_FIXTURE: "true"
+        run: |
+          dotnet test tests/MarketplaceERP.Finance.Tests/MarketplaceERP.Finance.Tests.csproj \
+            --configuration Release --no-restore \
+            --filter "FullyQualifiedName~F105FixtureSeedTests" \
+            --logger "console;verbosity=minimal"
+
+      - name: Enable guarded order evaluation for this CI run only
+        run: |
+          echo "Orders__StagingEvaluation__Enabled=true" >> "$GITHUB_ENV"
+          echo "Orders__StagingEvaluation__ExpiresAtUtc=$(date -u -d '+2 hours' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
 
       - name: Start real local ASP.NET API
         run: |

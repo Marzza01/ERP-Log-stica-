@@ -92,45 +92,52 @@ async function fixture(page, buyers) {
   return page.evaluate(async ({buyers})=>{
     const token=localStorage.getItem('erp_token');
     const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'};
-    async function call(path, body){
-      const res=await fetch(path,{method:'POST',headers,body:JSON.stringify(body)});
-      if(res.status!==201) throw new Error('F105 local fixture POST '+path+' status '+res.status);
-      return res.json();
+    async function call(path, body, extraHeaders={}){
+      const res=await fetch(path,{method:'POST',headers:{...headers,...extraHeaders},body:JSON.stringify(body)});
+      const raw=await res.text();
+      if(res.status!==201) throw new Error('F105 local fixture POST '+path+' status '+res.status+': '+raw);
+      return raw ? JSON.parse(raw) : {};
     }
-    const sellerIds=[];
+    const sellerIds=[
+      'f1050000-0000-4000-8000-000000000001',
+      'f1050000-0000-4000-8000-000000000002'
+    ];
+    const buyerId='f1050000-0000-4000-8000-000000000003';
+    const products=[
+      {id:'f1050000-0000-4000-8000-000000000011',sku:'F105-A-001',name:'Producto QA A1',price:10},
+      {id:'f1050000-0000-4000-8000-000000000012',sku:'F105-A-002',name:'Producto QA A2',price:12},
+      {id:'f1050000-0000-4000-8000-000000000021',sku:'F105-B-001',name:'Producto QA B1',price:20}
+    ];
     for(let i=0;i<2;i++){
-      const v=await call('/api/vendedores',{
-        nombreEmpresa:'F105 empresa QA '+String(i+1),
-        email:buyers[i].email,telefono:'0000-0000'
-      });
-      sellerIds.push(v.id);
-      await call('/api/usuarios',{
+      const created=await call('/api/usuarios',{
         email:buyers[i].email,password:buyers[i].password,
         rol:'Vendedor',nombre:'Vendedor F105 '+String(i+1),
-        vendedorId:v.id
+        vendedorId:sellerIds[i]
       });
+      if(created.vendedorId!==sellerIds[i]) throw new Error('F105 seller account linked to wrong VendedorId');
     }
     const buyer=buyers[2];
-    await call('/api/usuarios',{
+    const createdBuyer=await call('/api/usuarios',{
       email:buyer.email,password:buyer.password,
       rol:'Comprador',nombre:'Comprador F105'
     });
+    if(createdBuyer.id!==buyerId) throw new Error('F105 buyer user was not linked to its pre-seeded Comprador profile');
     const orders=[];
     for(let i=0;i<3;i++){
       const owner=i===2?1:0;
-      const sku='F105-'+(owner?'B':'A')+'-'+(i+1);
+      const product=products[i];
       const made=await call('/api/ordenes',{
-        compradorId:crypto.randomUUID(),
+        compradorId:buyerId,
         vendedorId:sellerIds[owner],
         tipoCliente:0,
         tipoComprobante:'FacturaConsumidorFinal',
         condicionPago:'Inmediato',
-        costoEnvio:0,
+        costoEnvio:5,
         direccionEntrega:'F105_DIRECCION_PRIVADA_'+(owner?'B':'A'),
-        items:[{productoId:crypto.randomUUID(),sku,
-          nombre:'Producto QA '+sku,cantidad:1,precioUnitario:(owner?900:10+i)}]
-      });
-      orders.push({id:made.id,numeroOrden:made.numeroOrden,sku,owner});
+        items:[{productoId:product.id,sku:product.sku,
+          nombre:product.name,cantidad:1,precioUnitario:product.price}]
+      },{'Idempotency-Key':'F105-'+crypto.randomUUID()});
+      orders.push({id:made.id,numeroOrden:made.numeroOrden,sku:product.sku,owner});
     }
     return {sellerIds,orders};
   }, {buyers});
@@ -152,7 +159,8 @@ try {
     }
   });
   const admin={email:adminEmail,password:adminPassword};
-  const sellerA=credentials('seller-a'),sellerB=credentials('seller-b'),buyer=credentials('buyer');
+  const sellerA=credentials('seller-a'),sellerB=credentials('seller-b');
+  const buyer={email:'f105-buyer@erp.invalid',password:randomBytes(28).toString('base64url')};
   await login(page,admin,'/dashboard');
   record('ADMIN_LOGIN_REAL_JWT');
   const {sellerIds,orders}=await fixture(page,[sellerA,sellerB,buyer]);
