@@ -210,7 +210,10 @@ public sealed class CheckoutMultiSkuController : ControllerBase
         {
             try
             {
-                await RechazarYLiberarAsync(ordenId, cancellationToken);
+                // El proveedor ya resolvio el cobro. No cancelar la
+                // compensacion duradera si el navegador corta la conexion.
+                // El mismo criterio se usa para persistir pagos aprobados.
+                await RechazarYLiberarAsync(ordenId, CancellationToken.None);
                 return Conflict(new
                 {
                     tipo = "PagoRechazado",

@@ -336,6 +336,76 @@ public sealed class CheckoutMultiSkuHttpTests : IAsyncLifetime
         commission.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task HttpV2Comercial_ClienteDesconectadoTrasRechazo_LiberaTodasLasReservas()
+    {
+        // El token HTTP se cancela cuando el proveedor YA rechazó el pago.
+        // La compensación duradera debe continuar sin el cliente conectado.
+        var seller = Guid.NewGuid();
+        var buyer = Guid.NewGuid();
+        var productA = Guid.NewGuid();
+        var productB = Guid.NewGuid();
+        await SeedCatalogAsync(seller, productA, productB, Guid.NewGuid(), false);
+
+        using var clientDisconnected = new CancellationTokenSource();
+        var gateway = new Mock<IPaymentGateway>(MockBehavior.Strict);
+        gateway.Setup(x => x.ProcesarPagoAsync(It.IsAny<PagoRequest>()))
+            .Callback(() => clientDisconnected.Cancel())
+            .ReturnsAsync(new PagoResult(false, null, "Proveedor QA: rechazo firme"));
+        var commissions = new Mock<ICommissionService>(MockBehavior.Strict);
+
+        using var server = CreateHost(gateway.Object, commissions.Object, disabled: false);
+        using var scope = server.Services.CreateScope();
+        var controller = ActivatorUtilities.CreateInstance<CheckoutMultiSkuController>(
+            scope.ServiceProvider);
+        var http = new DefaultHttpContext
+        {
+            RequestServices = scope.ServiceProvider,
+            User = new ClaimsPrincipal(new ClaimsIdentity(
+                new[] {
+                    new Claim(ClaimTypes.NameIdentifier, buyer.ToString()),
+                    new Claim(ClaimTypes.Role, "Comprador")
+                }, "qa-token"))
+        };
+        http.RequestAborted = clientDisconnected.Token;
+        controller.ControllerContext = new ControllerContext { HttpContext = http };
+        var payload = new CheckoutMultiSkuHttpRequest
+        {
+            Items = new List<CheckoutMultiSkuHttpItem>
+            {
+                new() { ProductoId = productB, Cantidad = 1 },
+                new() { ProductoId = productA, Cantidad = 1 }
+            }
+        };
+        var result = await controller.Comprar(
+            payload, "QA-DISCONNECT-REJECT-" + Guid.NewGuid().ToString("N"),
+            clientDisconnected.Token);
+
+        Assert.True(clientDisconnected.IsCancellationRequested);
+        var rejected = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Contains("PagoRechazado", JsonSerializer.Serialize(rejected.Value));
+        Assert.DoesNotContain("PagoRechazadoLiberacionPendiente",
+            JsonSerializer.Serialize(rejected.Value));
+        gateway.Verify(x => x.ProcesarPagoAsync(It.IsAny<PagoRequest>()), Times.Once);
+        commissions.VerifyNoOtherCalls();
+
+        await using var finance = NewFinance();
+        Assert.Equal(EstadoOrden.Cancelada,
+            (await finance.Ordenes.AsNoTracking().SingleAsync()).Estado);
+        Assert.Equal(EstadoIntentoPago.Rechazado,
+            (await finance.IntentosPago.AsNoTracking().SingleAsync()).Estado);
+        Assert.Equal(2, await finance.IntentoReservasPago.CountAsync());
+        Assert.Empty(await finance.SplitsPago.ToListAsync());
+        Assert.Empty(await finance.PartidasContables.ToListAsync());
+
+        await using var catalog = NewCatalog();
+        var reservations = await catalog.ReservasStock.AsNoTracking().ToListAsync();
+        Assert.Equal(2, reservations.Count);
+        Assert.All(reservations, r => Assert.Equal(EstadoReserva.Liberada, r.Estado));
+        Assert.All(await catalog.StockFisico.AsNoTracking().ToListAsync(),
+            stock => Assert.Equal(0, stock.CantidadReservada));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -1,5 +1,14 @@
 # PR #60 | Puerta de release y alineación a main
 
+## F282/F283 — antirregresión del backend productivo y compensación tras corte HTTP
+- Referencia histórica relevante: Render Production sirve el commit `77e9a16ea2b9d7d7cdd3c83c65bf9bb1b4e81d1d`, único commit de esa rama que no figura como ancestro de la candidata. Su parche exacto introduce `Producto.CodigoEAN` nullable y búsqueda con `p.CodigoEAN != null`. **Ambos cambios ya están presentes semánticamente en la candidata**: no cherry-pick del commit ni pérdida de esa corrección.
+- **F282 en STAGING real**: `441` productos publicados de Neon STAGING tienen `CodigoEAN IS NULL`; inicio de sesión Comprador QA desde DPAPI y `GET /api/productos/buscar?q=ALM-0001` respondió 200 con el SKU sin EAN; búsqueda de SKU inexistente 200 y 0 resultados. `F282_RESULTADO=HOTFIX_CODIGOEAN_PRESENTE_FUNCIONAL_EN_STAGING`, 0 escrituras. Prueba privada local: `_Codex_F220_Cierre_20261112/F282_CATALOGO_EAN_NULL_STAGING.ps1`.
+- **F283 bug real reproducido ANTES de la corrección:** en checkout multi-SKU, si el proveedor rechazaba el pago en el momento de cancelación de la petición HTTP, se invocaba `RechazarYLiberarAsync` con `cancellationToken` ya cancelado, devolviendo `PagoRechazadoLiberacionPendiente` sin compensar; regresión falló 1/1 como se esperaba. Cambio mínimo: usar `CancellationToken.None` en la **compensación durable posterior al rechazo confirmado** (mismo tratamiento ya empleado para persistir la aprobación). Tras la corrección, `CheckoutMultiSkuHttpTests` **9/9 PASS local**, incluida nueva prueba con cancelación explícita y PostgreSQL efímero comprobando orden Cancelada, intento Rechazado, 2/2 reservas Liberadas y 0 stock reservado. La CI del nuevo commit se verificará tras el push.
+- No se ejecutó pago real, no se cambiaron Render/Neon Production ni `main`. Los fallos de red/proveedor externos reales, la aceptación Preview SSO y el backup/rollback Production siguen pendientes. **Bloque C NO-GO** hasta cumplir el gate.
+
+---
+
+
 > **CORTE ACTUALIZADO — 14-nov-2026, El Salvador.** Este bloque tiene prioridad
 > sobre los SHAs históricos del informe original. C todavía NO-GO para integración;
 > no implica autorización para merge, pagos reales ni cambios a Production.
