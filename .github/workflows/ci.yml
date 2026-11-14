@@ -56,6 +56,17 @@ jobs:
       - name: Restore NuGet packages
         run: dotnet restore MarketplaceERP.sln
 
+      # F273: la API desplegable no debe incluir NuGet High/Critical conocidos.
+      # La auditoría es de lectura: no ejecuta actualización automática.
+      - name: Audit runtime API NuGet dependencies (fail closed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet list src/MarketplaceERP.API/MarketplaceERP.API.csproj package             --vulnerable --include-transitive --format json > "$RUNNER_TEMP/nuget-audit.json"
+          jq -e '[.projects[].frameworks[] | ((.topLevelPackages // []) + (.transitivePackages // []))[] |
+            select(((.vulnerabilities // []) | length) > 0)] | length == 0'             "$RUNNER_TEMP/nuget-audit.json" > /dev/null
+          echo "F273_NUGET_AUDIT_PASS"
+
       # 4. Build en modo Release
       - name: Build solution (QA harness for test compilation)
         run: dotnet build MarketplaceERP.sln --no-restore --configuration Release -p:CheckoutQaHarness=true -m:1
@@ -126,6 +137,11 @@ jobs:
       - name: Install npm dependencies
         working-directory: frontend/marketplace-ui
         run: npm ci
+
+      # F273: dependencias usadas en producción deben estar libres de HIGH/CRITICAL.
+      - name: Audit frontend production npm dependencies
+        working-directory: frontend/marketplace-ui
+        run: npm audit --omit=dev --audit-level=high
 
       # P1: clasificar dependencias runtime vs dev con auditoria de solo lectura.
       # No hacer npm audit fix, ni bloquear el CI sin revisar los advisories.

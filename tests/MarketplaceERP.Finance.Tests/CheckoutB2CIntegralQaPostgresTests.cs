@@ -491,7 +491,8 @@ public sealed class CheckoutB2CIntegralQaPostgresTests : IAsyncLifetime
         // Solo termina conexiones residuales de ESTA base efímera QA;
         // jamás conexiones de la base compartida u otros tests.
         await using (var terminate = new NpgsqlCommand(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity " +
+            // Esperar hasta 5s a que termine la sesión antes del conteo: evita la carrera de CI.
+            "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity " +
             "WHERE datname = @db AND pid <> pg_backend_pid()", root))
         {
             terminate.Parameters.AddWithValue("db", _database);
