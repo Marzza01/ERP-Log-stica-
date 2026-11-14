@@ -74,6 +74,13 @@ public class FulfillmentServiceTests
         pickList.Items.First().Pasillo.Should().Be("A");
         pickList.Items.Last().Pasillo.Should().Be("B");
         pickList.Estado.Should().Be(EstadoPicking.Pendiente);
+        pickList.NumeroPickList.Should().Be(
+            $"PKL-{pickList.FechaCreacion:yyyyMMdd}-{pickList.Id:N}");
+        pickList.NumeroPickList.Length.Should().Be(45);
+        // Reintentar la misma reserva no crea un nuevo documento/numero.
+        var replay = await service.GenerarPickListAsync(request);
+        replay.Id.Should().Be(pickList.Id);
+        replay.NumeroPickList.Should().Be(pickList.NumeroPickList);
     }
 
     [Fact]
@@ -158,8 +165,69 @@ public class FulfillmentServiceTests
         var paquete = await service.EmpacarYRotularAsync(request);
 
         paquete.NumeroGuia.Should().StartWith("SV-LOGI-");
+        paquete.NumeroGuia.Should().Be(
+            $"SV-LOGI-{paquete.FechaEmpaque:yyyyMMdd}-{paquete.Id:N}");
+        paquete.NumeroGuia.Length.Should().Be(49);
+        var replay = await service.EmpacarYRotularAsync(request);
+        replay.Id.Should().Be(paquete.Id);
+        replay.NumeroGuia.Should().Be(paquete.NumeroGuia);
         paquete.Estado.Should().Be(EstadoPacking.ListoParaDespacho);
         paquete.VolumenM3.Should().Be(0.006m);
+    }
+
+
+    [Fact]
+    public async Task ConfirmarPicking_Completada_NoPermiteReducirCantidad()
+    {
+        await using var db = CreateInMemoryDbContext();
+        var service = CreateFulfillmentService(db, CreateStockService(db));
+        var item = new ItemPickList
+        {
+            Id = Guid.NewGuid(), Sku = "SKU-GUARD", NombreProducto = "Producto",
+            CantidadSolicitada = 3, CantidadRecogida = 3,
+            Pasillo = "A", Rack = "01", Nivel = 1, Posicion = "01"
+        };
+        var list = new PickList
+        {
+            Id = Guid.NewGuid(), NumeroPickList = "PKL-GUARD", NumeroOrden = "ORD-GUARD",
+            Estado = EstadoPicking.Completado, FechaFin = DateTime.UtcNow,
+            Items = new List<ItemPickList> { item }
+        };
+        db.PickLists.Add(list);
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ConfirmarPickingAsync(list.Id,
+                new List<ConfirmarItemPickingRequest> { new(item.Id, 1) }));
+
+        Assert.Equal(3, (await db.PickLists.Include(x => x.Items).SingleAsync()).Items.Single().CantidadRecogida);
+    }
+
+    [Fact]
+    public async Task EmpacarYRotular_NoCreaNuevoPaqueteDespuesDeDespacho()
+    {
+        await using var db = CreateInMemoryDbContext();
+        var service = CreateFulfillmentService(db, CreateStockService(db));
+        var orderId = Guid.NewGuid();
+        db.PickLists.Add(new PickList
+        {
+            Id = Guid.NewGuid(), OrdenId = orderId, NumeroOrden = "ORD-GUARD-2",
+            NumeroPickList = "PKL-GUARD-2", Estado = EstadoPicking.Completado
+        });
+        db.PaquetesDespacho.Add(new PaqueteDespacho
+        {
+            Id = Guid.NewGuid(), OrdenId = orderId, NumeroOrden = "ORD-GUARD-2",
+            NumeroGuia = "GUIA-GUARD-2", Estado = EstadoPacking.Despachado,
+            FechaDespacho = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var request = new EmpacarDespachoRequest(
+            orderId, "ORD-GUARD-2", 1m, 10m, 10m, 10m, "Transportista",
+            "San Salvador", "Centro", "Direccion", "Cliente", "7000-0000");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EmpacarYRotularAsync(request));
+
+        Assert.Equal(1, await db.PaquetesDespacho.CountAsync());
     }
 
     [Fact]
@@ -228,6 +296,87 @@ public class FulfillmentServiceTests
 
         outbound.Sum(m => m.Cantidad).Should().Be(3);
         outbound.Should().HaveCount(1, "el segundo despacho no debe descontar otra vez");
+    }
+
+    [Fact]
+    public async Task GenerarPickList_ConDuplicadosHistoricos_RechazaSinBorrarListas()
+    {
+        await using var db = CreateInMemoryDbContext();
+        var servicio = CreateFulfillmentService(db, CreateStockService(db));
+        var ordenId = Guid.NewGuid();
+        var productoId = Guid.NewGuid();
+        const string sku = "SKU-LEGACY-DUP";
+        const string numero = "ORD-LEGACY-DUP";
+
+        for (var i = 0; i < 2; i++)
+        {
+            db.PickLists.Add(new PickList
+            {
+                Id = Guid.NewGuid(), OrdenId = ordenId, NumeroOrden = numero,
+                NumeroPickList = "PKL-LEGACY-" + i,
+                Estado = EstadoPicking.Pendiente,
+                Items = new List<ItemPickList>
+                {
+                    new()
+                    {
+                        Id = Guid.NewGuid(), ProductoId = productoId,
+                        Sku = sku, NombreProducto = "QA", CantidadSolicitada = 2
+                    }
+                }
+            });
+        }
+        await db.SaveChangesAsync();
+
+        var request = new GenerarPickListRequest(
+            ordenId, numero, "Operador QA", new List<ItemPickingSolicitud>
+            {
+                new(productoId, sku, "QA", 2)
+            });
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            servicio.GenerarPickListAsync(request));
+
+        Assert.Contains("múltiples PickLists", exception.Message);
+        Assert.Equal(2, await db.PickLists.CountAsync(p => p.OrdenId == ordenId));
+    }
+
+    [Fact]
+    public async Task GenerarPickList_RetryConCantidadDistinta_NoReutilizaUnaListaIncompatible()
+    {
+        await using var db = CreateInMemoryDbContext();
+        var servicio = CreateFulfillmentService(db, CreateStockService(db));
+        var ordenId = Guid.NewGuid();
+        var productoId = Guid.NewGuid();
+        const string sku = "SKU-CONFLICT-QA";
+        const string numero = "ORD-CONFLICT-QA";
+
+        var existente = new PickList
+        {
+            Id = Guid.NewGuid(), OrdenId = ordenId, NumeroOrden = numero,
+            NumeroPickList = "PKL-CONFLICT-QA", Estado = EstadoPicking.Pendiente,
+            Items = new List<ItemPickList>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(), ProductoId = productoId,
+                    Sku = sku, NombreProducto = "QA", CantidadSolicitada = 2
+                }
+            }
+        };
+        db.PickLists.Add(existente);
+        await db.SaveChangesAsync();
+
+        var request = new GenerarPickListRequest(
+            ordenId, numero, "Operador QA", new List<ItemPickingSolicitud>
+            {
+                new(productoId, sku, "QA", 3)
+            });
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            servicio.GenerarPickListAsync(request));
+
+        Assert.Contains("no coincide", exception.Message);
+        Assert.Single(await db.PickLists.ToListAsync());
+        Assert.Equal(2, (await db.PickLists.Include(p => p.Items).SingleAsync())
+            .Items.Single().CantidadSolicitada);
     }
 
     private static Producto CrearProducto(string sku) => new()

@@ -38,24 +38,36 @@ public sealed class AlertaInventarioService : IAlertaInventarioService
             .Select(x => x!)
             .ToList();
 
+        var productoIds = calculadas
+            .Select(a => a.ProductoId)
+            .Distinct()
+            .ToArray();
+
         var revisiones = await _dbContext.AlertasInventarioRevision
+            .AsNoTracking()
+            .Where(r => productoIds.Contains(r.ProductoId))
             .ToListAsync(cancellationToken);
 
-        // El reconocimiento solo es válido mientras persista exactamente la misma condición.
-        // Si cambia de tipo o se resuelve, se elimina para que una futura reactivación nazca abierta.
-        var clavesActivas = calculadas
-            .Select(a => (a.ProductoId, a.Tipo))
-            .ToHashSet();
-
-        var obsoletas = revisiones
-            .Where(r => !clavesActivas.Contains((r.ProductoId, r.Tipo)))
-            .ToList();
-
-        if (obsoletas.Count > 0)
+        // GET permanece de solo lectura. Un movimiento posterior invalida
+        // lógicamente el reconocimiento sin borrar su rastro de auditoría.
+        var movimientosPosteriores = new Dictionary<Guid, DateTime>();
+        if (revisiones.Count > 0)
         {
-            _dbContext.AlertasInventarioRevision.RemoveRange(obsoletas);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-            revisiones.RemoveAll(r => obsoletas.Contains(r));
+            var reconocimientoMasAntiguo = revisiones.Min(r => r.ReconocidaEn);
+            movimientosPosteriores = await _dbContext.MovimientosInventario
+                .AsNoTracking()
+                .Where(m => productoIds.Contains(m.ProductoId) &&
+                            m.FechaMovimiento > reconocimientoMasAntiguo)
+                .GroupBy(m => m.ProductoId)
+                .Select(g => new
+                {
+                    ProductoId = g.Key,
+                    FechaMovimiento = g.Max(m => m.FechaMovimiento)
+                })
+                .ToDictionaryAsync(
+                    x => x.ProductoId,
+                    x => x.FechaMovimiento,
+                    cancellationToken);
         }
 
         var revisionesPorClave = revisiones.ToDictionary(r => (r.ProductoId, r.Tipo));
@@ -64,11 +76,17 @@ public sealed class AlertaInventarioService : IAlertaInventarioService
             .Select(a =>
             {
                 revisionesPorClave.TryGetValue((a.ProductoId, a.Tipo), out var revision);
+                var reconocimientoVigente = revision is not null &&
+                    (!movimientosPosteriores.TryGetValue(a.ProductoId, out var ultimoMovimiento) ||
+                     ultimoMovimiento <= revision.ReconocidaEn);
+
                 return a with
                 {
-                    Estado = revision is null ? EstadoAlertaInventario.Open : EstadoAlertaInventario.Acknowledged,
-                    ReconocidaEn = revision?.ReconocidaEn,
-                    ReconocidaPor = revision?.ReconocidaPor
+                    Estado = reconocimientoVigente
+                        ? EstadoAlertaInventario.Acknowledged
+                        : EstadoAlertaInventario.Open,
+                    ReconocidaEn = reconocimientoVigente ? revision?.ReconocidaEn : null,
+                    ReconocidaPor = reconocimientoVigente ? revision?.ReconocidaPor : null
                 };
             })
             .OrderByDescending(a => a.Prioridad)

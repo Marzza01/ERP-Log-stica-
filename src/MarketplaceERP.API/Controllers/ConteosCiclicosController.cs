@@ -12,7 +12,7 @@ namespace MarketplaceERP.API.Controllers;
 
 [ApiController]
 [Route("api/inventario/conteos-ciclicos")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class ConteosCiclicosController : ControllerBase
 {
     private readonly IConteoCiclicoService _service;
@@ -27,7 +27,7 @@ public class ConteosCiclicosController : ControllerBase
         Ok(await _service.ListarAsync(estado, cancellationToken));
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Planificar([FromBody] PlanificarConteoCiclicoRequest request, CancellationToken cancellationToken)
     {
         var result = await _service.PlanificarAsync(request.StockFisicoId, request.Observaciones, UsuarioActual(), cancellationToken);
@@ -35,7 +35,7 @@ public class ConteosCiclicosController : ControllerBase
     }
 
     [HttpPost("{id:guid}/iniciar")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Iniciar(Guid id, CancellationToken cancellationToken)
     {
         var result = await _service.IniciarAsync(id, UsuarioActual(), cancellationToken);
@@ -43,7 +43,7 @@ public class ConteosCiclicosController : ControllerBase
     }
 
     [HttpPost("{id:guid}/primer-conteo")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> PrimerConteo(Guid id, [FromBody] RegistrarCantidadConteoRequest request, CancellationToken cancellationToken)
     {
         var result = await _service.RegistrarPrimerConteoAsync(id, request.Cantidad, UsuarioActual(), cancellationToken);
@@ -51,7 +51,7 @@ public class ConteosCiclicosController : ControllerBase
     }
 
     [HttpPost("{id:guid}/reconteo")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Reconteo(Guid id, [FromBody] RegistrarCantidadConteoRequest request, CancellationToken cancellationToken)
     {
         var result = await _service.RegistrarReconteoAsync(id, request.Cantidad, UsuarioActual(), cancellationToken);
@@ -59,7 +59,7 @@ public class ConteosCiclicosController : ControllerBase
     }
 
     [HttpPost("{id:guid}/cancelar")]
-    [Authorize(Roles = "Admin,Vendedor")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Cancelar(Guid id, CancellationToken cancellationToken)
     {
         var result = await _service.CancelarAsync(id, UsuarioActual(), cancellationToken);

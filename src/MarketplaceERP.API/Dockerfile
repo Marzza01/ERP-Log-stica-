@@ -3,6 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # Copiar archivos de proyecto primero (para aprovechar caché de capas)
+COPY ["global.json", "Directory.Build.props", "./"]
 COPY ["src/MarketplaceERP.Shared/MarketplaceERP.Shared.csproj", "src/MarketplaceERP.Shared/"]
 COPY ["src/MarketplaceERP.Core/MarketplaceERP.Core.csproj", "src/MarketplaceERP.Core/"]
 COPY ["src/MarketplaceERP.Catalog/MarketplaceERP.Catalog.csproj", "src/MarketplaceERP.Catalog/"]
@@ -34,8 +35,8 @@ USER appuser
 # Copiar artefactos publicados
 COPY --from=build /app/publish .
 
-# Railway asigna $PORT dinámicamente — ASP.NET lo respeta via ASPNETCORE_URLS
-ENV ASPNETCORE_URLS=http://+:${PORT:-8080}
+# Puerto local predeterminado; Program.cs aplica PORT en tiempo de ejecución.
+ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 ENV ASPNETCORE_ENVIRONMENT=Production
 
 ENTRYPOINT ["dotnet", "MarketplaceERP.API.dll"]

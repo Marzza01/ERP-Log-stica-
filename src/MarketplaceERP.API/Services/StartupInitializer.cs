@@ -3,7 +3,9 @@
  * Todos los derechos reservados © 2026
  */
 
+using System.ComponentModel.DataAnnotations;
 using System.Data;
+using System.Diagnostics;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Services;
 using MarketplaceERP.Core.Data;
@@ -16,55 +18,26 @@ using Npgsql;
 namespace MarketplaceERP.API.Services;
 
 /// <summary>
-/// Orquestador centralizado de migraciones y seeding durante el arranque del sistema.
-/// Garantiza la ejecución ordenada:
-/// (1) Migraciones relacionales con pg_advisory_lock y reintentos exponenciales.
-/// (2) Seed del usuario Administrador del sistema.
-/// (3) Auto-seeding del catálogo oficial bajo la bandera Seed:DemoData (sin GUIDs mágicos).
+/// Operaciones explícitas de mantenimiento. El arranque HTTP no las invoca.
 /// </summary>
 public static class StartupInitializer
 {
     // Identificador único para el advisory lock de migraciones en PostgreSQL
     private const long MigrationAdvisoryLockKey = 987654321012345678L;
 
-    public static async Task InicializarAsync(
-        IServiceProvider services,
-        IConfiguration configuration,
-        IHostEnvironment environment,
-        ILogger logger)
-    {
-        using var scope = services.CreateScope();
-        var coreDb = scope.ServiceProvider.GetRequiredService<CoreDbContext>();
-        var catalogDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
-        var financeDb = scope.ServiceProvider.GetRequiredService<FinanceDbContext>();
-
-        // ── 1. Migraciones con reintentos y pg_advisory_lock ─────────────────
-        await EjecutarMigracionesConReintentosAsync(coreDb, catalogDb, financeDb, environment, configuration, logger);
-
-        // ── 2. Seed de Usuario Administrador ─────────────────────────────────
-        await SeedAdminAsync(coreDb, configuration, environment, logger);
-
-        // ── 3. Seed de Catálogo / Demo Data ───────────────────────────────────
-        await SeedDemoDataAsync(scope.ServiceProvider, coreDb, catalogDb, configuration, environment, logger);
-    }
-
-    private static async Task EjecutarMigracionesConReintentosAsync(
+    public static async Task EjecutarMigracionesAsync(
         CoreDbContext coreDb,
         CatalogDbContext catalogDb,
         FinanceDbContext financeDb,
-        IHostEnvironment environment,
         IConfiguration configuration,
         ILogger logger)
     {
-        // Si el proveedor no es relacional (ej. InMemory en tests de integración API), se omite sin error
-        if (!coreDb.Database.IsRelational())
-        {
-            logger.LogInformation("Proveedor de base de datos no es relacional (InMemory). Omitiendo Database.Migrate().");
-            return;
-        }
+        if (!coreDb.Database.IsNpgsql() || !catalogDb.Database.IsNpgsql() || !financeDb.Database.IsNpgsql())
+            throw new InvalidOperationException("Las migraciones explícitas requieren PostgreSQL en los tres contextos.");
 
-        int maxIntentos = int.TryParse(configuration["Startup:MaxRetries"], out var r) ? r : 5;
-        int delayBaseMs = int.TryParse(configuration["Startup:InitialDelayMs"], out var d) ? d : 1000;
+        int maxIntentos = int.TryParse(configuration["Startup:MaxRetries"], out var r) && r > 0 ? r : 5;
+        int delayBaseMs = int.TryParse(configuration["Startup:InitialDelayMs"], out var d) && d >= 0 ? d : 1000;
+        var lockTimeout = GetLockTimeout(configuration);
 
         for (int intento = 1; intento <= maxIntentos; intento++)
         {
@@ -77,14 +50,15 @@ public static class StartupInitializer
                 await using var lockConn = new NpgsqlConnection(connStr);
                 await lockConn.OpenAsync();
 
-                await using (var cmdLock = lockConn.CreateCommand())
-                {
-                    cmdLock.CommandText = $"SELECT pg_advisory_lock({MigrationAdvisoryLockKey});";
-                    await cmdLock.ExecuteNonQueryAsync();
-                }
+                await AcquireMigrationLockAsync(lockConn, lockTimeout);
 
                 try
                 {
+                    // F17: detectar conflictos conocidos en los tres esquemas antes
+                    // de que la primera migracion de Core/Catalog haga escrituras.
+                    // El lock global permanece retenido durante la comprobacion.
+                    await MigrationGlobalPreflight.ValidateAsync(lockConn);
+
                     // Secuencia ordenada de migraciones: Core -> Catalog -> Finance
                     logger.LogInformation("Aplicando migraciones de CoreDbContext...");
                     await coreDb.Database.MigrateAsync();
@@ -108,29 +82,24 @@ public static class StartupInitializer
                     }
                     catch (Exception unlockEx)
                     {
-                        logger.LogWarning(unlockEx, "Error al liberar el advisory lock.");
+                        logger.LogWarning("Error al liberar el advisory lock: {ExceptionType}.", unlockEx.GetType().Name);
                     }
                 }
 
                 return; // Migración exitosa
             }
+            catch (TimeoutException)
+            {
+                // Un lock ocupado requiere intervención; reintentar no debe multiplicar el plazo máximo.
+                throw;
+            }
             catch (Exception ex)
             {
-                logger.LogWarning("Fallo en intento {Intento}/{Max} al migrar base de datos: {Message}", intento, maxIntentos, ex.Message);
+                logger.LogWarning("Fallo en intento {Intento}/{Max} al migrar base de datos: {ExceptionType}",
+                    intento, maxIntentos, ex.GetType().Name);
 
                 if (intento == maxIntentos)
-                {
-                    if (environment.IsProduction())
-                    {
-                        logger.LogError(ex, "FATAL: No fue posible aplicar migraciones en Production tras {Max} intentos. Abortando arranque.", maxIntentos);
-                        throw new InvalidOperationException($"No fue posible conectar o migrar la base de datos tras {maxIntentos} intentos en Production.", ex);
-                    }
-                    else
-                    {
-                        logger.LogError(ex, "ERROR: Fallaron las migraciones en entorno {Env}. Continuando arranque...", environment.EnvironmentName);
-                        return;
-                    }
-                }
+                    throw new InvalidOperationException($"No fue posible aplicar las migraciones tras {maxIntentos} intentos.", ex);
 
                 int espera = delayBaseMs * intento;
                 await Task.Delay(espera);
@@ -138,65 +107,85 @@ public static class StartupInitializer
         }
     }
 
-    private static async Task SeedAdminAsync(
-        CoreDbContext coreDb,
-        IConfiguration configuration,
-        IHostEnvironment environment,
-        ILogger logger)
+    public static TimeSpan GetLockTimeout(IConfiguration configuration)
     {
-        var adminEmail = configuration["ADMIN_EMAIL"] ?? Environment.GetEnvironmentVariable("ADMIN_EMAIL");
-        var adminPassword = configuration["ADMIN_PASSWORD"] ?? Environment.GetEnvironmentVariable("ADMIN_PASSWORD");
+        var configured = configuration["Startup:MigrationLockTimeoutSeconds"];
+        if (configured is null) return TimeSpan.FromSeconds(30);
+        if (!int.TryParse(configured, out var seconds) || seconds is < 1 or > 300)
+            throw new InvalidOperationException("Startup:MigrationLockTimeoutSeconds debe estar entre 1 y 300.");
+        return TimeSpan.FromSeconds(seconds);
+    }
 
-        if (environment.IsProduction())
-        {
-            if (string.IsNullOrWhiteSpace(adminEmail) || string.IsNullOrWhiteSpace(adminPassword))
-            {
-                throw new InvalidOperationException("ADMIN_EMAIL y ADMIN_PASSWORD son obligatorios en entorno de Production.");
-            }
-        }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(adminEmail) || string.IsNullOrWhiteSpace(adminPassword))
-            {
-                logger.LogWarning("ADMIN_EMAIL o ADMIN_PASSWORD no configurados en {Env}. Omitiendo creación de Admin inicial.", environment.EnvironmentName);
-                return;
-            }
-        }
+    private static async Task AcquireMigrationLockAsync(NpgsqlConnection connection, TimeSpan timeout)
+    {
+        var watch = Stopwatch.StartNew();
+        using var deadline = new CancellationTokenSource(timeout);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT pg_try_advisory_lock(@key)";
+        command.Parameters.AddWithValue("key", MigrationAdvisoryLockKey);
+        command.CommandTimeout = 0; // El CancellationToken fija el plazo total de adquisición.
 
         try
         {
-            var adminExistente = await coreDb.Usuarios.FirstOrDefaultAsync(u => u.Email == adminEmail.ToLower().Trim());
-            if (adminExistente is null)
+            while (true)
             {
-                var hasher = new PasswordHasher<Usuario>();
-                var adminUsuario = new Usuario
-                {
-                    Id = Guid.NewGuid(),
-                    Email = adminEmail.ToLower().Trim(),
-                    Nombre = "Administrador del Sistema",
-                    Rol = "Admin",
-                    Activo = true,
-                    FechaRegistro = DateTime.UtcNow
-                };
-                adminUsuario.PasswordHash = hasher.HashPassword(adminUsuario, adminPassword);
-
-                coreDb.Usuarios.Add(adminUsuario);
-                await coreDb.SaveChangesAsync();
-                logger.LogInformation("Usuario Admin inicial creado exitosamente con email: {Email}", adminEmail);
+                if (await command.ExecuteScalarAsync(deadline.Token) is true) return;
+                var remaining = timeout - watch.Elapsed;
+                if (remaining <= TimeSpan.Zero)
+                    throw new TimeoutException("No se obtuvo el bloqueo de migración en el plazo configurado.");
+                await Task.Delay(remaining < TimeSpan.FromMilliseconds(250) ? remaining : TimeSpan.FromMilliseconds(250),
+                    deadline.Token);
             }
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
-            if (environment.IsProduction())
-            {
-                logger.LogError(ex, "FATAL: Error al inicializar usuario Admin en Production.");
-                throw;
-            }
-            logger.LogError(ex, "Error al crear usuario Admin en {Env}: {Message}", environment.EnvironmentName, ex.Message);
+            throw new TimeoutException("No se obtuvo el bloqueo de migración en el plazo configurado.");
         }
     }
 
-    private static async Task SeedDemoDataAsync(
+    public static async Task CrearAdminInicialAsync(
+        CoreDbContext coreDb,
+        IConfiguration configuration,
+        ILogger logger)
+    {
+        var rawEmail = configuration["ADMIN_EMAIL"];
+        var password = configuration["ADMIN_PASSWORD"];
+        if (string.IsNullOrWhiteSpace(rawEmail) || string.IsNullOrWhiteSpace(password))
+            throw new InvalidOperationException("ADMIN_EMAIL y ADMIN_PASSWORD son obligatorios para --bootstrap-admin.");
+
+        var email = rawEmail.Trim().ToLowerInvariant();
+        if (!new EmailAddressAttribute().IsValid(email) || email.Length > 254 || password.Length < 10)
+            throw new InvalidOperationException("El correo o la longitud de la contraseña del Admin inicial no son válidos.");
+
+        var hasher = new PasswordHasher<Usuario>();
+        // Detecta cuentas históricas con mayúsculas antes de intentar crear otro Admin.
+        var existing = await coreDb.Usuarios.SingleOrDefaultAsync(u => u.Email.ToLower() == email);
+        if (existing is not null)
+        {
+            if (existing.Rol != "Admin" || !existing.Activo ||
+                hasher.VerifyHashedPassword(existing, existing.PasswordHash, password) == PasswordVerificationResult.Failed)
+                throw new InvalidOperationException("La cuenta existente no coincide con un Admin activo y sus credenciales; se requiere revisión manual.");
+
+            logger.LogInformation("Admin inicial existente validado; no se realizaron cambios.");
+            return;
+        }
+
+        var admin = new Usuario
+        {
+            Id = Guid.NewGuid(),
+            Email = email,
+            Nombre = "Administrador del Sistema",
+            Rol = "Admin",
+            Activo = true,
+            FechaRegistro = DateTime.UtcNow
+        };
+        admin.PasswordHash = hasher.HashPassword(admin, password);
+        coreDb.Usuarios.Add(admin);
+        await coreDb.SaveChangesAsync();
+        logger.LogInformation("Admin inicial creado.");
+    }
+
+    public static async Task SeedDemoDataAsync(
         IServiceProvider serviceProvider,
         CoreDbContext coreDb,
         CatalogDbContext catalogDb,
@@ -204,16 +193,7 @@ public static class StartupInitializer
         IHostEnvironment environment,
         ILogger logger)
     {
-        // Bandera Seed:DemoData (default true en Development, default false en Production)
-        bool demoDataDefault = environment.IsDevelopment();
-        bool seedDemo = configuration.GetValue<bool>("Seed:DemoData", demoDataDefault);
-
-        if (!seedDemo)
-        {
-            logger.LogInformation("Seed:DemoData deshabilitado. Omitiendo auto-seeding de catálogo/demo.");
-            return;
-        }
-
+        // Invocable exclusivamente desde el comando explícito seed-demo.
         try
         {
             // Verificar si el catálogo ya cuenta con productos
@@ -272,17 +252,19 @@ public static class StartupInitializer
             if (rutaCsv != null)
             {
                 var res = await importService.ImportarCatalogoDesdeArchivoAsync(rutaCsv, vendedor.Id, categoria.Id);
+                if (res.Errores > 0) throw new InvalidOperationException("La importación demo tuvo errores; puede haber cambios parciales.");
                 logger.LogInformation("Auto-seeding completado: {Exitosos}/{Total} SKUs cargados con WMS (VendedorId={VendedorId}, CategoriaId={CategoriaId}).",
                     res.Exitosos, res.TotalProcesados, vendedor.Id, categoria.Id);
             }
             else
             {
-                logger.LogWarning("No se encontró el archivo Catalogo_500_Productos.csv para el auto-seeding de DemoData.");
+                throw new InvalidOperationException("Falta el archivo de catálogo para seed-demo.");
             }
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Aviso en auto-seeding de demo data: {Message}", ex.Message);
+            logger.LogError("Seed demo fallido: {ExceptionType}.", ex.GetType().Name);
+            throw;
         }
     }
 }

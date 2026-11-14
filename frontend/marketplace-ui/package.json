@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test:auth": "node --test tests/auth-proxy.test.cjs",
-    "test:checkout": "node tests/checkout-state-check.cjs"
+    "test:checkout": "node tests/checkout-state-check.cjs",
+    "test:p3": "node --test tests/p3-quality.test.cjs"
   },
   "dependencies": {
     "@types/recharts": "^1.8.29",
@@ -31,6 +32,6 @@
     "eslint": "^9.9.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.5.3",
-    "vite": "^5.4.2"
+    "vite": "7.3.7"
   }
 }

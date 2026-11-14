@@ -15,6 +15,7 @@ import SinAccesoPage from './pages/auth/SinAccesoPage';
 const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage'));
 const CheckoutCompradorPage = lazy(() => import('./pages/checkout/CheckoutCompradorPage'));
 const OrdenesPage = lazy(() => import('./pages/ordenes/OrdenesPage'));
+const MisOrdenesVendedorPage = lazy(() => import('./pages/ordenes/MisOrdenesVendedorPage'));
 const WmsPage = lazy(() => import('./pages/wms/WmsPage'));
 const FulfillmentPage = lazy(() => import('./pages/fulfillment/FulfillmentPage'));
 const RmaPage = lazy(() => import('./pages/rma/RmaPage'));
@@ -69,7 +70,7 @@ function HomeRedirect() {
   }
 
   if (usuario?.rol === 'Vendedor') {
-    return <Navigate to="/ordenes" replace />;
+    return <Navigate to="/productos" replace />;
   }
 
   return <Navigate to="/dashboard" replace />;
@@ -112,19 +113,20 @@ function AppRoutes() {
           <Route index element={<HomeRedirect />} />
           <Route path="checkout" element={<RoleRouteGuard allowedRoles={['Comprador']}><CheckoutCompradorPage /></RoleRouteGuard>} />
           <Route path="dashboard" element={<RoleRouteGuard allowedRoles={['Admin']}><DashboardPage /></RoleRouteGuard>} />
-          <Route path="ordenes" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><OrdenesPage /></RoleRouteGuard>} />
-          <Route path="wms" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><WmsPage /></RoleRouteGuard>} />
-          <Route path="reabastecimiento" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><ReabastecimientoPage /></RoleRouteGuard>} />
+          <Route path="ordenes" element={<RoleRouteGuard allowedRoles={['Admin']}><OrdenesPage /></RoleRouteGuard>} />
+          <Route path="mis-ordenes" element={<RoleRouteGuard allowedRoles={['Vendedor']}><MisOrdenesVendedorPage /></RoleRouteGuard>} />
+          <Route path="wms" element={<RoleRouteGuard allowedRoles={['Admin']}><WmsPage /></RoleRouteGuard>} />
+          <Route path="reabastecimiento" element={<RoleRouteGuard allowedRoles={['Admin']}><ReabastecimientoPage /></RoleRouteGuard>} />
           <Route path="proveedores" element={<RoleRouteGuard allowedRoles={['Admin']}><ProveedoresPage /></RoleRouteGuard>} />
           <Route path="ajustes" element={<RoleRouteGuard allowedRoles={['Admin']}><AjustesPage /></RoleRouteGuard>} />
-          <Route path="conteos" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><ConteosPage /></RoleRouteGuard>} />
-          <Route path="alertas-inventario" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><AlertasInventarioPage /></RoleRouteGuard>} />
-          <Route path="bloqueos-inventario" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><BloqueosInventarioPage /></RoleRouteGuard>} />
-          <Route path="fulfillment" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><FulfillmentPage /></RoleRouteGuard>} />
-          <Route path="rma" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><RmaPage /></RoleRouteGuard>} />
+          <Route path="conteos" element={<RoleRouteGuard allowedRoles={['Admin']}><ConteosPage /></RoleRouteGuard>} />
+          <Route path="alertas-inventario" element={<RoleRouteGuard allowedRoles={['Admin']}><AlertasInventarioPage /></RoleRouteGuard>} />
+          <Route path="bloqueos-inventario" element={<RoleRouteGuard allowedRoles={['Admin']}><BloqueosInventarioPage /></RoleRouteGuard>} />
+          <Route path="fulfillment" element={<RoleRouteGuard allowedRoles={['Admin']}><FulfillmentPage /></RoleRouteGuard>} />
+          <Route path="rma" element={<RoleRouteGuard allowedRoles={['Admin']}><RmaPage /></RoleRouteGuard>} />
           <Route path="compras" element={<RoleRouteGuard allowedRoles={['Admin']}><ComprasPage /></RoleRouteGuard>} />
           <Route path="contabilidad" element={<RoleRouteGuard allowedRoles={['Admin']}><ContabilidadPage /></RoleRouteGuard>} />
-          <Route path="liquidaciones" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><LiquidacionesPage /></RoleRouteGuard>} />
+          <Route path="liquidaciones" element={<RoleRouteGuard allowedRoles={['Admin']}><LiquidacionesPage /></RoleRouteGuard>} />
           <Route path="productos" element={<RoleRouteGuard allowedRoles={['Admin', 'Vendedor']}><ProductosPage /></RoleRouteGuard>} />
           <Route path="sin-acceso" element={<SinAccesoPage />} />
         </Route>

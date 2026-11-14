@@ -183,6 +183,73 @@ public sealed class SeguimientoCheckoutIntegracionTests
     }
 
 
+    [Theory]
+    [InlineData("validoSinReserva", false, null)]
+    [InlineData("validoLiberado", false, null)]
+    [InlineData("sinAuditoria", true, "CANCELACION_PREENVIO_SIN_AUDITORIA")]
+    [InlineData("ordenPendiente", true, "CANCELACION_PREENVIO_INCONSISTENTE")]
+    [InlineData("reservaPendiente", true, "CANCELACION_PREENVIO_AUDITORIA_INCONSISTENTE")]
+    [InlineData("operadorVacio", true, "CANCELACION_PREENVIO_AUDITORIA_INCONSISTENTE")]
+    [InlineData("intentoDistinto", true, "CANCELACION_PREENVIO_AUDITORIA_INCONSISTENTE")]
+    [InlineData("cantidadInvalida", true, "CANCELACION_PREENVIO_AUDITORIA_INCONSISTENTE")]
+    [InlineData("motivoInvalido", true, "CANCELACION_PREENVIO_AUDITORIA_INCONSISTENTE")]
+    [InlineData("fechaInvalida", true, "CANCELACION_PREENVIO_AUDITORIA_INCONSISTENTE")]
+    [InlineData("trazaPago", true, "CANCELACION_PREENVIO_CON_TRAZA_DE_COBRO")]
+    [InlineData("reservaId", true, "CANCELACION_PREENVIO_CON_TRAZA_DE_COBRO")]
+    public async Task CancelacionPreEnvio_SeguimientoSoloSeCierraConAuditoriaConsistente(
+        string escenario, bool revision, string? alerta)
+    {
+        using var e = new Escenario();
+        e.Finance.Ordenes.Single().Estado = EstadoOrden.Cancelada;
+        e.Intento(EstadoIntentoPago.CanceladoAntesEnvio);
+        var intento = e.Finance.IntentosPago.Single();
+        intento.ReservaId = null;
+        if (escenario is "validoLiberado" or "cantidadInvalida")
+            e.Reserva(EstadoReserva.Liberada, liberada: 2);
+        if (escenario == "reservaPendiente")
+            e.Reserva(EstadoReserva.Pendiente);
+        if (escenario == "ordenPendiente")
+            e.Finance.Ordenes.Single().Estado = EstadoOrden.Pendiente;
+        if (escenario == "trazaPago")
+            intento.TransaccionId = "PAYMENT-PROVIDER-REFERENCE";
+        if (escenario == "reservaId")
+            intento.ReservaId = Guid.NewGuid();
+
+        if (escenario != "sinAuditoria")
+        {
+            e.Finance.CancelacionesPreEnvioQa.Add(new CancelacionPreEnvioQa
+            {
+                Id = Guid.NewGuid(),
+                OrdenId = e.OrdenId,
+                IntentoPagoId = escenario == "intentoDistinto"
+                    ? Guid.NewGuid() : intento.Id,
+                OperadorQaId = escenario == "operadorVacio"
+                    ? Guid.Empty : Guid.NewGuid(),
+                Motivo = escenario == "motivoInvalido"
+                    ? (MotivoCancelacionPreEnvioQa)999
+                    : MotivoCancelacionPreEnvioQa.VerificacionManualQa,
+                ReservasLiberadas = escenario == "cantidadInvalida"
+                    ? 0 : e.Catalog.ReservasStock.Count(),
+                RegistradoUtc = escenario == "fechaInvalida"
+                    ? default : DateTime.UtcNow
+            });
+        }
+        e.Finance.SaveChanges();
+        var resultado = await e.VerAsync();
+        Assert.Equal("CanceladoAntesEnvio", resultado.EstadoPago);
+        Assert.Equal(revision, resultado.RequiereRevision);
+        if (alerta is null) Assert.Empty(resultado.Alertas);
+        else Assert.Contains(alerta, resultado.Alertas);
+
+        // La cola administrativa no confunde una cancelación íntegra
+        // con una anomalía que exige conciliación.
+        e.Identidad("Admin", Guid.NewGuid());
+        var cola = Assert.IsType<List<SeguimientoCheckoutDto>>(
+            Assert.IsType<OkObjectResult>(
+                await e.Controller.PendientesConciliacion()).Value);
+        Assert.Equal(revision, cola.Any(x => x.OrdenId == e.OrdenId));
+    }
+
     [Fact]
     public async Task PagoRechazado_ReservaNoLiberada_Alerta()
     {

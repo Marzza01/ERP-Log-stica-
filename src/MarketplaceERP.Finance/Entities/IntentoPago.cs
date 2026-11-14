@@ -9,7 +9,9 @@ public enum EstadoIntentoPago
     Aprobado = 3,
     Incierto = 4,
     RequiereConciliacion = 5,
-    Completado = 6
+    Completado = 6,
+    // Exclusivamente resultado administrativo QA anterior al envío real.
+    CanceladoAntesEnvio = 7
 }
 
 /// <summary>

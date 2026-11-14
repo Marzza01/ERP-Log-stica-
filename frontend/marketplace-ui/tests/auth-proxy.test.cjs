@@ -244,3 +244,152 @@ test('métodos, cabeceras y códigos HTTP no se convierten en éxito local', asy
   assert.equal(await client.apiClient.delete('/api/ordenes/123'), undefined);
   assert.equal(calls[1].options.method, 'DELETE');
 });
+
+test('navegación y control de acceso: reabastecimiento solo admite Admin (Vendedor y Comprador bloqueados)', () => {
+  const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
+  const sidebarSource = fs.readFileSync(path.join(root, 'src/components/layout/Sidebar.tsx'), 'utf8');
+
+  // 1. Verificar definición de ruta en App.tsx
+  const reabastecimientoRouteMatch = appSource.match(/<Route\s+path="reabastecimiento"\s+element=\{<RoleRouteGuard\s+allowedRoles=\{([^}]+)\}>\s*<ReabastecimientoPage\s*\/>/);
+  assert.ok(reabastecimientoRouteMatch, 'La ruta reabastecimiento debe estar protegida con RoleRouteGuard');
+  const allowedRolesApp = eval(reabastecimientoRouteMatch[1]);
+  assert.deepEqual(allowedRolesApp, ['Admin'], 'App.tsx debe permitir únicamente Admin en reabastecimiento');
+
+  // 2. Verificar Sidebar.tsx navGroups para reabastecimiento
+  const reabastecimientoSidebarMatch = sidebarSource.match(/to:\s*['"]\/reabastecimiento['"][\s\S]*?allowedRoles:\s*(\[[^\]]+\])/);
+  assert.ok(reabastecimientoSidebarMatch, 'El ítem /reabastecimiento debe estar en Sidebar.tsx con allowedRoles');
+  const allowedRolesSidebar = eval(reabastecimientoSidebarMatch[1]);
+  assert.deepEqual(allowedRolesSidebar, ['Admin'], 'Sidebar.tsx debe permitir únicamente Admin en reabastecimiento');
+
+  // 3. Simular lógica de filtrado de Sidebar por rol
+  const filterSidebarItem = (itemRoles, userRole) => itemRoles.includes(userRole);
+  assert.equal(filterSidebarItem(allowedRolesSidebar, 'Admin'), true, 'Sidebar: Admin debe ver reabastecimiento');
+  assert.equal(filterSidebarItem(allowedRolesSidebar, 'Vendedor'), false, 'Sidebar: Vendedor NO debe ver reabastecimiento');
+  assert.equal(filterSidebarItem(allowedRolesSidebar, 'Comprador'), false, 'Sidebar: Comprador NO debe ver reabastecimiento');
+
+  // 4. Simular lógica de RoleRouteGuard
+  function evaluateRoleGuard(allowedRoles, isAuthenticated, userRole) {
+    if (!isAuthenticated) return { allowed: false, redirect: '/login' };
+    if (!allowedRoles.includes(userRole)) return { allowed: false, component: 'SinAccesoPage' };
+    return { allowed: true };
+  }
+
+  // Admin permitido
+  const adminAccess = evaluateRoleGuard(allowedRolesApp, true, 'Admin');
+  assert.equal(adminAccess.allowed, true, 'RoleRouteGuard: Admin debe tener acceso');
+
+  // Vendedor bloqueado
+  const vendedorAccess = evaluateRoleGuard(allowedRolesApp, true, 'Vendedor');
+  assert.equal(vendedorAccess.allowed, false, 'RoleRouteGuard: Vendedor debe ser bloqueado');
+  assert.equal(vendedorAccess.component, 'SinAccesoPage', 'RoleRouteGuard: Vendedor debe ver SinAccesoPage');
+
+  // Comprador bloqueado
+  const compradorAccess = evaluateRoleGuard(allowedRolesApp, true, 'Comprador');
+  assert.equal(compradorAccess.allowed, false, 'RoleRouteGuard: Comprador debe ser bloqueado');
+  assert.equal(compradorAccess.component, 'SinAccesoPage', 'RoleRouteGuard: Comprador debe ver SinAccesoPage');
+
+  // No autenticado redirige a /login
+  const anonAccess = evaluateRoleGuard(allowedRolesApp, false, '');
+  assert.equal(anonAccess.allowed, false);
+  assert.equal(anonAccess.redirect, '/login');
+});
+
+
+test('matriz de navegación: los 15 módulos Admin y las rutas de Vendedor/Comprador coinciden con Sidebar', () => {
+  const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
+  const sidebarSource = fs.readFileSync(path.join(root, 'src/components/layout/Sidebar.tsx'), 'utf8');
+  const routes = [
+    ['checkout', ['Comprador']],
+    ['dashboard', ['Admin']],
+    ['ordenes', ['Admin']],
+    ['mis-ordenes', ['Vendedor']],
+    ['wms', ['Admin']],
+    ['reabastecimiento', ['Admin']],
+    ['proveedores', ['Admin']],
+    ['ajustes', ['Admin']],
+    ['conteos', ['Admin']],
+    ['alertas-inventario', ['Admin']],
+    ['bloqueos-inventario', ['Admin']],
+    ['fulfillment', ['Admin']],
+    ['rma', ['Admin']],
+    ['compras', ['Admin']],
+    ['contabilidad', ['Admin']],
+    ['liquidaciones', ['Admin']],
+    ['productos', ['Admin', 'Vendedor']],
+  ];
+
+  for (const [route, expectedRoles] of routes) {
+    const routeMatch = appSource.match(new RegExp(
+      `<Route\\s+path="${route}"\\s+element=\\{<RoleRouteGuard\\s+allowedRoles=\\{([^}]+)\\}>`,
+    ));
+    assert.ok(routeMatch, `App.tsx: /${route} debe estar protegida por RoleRouteGuard`);
+    assert.deepEqual(eval(routeMatch[1]), expectedRoles, `App.tsx: roles de /${route}`);
+
+    const sidebarRouteIndex = sidebarSource.indexOf("to: '/" + route + "'");
+    assert.notEqual(sidebarRouteIndex, -1, `Sidebar.tsx: /${route} debe estar en navGroups`);
+    const nextSidebarRouteIndex = sidebarSource.indexOf("to: '/", sidebarRouteIndex + 1);
+    const sidebarItem = sidebarSource.slice(sidebarRouteIndex, nextSidebarRouteIndex === -1 ? undefined : nextSidebarRouteIndex);
+    const rolesStart = sidebarItem.indexOf('allowedRoles:');
+    assert.notEqual(rolesStart, -1, `Sidebar.tsx: /${route} debe declarar allowedRoles`);
+    const openBracket = sidebarItem.indexOf('[', rolesStart);
+    const closeBracket = sidebarItem.indexOf(']', openBracket);
+    assert.ok(openBracket >= 0 && closeBracket > openBracket, `Sidebar.tsx: roles inválidos para /${route}`);
+    const sidebarRoles = eval(sidebarItem.slice(openBracket, closeBracket + 1));
+    assert.deepEqual(sidebarRoles, expectedRoles, `Sidebar.tsx: roles de /${route}`);
+  }
+
+  assert.equal(routes.filter(([, roles]) => roles.includes('Admin')).length, 15,
+    'Admin debe tener exactamente los 15 módulos administrativos');
+  assert.equal(routes.filter(([, roles]) => roles.includes('Vendedor')).length, 2,
+    'Vendedor debe tener Productos y Mis órdenes');
+  assert.equal(routes.filter(([, roles]) => roles.includes('Comprador')).length, 1,
+    'Comprador debe tener únicamente Checkout');
+});
+
+
+test('Preview enruta readiness al backend real en el mismo origen', async () => {
+  const urls = [];
+  await withProxyEnvironment('preview', 'https://marketplaceerp-api-staging.onrender.com',
+    async url => {
+      urls.push(url.toString());
+      return new Response(JSON.stringify({ status: 'ready' }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    }, async proxy => {
+      const response = await proxy(new Request('https://preview.vercel.app/api/health/ready'));
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.equal((await response.json()).status, 'ready');
+    });
+  assert.deepEqual(urls, ['https://marketplaceerp-api-staging.onrender.com/health/ready']);
+});
+
+test('JWT de vida corta expira antes que expiresAt del backend', () => {
+  const exp = Math.floor(Date.now() / 1000) + 30;
+  const session = {
+    token: fakeToken('Admin', exp),
+    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+  };
+  const remaining = sessions.sessionRemainingMs(session);
+  assert.ok(remaining > 0 && remaining <= 30_000);
+  assert.equal(sessions.isSessionValid(session.token, session.expiresAt), true);
+  assert.ok(sessions.sessionRemainingMs({
+    token: fakeToken('Admin', exp - 3600), expiresAt: session.expiresAt,
+  }) < 0);
+});
+
+test('Vercel protege scripts y evita embedding y APIs externas', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
+  const global = config.headers.find(row => row.source === '/(.*)');
+  assert.ok(global, 'Deben existir cabeceras globales');
+  const header = key => global.headers.find(h => h.key === key)?.value;
+  const csp = header('Content-Security-Policy');
+  assert.ok(csp.includes("script-src 'self'"));
+  assert.ok(csp.includes("connect-src 'self'"));
+  assert.ok(csp.includes("frame-ancestors 'none'"));
+  assert.ok(!csp.includes("'unsafe-eval'"));
+  assert.ok(!csp.includes("script-src 'self' 'unsafe-inline'"));
+  assert.equal(header('X-Content-Type-Options'), 'nosniff');
+  assert.equal(header('X-Frame-Options'), 'DENY');
+  assert.ok(header('Permissions-Policy').includes('camera=()'));
+});

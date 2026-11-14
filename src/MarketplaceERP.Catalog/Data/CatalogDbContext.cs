@@ -61,7 +61,7 @@ public class CatalogDbContext : DbContext
             entity.Property(p => p.DimensionesCm).HasMaxLength(50);
             entity.Property(p => p.UnidadMedida).HasMaxLength(50).HasDefaultValue("Unidad");
             entity.Property(p => p.EstadoProducto).HasMaxLength(50).HasDefaultValue("Activo");
-            entity.Property(p => p.CodigoEAN).HasMaxLength(50);
+            entity.Property(p => p.CodigoEAN).HasMaxLength(50).IsRequired(false);
             entity.Property(p => p.Descripcion).HasMaxLength(2000);
             entity.Property(p => p.FechaCreacion).HasDefaultValueSql("NOW()");
 
@@ -101,7 +101,15 @@ public class CatalogDbContext : DbContext
         // ── StockFisico ───────────────────────────────────────────────────────
         modelBuilder.Entity<StockFisico>(entity =>
         {
-            entity.ToTable("stock_fisico");
+            entity.ToTable("stock_fisico", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_stock_fisico_cantidades_no_negativas",
+                    "\"CantidadTotal\" >= 0 AND \"CantidadReservada\" >= 0 AND \"CantidadBloqueada\" >= 0");
+                table.HasCheckConstraint(
+                    "CK_stock_fisico_reservado_bloqueado",
+                    "\"CantidadReservada\" + \"CantidadBloqueada\" <= \"CantidadTotal\"");
+            });
             entity.HasKey(s => s.Id);
             entity.Property(s => s.Id).ValueGeneratedOnAdd();
             entity.Property(s => s.CantidadTotal).IsRequired();
@@ -116,12 +124,6 @@ public class CatalogDbContext : DbContext
             entity.Ignore(s => s.EsBajoMinimo);
 
             // Integridad: ninguna cantidad puede ser negativa y reservado+bloqueado no supera el físico.
-            entity.HasCheckConstraint(
-                "CK_stock_fisico_cantidades_no_negativas",
-                "\"CantidadTotal\" >= 0 AND \"CantidadReservada\" >= 0 AND \"CantidadBloqueada\" >= 0");
-            entity.HasCheckConstraint(
-                "CK_stock_fisico_reservado_bloqueado",
-                "\"CantidadReservada\" + \"CantidadBloqueada\" <= \"CantidadTotal\"");
 
             // Relación N:1 con Producto: un SKU puede existir en varias ubicaciones.
             entity.HasOne(s => s.Producto)
@@ -143,7 +145,15 @@ public class CatalogDbContext : DbContext
         // ── ReservaStock ──────────────────────────────────────────────────────
         modelBuilder.Entity<ReservaStock>(entity =>
         {
-            entity.ToTable("reservas_stock");
+            entity.ToTable("reservas_stock", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_reservas_stock_cantidades_no_negativas",
+                    "\"CantidadOriginal\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
+                table.HasCheckConstraint(
+                    "CK_reservas_stock_cantidad_resuelta",
+                    "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadOriginal\"");
+            });
             entity.HasKey(r => r.Id);
             entity.Property(r => r.Id).ValueGeneratedOnAdd();
             entity.Property(r => r.CantidadOriginal).IsRequired();
@@ -155,12 +165,6 @@ public class CatalogDbContext : DbContext
                   .HasMaxLength(30);
             entity.Property(r => r.FechaReserva).HasDefaultValueSql("NOW()");
 
-            entity.HasCheckConstraint(
-                "CK_reservas_stock_cantidades_no_negativas",
-                "\"CantidadOriginal\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
-            entity.HasCheckConstraint(
-                "CK_reservas_stock_cantidad_resuelta",
-                "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadOriginal\"");
 
             // OrdenId es referencia cross-schema: NO FK en DB
             entity.Property(r => r.OrdenId).IsRequired();
@@ -176,7 +180,15 @@ public class CatalogDbContext : DbContext
         // ── ReservaStockDetalle ───────────────────────────────────────────────
         modelBuilder.Entity<ReservaStockDetalle>(entity =>
         {
-            entity.ToTable("reservas_stock_detalle");
+            entity.ToTable("reservas_stock_detalle", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_reservas_stock_detalle_cantidades_no_negativas",
+                    "\"CantidadAsignada\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
+                table.HasCheckConstraint(
+                    "CK_reservas_stock_detalle_cantidad_resuelta",
+                    "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadAsignada\"");
+            });
             entity.HasKey(d => d.Id);
             entity.Property(d => d.Id).ValueGeneratedOnAdd();
             entity.Property(d => d.CantidadAsignada).IsRequired();
@@ -184,12 +196,6 @@ public class CatalogDbContext : DbContext
             entity.Property(d => d.CantidadConsumida).HasDefaultValue(0);
             entity.Ignore(d => d.CantidadPendiente);
 
-            entity.HasCheckConstraint(
-                "CK_reservas_stock_detalle_cantidades_no_negativas",
-                "\"CantidadAsignada\" >= 0 AND \"CantidadLiberada\" >= 0 AND \"CantidadConsumida\" >= 0");
-            entity.HasCheckConstraint(
-                "CK_reservas_stock_detalle_cantidad_resuelta",
-                "\"CantidadLiberada\" + \"CantidadConsumida\" <= \"CantidadAsignada\"");
 
             entity.HasOne(d => d.ReservaStock)
                   .WithMany(r => r.Detalles)
@@ -209,7 +215,12 @@ public class CatalogDbContext : DbContext
         // ── MovimientoInventario (ledger operativo) ───────────────────────────
         modelBuilder.Entity<MovimientoInventario>(entity =>
         {
-            entity.ToTable("movimientos_inventario");
+            entity.ToTable("movimientos_inventario", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_movimientos_inventario_cantidad_positiva",
+                    "\"Cantidad\" > 0");
+            });
             entity.HasKey(m => m.Id);
             entity.Property(m => m.Id).ValueGeneratedOnAdd();
             entity.Property(m => m.TipoMovimiento)
@@ -219,10 +230,6 @@ public class CatalogDbContext : DbContext
             entity.Property(m => m.Referencia).HasMaxLength(100);
             entity.Property(m => m.Observaciones).HasMaxLength(500);
             entity.Property(m => m.FechaMovimiento).HasDefaultValueSql("NOW()");
-
-            entity.HasCheckConstraint(
-                "CK_movimientos_inventario_cantidad_positiva",
-                "\"Cantidad\" > 0");
 
             entity.HasOne(m => m.Producto)
                   .WithMany(p => p.MovimientosInventario)
@@ -255,7 +262,12 @@ public class CatalogDbContext : DbContext
         // ── AjusteInventario ───────────────────────────────────────────────────
         modelBuilder.Entity<AjusteInventario>(entity =>
         {
-            entity.ToTable("ajustes_inventario");
+            entity.ToTable("ajustes_inventario", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_ajustes_inventario_cantidad_positiva",
+                    "\"Cantidad\" > 0");
+            });
             entity.HasKey(a => a.Id);
             entity.Property(a => a.Id).ValueGeneratedOnAdd();
             entity.Property(a => a.Tipo).HasConversion<string>().HasMaxLength(20);
@@ -268,10 +280,6 @@ public class CatalogDbContext : DbContext
             entity.Property(a => a.AprobadoPor).HasMaxLength(150);
             entity.Property(a => a.AplicadoPor).HasMaxLength(150);
             entity.Property(a => a.FechaCreacion).HasDefaultValueSql("NOW()");
-
-            entity.HasCheckConstraint(
-                "CK_ajustes_inventario_cantidad_positiva",
-                "\"Cantidad\" > 0");
 
             entity.HasOne(a => a.StockFisico)
                   .WithMany()
@@ -292,7 +300,14 @@ public class CatalogDbContext : DbContext
         // ── ConteoCiclico ─────────────────────────────────────────────────────
         modelBuilder.Entity<ConteoCiclico>(entity =>
         {
-            entity.ToTable("conteos_ciclicos");
+            entity.ToTable("conteos_ciclicos", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_conteos_ciclicos_cantidades_no_negativas",
+                "(\"CantidadSistema\" IS NULL OR \"CantidadSistema\" >= 0) AND " +
+                "(\"PrimerConteo\" IS NULL OR \"PrimerConteo\" >= 0) AND " +
+                "(\"SegundoConteo\" IS NULL OR \"SegundoConteo\" >= 0)");
+            });
             entity.HasKey(c => c.Id);
             entity.Property(c => c.Id).ValueGeneratedOnAdd();
             entity.Property(c => c.Estado).HasConversion<string>().HasMaxLength(30);
@@ -302,12 +317,6 @@ public class CatalogDbContext : DbContext
             entity.Property(c => c.ContadoPor).HasMaxLength(150);
             entity.Property(c => c.RecontadoPor).HasMaxLength(150);
             entity.Property(c => c.FechaCreacion).HasDefaultValueSql("NOW()");
-
-            entity.HasCheckConstraint(
-                "CK_conteos_ciclicos_cantidades_no_negativas",
-                "(\"CantidadSistema\" IS NULL OR \"CantidadSistema\" >= 0) AND " +
-                "(\"PrimerConteo\" IS NULL OR \"PrimerConteo\" >= 0) AND " +
-                "(\"SegundoConteo\" IS NULL OR \"SegundoConteo\" >= 0)");
 
             entity.HasOne(c => c.StockFisico)
                   .WithMany()
@@ -376,6 +385,29 @@ public class CatalogDbContext : DbContext
                   .WithMany(p => p.Devoluciones)
                   .HasForeignKey(d => d.ProductoId)
                   .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Referencias WMS externas: obligatorias y únicas también para escrituras
+        // manuales, no solo cuando las genera FulfillmentService mediante GUID.
+        modelBuilder.Entity<PickList>(entity =>
+        {
+            entity.HasIndex(p => p.NumeroPickList)
+                  .IsUnique()
+                  .HasDatabaseName("UX_WMS_PickList_NumeroPickList");
+            // Una orden no puede tener dos PickLists, ni con numeros diferentes.
+            entity.HasIndex(p => p.OrdenId)
+                  .IsUnique()
+                  .HasDatabaseName("UX_WMS_PickList_OrdenId");
+        });
+        modelBuilder.Entity<PaqueteDespacho>(entity =>
+        {
+            entity.HasIndex(p => p.NumeroGuia)
+                  .IsUnique()
+                  .HasDatabaseName("UX_WMS_Paquete_NumeroGuia");
+            // El modelo actual admite un solo paquete por orden.
+            entity.HasIndex(p => p.OrdenId)
+                  .IsUnique()
+                  .HasDatabaseName("UX_WMS_Paquete_OrdenId");
         });
 
         // ── MovimientoMWIP (Material & Work in Process) ─────────────────────────

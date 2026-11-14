@@ -3,7 +3,7 @@
  * Todos los derechos reservados © 2026
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ShoppingCart, FileText, CheckCircle2, AlertTriangle, Plus, RefreshCw, Send, ShieldCheck, PackageCheck } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -13,7 +13,7 @@ import { useToast } from '../../context/ToastContext';
 import { comprasApi, type CrearPORequest, type RegistrarFacturaRequest, type Validar3WayMatchRequest, type RecibirMercaderiaRequest } from '../../api/compras';
 import { wmsApi } from '../../api/wms';
 import { proveedoresApi, type ProveedorLogistico } from '../../api/proveedores';
-import type { OrdenCompra, MatchTridireccional, UbicacionAlmacen } from '../../types';
+import type { OrdenCompra, FacturaProveedor, MatchTridireccional, UbicacionAlmacen } from '../../types';
 
 type RecepcionLinea = {
   itemOrdenCompraId: string;
@@ -68,6 +68,13 @@ export default function ComprasPage() {
     cantidadRecibidaBodega: 0,
     toleranciaPorcentaje: 2.0,
   });
+  const [facturasMatch, setFacturasMatch] = useState<FacturaProveedor[]>([]);
+  const [loadingMatchPO, setLoadingMatchPO] = useState(false);
+  const matchPoRequestId = useRef(0);
+
+  useEffect(() => () => {
+    matchPoRequestId.current += 1;
+  }, []);
   const [matchResult, setMatchResult] = useState<MatchTridireccional | null>(null);
   const [runningMatch, setRunningMatch] = useState(false);
 
@@ -115,6 +122,63 @@ export default function ComprasPage() {
 
   const toast = useToast();
 
+  const cargarPOParaMatch = async (ordenCompraId: string) => {
+    const requestId = ++matchPoRequestId.current;
+
+    if (!ordenCompraId) {
+      setLoadingMatchPO(false);
+      setFacturasMatch([]);
+      setMatchForm(f => ({
+        ...f,
+        ordenCompraId: '',
+        facturaProveedorId: '',
+        cantidadRecibidaBodega: 0,
+      }));
+      return;
+    }
+
+    setLoadingMatchPO(true);
+    setMatchResult(null);
+    try {
+      // El listado de PO no incluye facturas; el detalle sí. Cargarlo evita
+      // enviar facturaProveedorId vacío o asociar una factura de otra PO.
+      const po = await comprasApi.obtenerPO(ordenCompraId);
+      if (requestId !== matchPoRequestId.current) return;
+
+      const facturas = po.facturas ?? [];
+      const facturaDisponible = facturas.find(f => !f.aprobadaParaPago && !f.pagada);
+      const cantidadRecibida = po.items.reduce(
+        (total, item) => total + (item.cantidadRecibida ?? 0),
+        0
+      );
+
+      setFacturasMatch(facturas);
+      setMatchForm(f => ({
+        ...f,
+        ordenCompraId: po.id,
+        facturaProveedorId: facturaDisponible?.id ?? '',
+        cantidadRecibidaBodega: cantidadRecibida,
+      }));
+    } catch (error) {
+      if (requestId !== matchPoRequestId.current) return;
+
+      setFacturasMatch([]);
+      setMatchForm(f => ({
+        ...f,
+        ordenCompraId,
+        facturaProveedorId: '',
+        cantidadRecibidaBodega: 0,
+      }));
+      toast.error(
+        'No se pudo cargar la factura',
+        error instanceof Error ? error.message : 'No fue posible cargar el detalle de la PO.'
+      );
+    } finally {
+      if (requestId === matchPoRequestId.current) {
+        setLoadingMatchPO(false);
+      }
+    }
+  };
   const handleCrearPO = async () => {
     if (!poForm.proveedorId) {
       toast.warning('Proveedor requerido', 'Selecciona un proveedor activo del maestro corporativo.');
@@ -240,6 +304,15 @@ export default function ComprasPage() {
   };
 
   const handleEjecutarMatch = async () => {
+    if (!matchForm.ordenCompraId || !matchForm.facturaProveedorId) {
+      toast.warning('Factura requerida', 'Selecciona una factura pendiente asociada a la Orden de Compra.');
+      return;
+    }
+    if (matchForm.cantidadRecibidaBodega <= 0) {
+      toast.warning('Recepción requerida', 'La cantidad física recibida debe ser mayor que cero.');
+      return;
+    }
+
     setRunningMatch(true);
     try {
       const res = await comprasApi.ejecutarMatch(matchForm);
@@ -543,11 +616,21 @@ export default function ComprasPage() {
             </div>
             <button
               onClick={() => {
+                setMatchResult(null);
                 if (ordenesCompra.length > 0) {
-                  setMatchForm(f => ({ ...f, ordenCompraId: ordenesCompra[0].id }));
+                  void cargarPOParaMatch(ordenesCompra[0].id);
+                } else {
+                  setFacturasMatch([]);
+                  setMatchForm(f => ({
+                    ...f,
+                    ordenCompraId: '',
+                    facturaProveedorId: '',
+                    cantidadRecibidaBodega: 0,
+                  }));
                 }
                 setMatchModalOpen(true);
               }}
+              disabled={ordenesCompra.length === 0}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -1108,7 +1191,7 @@ export default function ComprasPage() {
               </label>
               <select
                 value={matchForm.ordenCompraId}
-                onChange={e => setMatchForm(f => ({ ...f, ordenCompraId: e.target.value }))}
+                onChange={e => { void cargarPOParaMatch(e.target.value); }}
                 style={{
                   width: '100%',
                   padding: '0.5rem 0.75rem',
@@ -1125,6 +1208,45 @@ export default function ComprasPage() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                Factura de proveedor
+              </label>
+              <select
+                value={matchForm.facturaProveedorId}
+                onChange={e => setMatchForm(f => ({ ...f, facturaProveedorId: e.target.value }))}
+                disabled={loadingMatchPO || facturasMatch.length === 0}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem 0.75rem',
+                  borderRadius: '6px',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-primary)',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <option value="">
+                  {loadingMatchPO ? 'Cargando facturas...' : 'Seleccione una factura pendiente'}
+                </option>
+                {facturasMatch.map(factura => (
+                  <option
+                    key={factura.id}
+                    value={factura.id}
+                    disabled={factura.aprobadaParaPago || factura.pagada}
+                  >
+                    {factura.numeroFactura} — ${factura.montoTotal.toFixed(2)}
+                    {factura.pagada ? ' (Pagada)' : factura.aprobadaParaPago ? ' (Aprobada)' : ''}
+                  </option>
+                ))}
+              </select>
+              {!loadingMatchPO && facturasMatch.length === 0 && (
+                <p style={{ margin: '0.35rem 0 0', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  La orden seleccionada no tiene facturas registradas.
+                </p>
+              )}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
@@ -1218,7 +1340,7 @@ export default function ComprasPage() {
               <button
                 type="button"
                 onClick={handleEjecutarMatch}
-                disabled={runningMatch}
+                disabled={runningMatch || loadingMatchPO || !matchForm.facturaProveedorId || matchForm.cantidadRecibidaBodega <= 0}
                 style={{
                   padding: '0.5rem 1.25rem',
                   borderRadius: '6px',
@@ -1226,7 +1348,7 @@ export default function ComprasPage() {
                   background: 'var(--accent)',
                   color: '#fff',
                   fontWeight: 600,
-                  cursor: runningMatch ? 'not-allowed' : 'pointer',
+                  cursor: runningMatch || loadingMatchPO || !matchForm.facturaProveedorId || matchForm.cantidadRecibidaBodega <= 0 ? 'not-allowed' : 'pointer',
                 }}
               >
                 {runningMatch ? 'Auditando...' : 'Ejecutar Validación'}

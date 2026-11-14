@@ -17,3 +17,25 @@
 .ck-order-links{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}.ck-order-link{background:var(--bg-muted);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:11px;color:var(--text-secondary);cursor:pointer;overflow-wrap:anywhere;max-width:100%}.ck-order-link:hover{border-color:var(--accent)}
 .ck-track{border-top:1px solid var(--border);padding-top:14px}.ck-track-title{margin-bottom:14px}.ck-track-title strong{overflow-wrap:anywhere}.ck-track-title span{font-weight:700}.ck-track-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.ck-track-grid>div{border:1px solid var(--border);padding:11px;border-radius:8px;min-width:0}.ck-track-grid span{display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px}.ck-track-grid strong{font-size:12px;overflow-wrap:anywhere}.ck-warning-inline{display:flex;gap:8px;align-items:center;margin-top:12px;padding:10px;border-radius:7px;background:var(--yellow-bg);color:var(--text-primary);font-size:12px}.ck-alerts{padding-left:22px;font-size:12px;color:var(--text-secondary)}
 @media(max-width:900px){.ck-layout{grid-template-columns:1fr}}@media(max-width:540px){.ck-products{grid-template-columns:1fr}.ck-track-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ck-card{padding:14px}.ck-heading h1{font-size:20px}}@media(max-width:360px){.ck-track-grid{grid-template-columns:1fr}}
+
+
+/* Checkout comercial multi-SKU */
+.ck-cart-block {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(128, 128, 128, 0.28);
+}
+.ck-cart-block .ck-line {
+  align-items: center;
+  gap: 0.65rem;
+}
+.ck-cart-block .ck-line > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ck-cart-block .ck-line > button {
+  flex-shrink: 0;
+}

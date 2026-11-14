@@ -55,7 +55,8 @@ public class FlujoIntegralE2ETests
         var contabilidadService = new ContabilidadService(financeDb, NullLogger<ContabilidadService>.Instance);
         var stockService = new StockService(catalogDb, NullLogger<StockService>.Instance);
         var fulfillmentService = new FulfillmentService(catalogDb, stockService, NullLogger<FulfillmentService>.Instance);
-        var liquidacionService = new LiquidacionService(financeDb, contabilidadService, NullLogger<LiquidacionService>.Instance);
+        var liquidacionService = new LiquidacionService(financeDb, contabilidadService,
+            NullLogger<LiquidacionService>.Instance, new PaymentOperationsMode(false));
 
         // ── 1. Alta de Proveedor y Catálogo de Producto ─────────────────────────
         var proveedor = new Proveedor
@@ -133,7 +134,17 @@ public class FlujoIntegralE2ETests
             MontoSubTotal = 1000m,
             MontoIva = 130m,
             MontoTotal = 1130m,
-            FechaEmision = DateTime.UtcNow
+            FechaEmision = DateTime.UtcNow,
+            Items = new List<ItemFacturaProveedor>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    ItemOrdenCompraId = po.Items.Single().Id,
+                    CantidadFacturada = 10,
+                    PrecioUnitarioFacturado = 100m
+                }
+            }
         };
         financeDb.FacturasProveedor.Add(facturaProv);
         await financeDb.SaveChangesAsync();
@@ -211,7 +222,15 @@ public class FlujoIntegralE2ETests
             ordenVenta.TipoComprobante
         );
         partidaVenta.EstaCuadrada.Should().BeTrue();
-        partidaVenta.TotalDebe.Should().Be(226m);
+        // La orden incluye 5 de envío: el asiento debe reflejar los 231 completos.
+        partidaVenta.TotalDebe.Should().Be(ordenVenta.MontoTotal);
+        partidaVenta.TotalHaber.Should().Be(ordenVenta.MontoTotal);
+        partidaVenta.Lineas.Single(l => l.CodigoCuenta == "2108").Haber
+            .Should().Be(splitPago.MontoVendedor);
+        partidaVenta.Lineas.Single(l => l.CodigoCuenta == "4101").Haber
+            .Should().Be(splitPago.MontoMarketplace + ordenVenta.CostoEnvio);
+        partidaVenta.Lineas.Single(l => l.CodigoCuenta == "2105").Haber
+            .Should().Be(ordenVenta.ImpuestoIva);
 
         // Confirmar la reserva real que Checkout dejaría lista después del pago.
         var reservaVenta = await stockService.ReservarStockAsync(productoId, 2, ordenVenta.Id);
@@ -291,6 +310,12 @@ public class FlujoIntegralE2ETests
         // Procesar pago de liquidación (asiento 2108 CxP -> 1101 Bancos)
         var liquidacionPagada = await liquidacionService.ProcesarPagoAsync(liquidacionGenerada.Id);
         liquidacionPagada.Estado.Should().Be(EstadoLiquidacion.Completada);
+
+        // El pasivo reconocido en la venta debe quedar saldado por el pago de la liquidación.
+        var movimientos2108 = await financeDb.LineasPartidaContable.AsNoTracking()
+            .Where(l => l.CodigoCuenta == "2108").ToListAsync();
+        movimientos2108.Sum(l => l.Haber).Should().Be(180m);
+        movimientos2108.Sum(l => l.Debe).Should().Be(180m);
 
         // Verificar cuadratura final de comprobación contable
         var balance = await contabilidadService.ObtenerBalanceComprobacionAsync();

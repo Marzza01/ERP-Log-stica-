@@ -3,13 +3,13 @@
  * Todos los derechos reservados © 2026
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ShoppingBag, Search, Plus, Filter, AlertCircle, RefreshCw, Edit2, Trash2 } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
 import AlertBanner from '../../components/ui/AlertBanner';
 import { useToast } from '../../context/ToastContext';
-import { productosApi, type CrearProductoRequest } from '../../api/productos';
+import { productosApi, type CrearProductoRequest, type OpcionesAltaProducto } from '../../api/productos';
 import type { Producto } from '../../types';
 
 export default function ProductosPage() {
@@ -17,6 +17,11 @@ export default function ProductosPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCat, setSelectedCat] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const lastRequest = useRef(0);
+  const PAGE_SIZE = 50;
   const [errorCarga, setErrorCarga] = useState('');
 
   // Modal
@@ -40,33 +45,59 @@ export default function ProductosPage() {
     estaPublicado: true,
   });
   const [saving, setSaving] = useState(false);
+  const [opcionesAlta, setOpcionesAlta] = useState<OpcionesAltaProducto | null>(null);
+  const [errorOpciones, setErrorOpciones] = useState('');
   // Confirm delete
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
   const loadData = useCallback(async () => {
+    const requestId = ++lastRequest.current;
     setLoading(true);
     setErrorCarga('');
     try {
-      const res = await productosApi.listar(1, 100);
+      const res = debouncedSearch || selectedCat
+        ? await productosApi.buscar({ q: debouncedSearch || undefined, categoria: selectedCat || undefined, pagina: page, tamano: PAGE_SIZE })
+        : await productosApi.listar(page, PAGE_SIZE);
+      if (requestId !== lastRequest.current) return;
       setProductos(res.items ?? []);
+      setTotal(res.total ?? 0);
     } catch (error) {
+      if (requestId !== lastRequest.current) return;
       setProductos([]);
+      setTotal(0);
       setErrorCarga(error instanceof Error ? error.message : 'No se pudo cargar el catálogo desde la API.');
     } finally {
-      setLoading(false);
+      if (requestId === lastRequest.current) setLoading(false);
     }
-  }, []);
+  }, [debouncedSearch, selectedCat, page]);
 
+  useEffect(() => { void loadData(); return () => { lastRequest.current++; }; }, [loadData]);
+
+  // Datos reales desde Core, solo para ALTA. No inventar GUID y no
+  // exigir modificar categorías/vendedores al editar productos existentes.
   useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const filtered = productos.filter(p => {
-    const matchSearch = p.nombre.toLowerCase().includes(search.toLowerCase()) ||
-                        p.sku.toLowerCase().includes(search.toLowerCase());
-    const matchCat = selectedCat ? p.categoriaNombre === selectedCat : true;
-    return matchSearch && matchCat;
-  });
+    if (!modalOpen || editingId) return;
+    let vigente = true;
+    setOpcionesAlta(null);
+    setErrorOpciones('');
+    void productosApi.opcionesAlta().then(ref => {
+      if (!vigente) return;
+      setOpcionesAlta(ref);
+      setForm(f => ({
+        ...f,
+        vendedorId: ref.vendedores.length === 1 ? ref.vendedores[0].id : '',
+        categoriaId: '',
+      }));
+    }).catch(e => {
+      if (vigente) setErrorOpciones(e instanceof Error ? e.message : 'No se pudo verificar la referencia en Core.');
+    });
+    return () => { vigente = false; };
+  }, [modalOpen, editingId]);
 
   const totalDisponibles = productos.reduce((acc, p) => acc + (p.stock?.cantidadDisponible ?? 0), 0);
   const totalReservados = productos.reduce((acc, p) => acc + (p.stock?.cantidadReservada ?? 0), 0);
@@ -90,6 +121,8 @@ export default function ProductosPage() {
       unidadMedida: 'Unidad',
       estadoProducto: 'Activo',
       estaPublicado: true,
+      vendedorId: '',
+      categoriaId: '',
     });
     setModalOpen(true);
   };
@@ -125,6 +158,10 @@ export default function ProductosPage() {
         await productosApi.actualizar(editingId, form);
         toast.success('Producto Actualizado', `El SKU ${form.sku} se actualizó correctamente.`);
       } else {
+        if (!opcionesAlta ||
+            !opcionesAlta.vendedores.some(v => v.id === form.vendedorId) ||
+            !opcionesAlta.categorias.some(c => c.id === form.categoriaId))
+          throw new Error('Selecciona vendedor y categoría disponibles desde Core.');
         await productosApi.crear(form);
         toast.success('Producto Creado', `El SKU ${form.sku} se agregó al catálogo comercial.`);
       }
@@ -164,7 +201,7 @@ export default function ProductosPage() {
             Catálogo de Productos & SKUs
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>
-            Control de catálogo maestro de 500 SKUs, especificaciones logísticas (peso/volumen) y disponibilidad en bodega.
+            Catálogo paginado. Las existencias mostradas corresponden únicamente a los productos de esta página.
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
@@ -215,13 +252,13 @@ export default function ProductosPage() {
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Total SKUs Registrados</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '0.35rem' }}>
-            {productos.length}
+            {total}
           </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--accent)', marginTop: '0.25rem' }}>Catálogo Activo</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--accent)', marginTop: '0.25rem' }}>Productos publicados según filtros</div>
         </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Stock Físico Disponible</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Stock Disponible (página)</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--green)', marginTop: '0.35rem' }}>
             {totalDisponibles.toLocaleString()} unid.
           </div>
@@ -229,7 +266,7 @@ export default function ProductosPage() {
         </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Stock Reservado (OMS)</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Stock Reservado (página)</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--yellow)', marginTop: '0.35rem' }}>
             {totalReservados.toLocaleString()} unid.
           </div>
@@ -237,7 +274,7 @@ export default function ProductosPage() {
         </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Alertas de Reorden</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Bajo 10 unidades (página)</div>
           <div style={{ fontSize: '1.5rem', fontWeight: 700, color: skusCriticos > 0 ? 'var(--red)' : 'var(--green)', marginTop: '0.35rem' }}>
             {skusCriticos} SKUs
           </div>
@@ -253,7 +290,7 @@ export default function ProductosPage() {
             type="text"
             placeholder="Buscar por SKU o nombre de producto..."
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); setPage(1); }}
             style={{
               width: '100%',
               padding: '0.55rem 0.75rem 0.55rem 2.2rem',
@@ -268,25 +305,18 @@ export default function ProductosPage() {
         </div>
 
         <div style={{ width: '220px' }}>
-          <select
+          <input
+            type="search"
+            aria-label="Filtrar por categoría exacta"
+            placeholder="Categoría exacta (opcional)"
             value={selectedCat}
-            onChange={e => setSelectedCat(e.target.value)}
+            onChange={e => { setSelectedCat(e.target.value); setPage(1); }}
             style={{
-              width: '100%',
-              padding: '0.55rem 0.75rem',
-              borderRadius: '8px',
-              border: '1px solid var(--border)',
-              background: 'var(--bg-surface)',
-              color: 'var(--text-primary)',
-              fontSize: '0.875rem',
-              boxSizing: 'border-box',
+              width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px',
+              border: '1px solid var(--border)', background: 'var(--bg-surface)',
+              color: 'var(--text-primary)', fontSize: '0.875rem', boxSizing: 'border-box',
             }}
-          >
-            <option value="">Todas las Categorías</option>
-            {Array.from(new Set(productos.map(p => p.categoriaNombre))).filter(Boolean).sort().map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
+          />
         </div>
       </div>
 
@@ -385,9 +415,11 @@ export default function ProductosPage() {
             ),
           },
         ]}
-        data={filtered}
+        data={productos}
         keyExtractor={(item) => item.id}
         loading={loading}
+        pageSize={PAGE_SIZE}
+        serverPagination={{ page, total, onPageChange: setPage }}
         emptyText="No se encontraron productos coincidentes."
       />
 
@@ -405,6 +437,41 @@ export default function ProductosPage() {
             }}
             style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
           >
+            {!editingId && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {errorOpciones && (
+                  <AlertBanner variant="danger" title="Referencias de Core no disponibles" message={errorOpciones} />
+                )}
+                {!opcionesAlta && !errorOpciones && <p>Verificando vendedores y categorías reales...</p>}
+                {opcionesAlta && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <label>
+                      Vendedor activo
+                      <select required value={form.vendedorId ?? ''}
+                        onChange={e => setForm(f => ({ ...f, vendedorId: e.target.value }))}
+                        style={{ display: 'block', width: '100%' }}>
+                        <option value="">Seleccionar vendedor</option>
+                        {opcionesAlta.vendedores.map(v => <option key={v.id} value={v.id}>{v.nombre}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      Categoría de Core
+                      <select required value={form.categoriaId ?? ''}
+                        onChange={e => {
+                          const categoria = opcionesAlta.categorias.find(c => c.id === e.target.value);
+                          setForm(f => ({ ...f, categoriaId: e.target.value,
+                            categoriaNombre: categoria?.nombre ?? '' }));
+                        }}
+                        style={{ display: 'block', width: '100%' }}>
+                        <option value="">Seleccionar categoría</option>
+                        {opcionesAlta.categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '0.75rem' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
@@ -454,14 +521,24 @@ export default function ProductosPage() {
                 </label>
                 <select
                   value={form.categoriaNombre}
+                  disabled={!editingId}
                   onChange={e => setForm(f => ({ ...f, categoriaNombre: e.target.value }))}
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
                 >
-                  <option value="Tecnología">Tecnología</option>
-                  <option value="Audio & Video">Audio & Video</option>
-                  <option value="Periféricos Gamer">Periféricos Gamer</option>
-                  <option value="Cómputo">Cómputo</option>
-                  <option value="Accesorios">Accesorios</option>
+                  {!editingId && (
+                    <option value={form.categoriaNombre}>
+                      {form.categoriaId ? form.categoriaNombre : 'Selecciona una categoría de Core arriba'}
+                    </option>
+                  )}
+                  {editingId && (
+                    <>
+                      <option value="Tecnología">Tecnología</option>
+                      <option value="Audio & Video">Audio & Video</option>
+                      <option value="Periféricos Gamer">Periféricos Gamer</option>
+                      <option value="Cómputo">Cómputo</option>
+                      <option value="Accesorios">Accesorios</option>
+                    </>
+                  )}
                 </select>
               </div>
 
@@ -507,7 +584,9 @@ export default function ProductosPage() {
               </button>
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || (!editingId && (!opcionesAlta ||
+                  !opcionesAlta.vendedores.some(v => v.id === form.vendedorId) ||
+                  !opcionesAlta.categorias.some(c => c.id === form.categoriaId)))}
                 style={{
                   padding: '0.5rem 1.25rem',
                   borderRadius: '6px',

@@ -143,7 +143,7 @@ public sealed class ReservasExpiracionI3Tests
             stock.Object, NullLogger<ReservasExpiracionService>.Instance);
         var resultado = await servicio.ConsultarAsync(10);
         Assert.Equal(2, resultado.Count);
-        Assert.Single(resultado.Where(r => r.Elegible));
+        Assert.Single(resultado, r => r.Elegible);
         Assert.Equal(2, await catalog.ReservasStock.CountAsync());
         Assert.Equal(0, await catalog.MovimientosInventario.CountAsync());
         stock.VerifyNoOtherCalls();

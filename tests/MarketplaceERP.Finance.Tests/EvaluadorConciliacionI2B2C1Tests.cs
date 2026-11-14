@@ -44,7 +44,8 @@ public sealed class EvaluadorConciliacionI2B2C1Tests
     [Theory]
     [InlineData(EstadoIntentoPago.Preparado, DecisionConciliacionPago.SinEnvioConfirmado)]
     [InlineData(EstadoIntentoPago.Rechazado, DecisionConciliacionPago.YaCerrado)]
-    [InlineData(EstadoIntentoPago.Completado, DecisionConciliacionPago.YaCerrado)]
+    // Un intento completado sin orden vinculada no es un cierre comercial válido.
+    [InlineData(EstadoIntentoPago.Completado, DecisionConciliacionPago.RequiereRevisionManual)]
     public async Task EstadosLocalesSinConsultaExterna(
         EstadoIntentoPago estado, DecisionConciliacionPago esperado)
     {
@@ -55,6 +56,78 @@ public sealed class EvaluadorConciliacionI2B2C1Tests
         var gateway = new Mock<IPaymentRecoveryGateway>(MockBehavior.Strict);
         var actual = await Servicio(db, gateway).EvaluarAsync(id);
         Assert.Equal(esperado, actual.Decision);
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(EstadoOrden.Pendiente, DecisionConciliacionPago.RequiereRevisionManual)]
+    [InlineData(EstadoOrden.Cancelada, DecisionConciliacionPago.RequiereRevisionManual)]
+    [InlineData(EstadoOrden.Aprobada, DecisionConciliacionPago.YaCerrado)]
+    [InlineData(EstadoOrden.EnProceso, DecisionConciliacionPago.YaCerrado)]
+    public async Task IntentoCompletado_ExigeCoherenciaConEstadoComercial_SinMutarNiConsultarProveedor(
+        EstadoOrden estado, DecisionConciliacionPago esperado)
+    {
+        using var db = Db();
+        var id = Guid.NewGuid();
+        db.Ordenes.Add(new Orden
+        {
+            Id = id, NumeroOrden = $"QA-{id:N}",
+            CompradorId = Guid.NewGuid(), VendedorId = Guid.NewGuid(),
+            Estado = estado, SubTotal = 125m, MontoTotal = 125m, Moneda = "USD"
+        });
+        db.IntentosPago.Add(Intento(id, EstadoIntentoPago.Completado, "TX-COMPLETADO-QA"));
+        await db.SaveChangesAsync();
+        var gateway = new Mock<IPaymentRecoveryGateway>(MockBehavior.Strict);
+        var evaluador = Servicio(db, gateway);
+
+        var primera = await evaluador.EvaluarAsync(id);
+        var repetida = await evaluador.EvaluarAsync(id);
+
+        Assert.Equal(esperado, primera.Decision);
+        Assert.Equal(esperado, repetida.Decision);
+        Assert.Equal(estado, db.Ordenes.Single().Estado);
+        Assert.Equal(EstadoIntentoPago.Completado, db.IntentosPago.Single().Estado);
+        Assert.Empty(db.ConciliacionesPago);
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(true, true, DecisionConciliacionPago.YaCerrado)]
+    [InlineData(false, true, DecisionConciliacionPago.RequiereRevisionManual)]
+    [InlineData(true, false, DecisionConciliacionPago.RequiereRevisionManual)]
+    public async Task CanceladoAntesEnvio_NoConsultaProveedor_YExigeAuditoriaYOrdenCancelada(
+        bool conAuditoria, bool ordenCancelada, DecisionConciliacionPago esperado)
+    {
+        using var db = Db();
+        var ordenId = Guid.NewGuid();
+        var intento = Intento(ordenId, EstadoIntentoPago.CanceladoAntesEnvio);
+        db.Ordenes.Add(new Orden
+        {
+            Id = ordenId, NumeroOrden = $"QA-PREENVIO-{ordenId:N}",
+            CompradorId = Guid.NewGuid(), VendedorId = Guid.NewGuid(),
+            Estado = ordenCancelada ? EstadoOrden.Cancelada : EstadoOrden.Pendiente,
+            SubTotal = 125m, MontoTotal = 125m, Moneda = "USD"
+        });
+        db.IntentosPago.Add(intento);
+        if (conAuditoria)
+            db.CancelacionesPreEnvioQa.Add(new CancelacionPreEnvioQa
+            {
+                Id = Guid.NewGuid(),
+                OrdenId = ordenId, IntentoPagoId = intento.Id,
+                OperadorQaId = Guid.NewGuid(),
+                Motivo = MotivoCancelacionPreEnvioQa.VerificacionManualQa,
+                ReservasLiberadas = 0
+            });
+        await db.SaveChangesAsync();
+        var gateway = new Mock<IPaymentRecoveryGateway>(MockBehavior.Strict);
+
+        var primera = await Servicio(db, gateway).EvaluarAsync(ordenId);
+        var repetida = await Servicio(db, gateway).EvaluarAsync(ordenId);
+
+        Assert.Equal(esperado, primera.Decision);
+        Assert.Equal(esperado, repetida.Decision);
+        Assert.Equal(EstadoIntentoPago.CanceladoAntesEnvio,
+            db.IntentosPago.Single().Estado);
         gateway.VerifyNoOtherCalls();
     }
 

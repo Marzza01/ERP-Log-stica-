@@ -4,6 +4,10 @@
  */
 
 using MarketplaceERP.Catalog.Entities;
+using MarketplaceERP.Catalog.Data;
+using MarketplaceERP.Finance.Data;
+using MarketplaceERP.Finance.Entities;
+using Microsoft.EntityFrameworkCore;
 using MarketplaceERP.Catalog.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -11,34 +15,104 @@ using Microsoft.AspNetCore.Mvc;
 namespace MarketplaceERP.API.Controllers;
 
 /// <summary>
+/// Contrato HTTP plano de RMA. Nunca exponer directamente entidades EF con
+/// navegaciones Producto → Stocks → Producto: se produce un ciclo JSON.
+/// Mantiene exactamente los campos consumidos por el frontend.
+/// </summary>
+public sealed record RmaResponse(
+    Guid Id,
+    string NumeroRMA,
+    Guid OrdenId,
+    Guid ProductoId,
+    int Cantidad,
+    string MotivoCliente,
+    EstadoRMA Estado,
+    ClasificacionRMA Clasificacion,
+    string? InspectorTecnico,
+    string? DictamenTecnico,
+    decimal PorcentajeRemateDescuento,
+    DateTime FechaSolicitud,
+    DateTime? FechaInspeccion);
+
+/// <summary>
 /// Controlador de Logística Inversa y Devoluciones (RMA) (Célula A - PDF 1).
 /// Flujo de inspección técnica: Re-stock, Merma (scrap) o Remate.
 /// </summary>
 [ApiController]
 [Route("api/rma")]
-[Authorize]
+[Authorize(Roles = "Admin")]
 public class RmaController : ControllerBase
 {
     private readonly IRmaService _rmaService;
     private readonly ILogger<RmaController> _logger;
+    private readonly FinanceDbContext _financeDb;
+    private readonly CatalogDbContext _catalogDb;
 
-    public RmaController(IRmaService rmaService, ILogger<RmaController> logger)
+    public RmaController(
+        IRmaService rmaService,
+        ILogger<RmaController> logger,
+        FinanceDbContext financeDb,
+        CatalogDbContext catalogDb)
     {
         _rmaService = rmaService;
         _logger = logger;
+        _financeDb = financeDb;
+        _catalogDb = catalogDb;
     }
 
     /// <summary>
     /// Registra una nueva solicitud de devolución / RMA por parte de un cliente o post-venta.
     /// </summary>
     [HttpPost]
-    [ProducesResponseType(typeof(DevolucionRMA), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(RmaResponse), StatusCodes.Status201Created)]
     public async Task<IActionResult> SolicitarDevolucion([FromBody] RegistrarRmaRequest request)
     {
         try
         {
+            // Serializar por OrdenId en PostgreSQL antes de consultar las unidades
+            // vendidas y las ya solicitadas. El check del saldo y el INSERT RMA
+            // deben permanecer en la MISMA transacción hasta el commit.
+            // La clave está separada del espacio de advisory locks del picking.
+            await using var transaccion = _catalogDb.Database.ProviderName ==
+                "Npgsql.EntityFrameworkCore.PostgreSQL"
+                    ? await _catalogDb.Database.BeginTransactionAsync()
+                    : null;
+            if (transaccion is not null)
+            {
+                var claveOrden = BitConverter.ToInt32(request.OrdenId.ToByteArray(), 0);
+                await _catalogDb.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(6173153, {claveOrden})");
+            }
+
+            // Una devolucion solo puede referirse a una venta real y entregada.
+            // Validar antes de crear el documento de Catalog; no se confia en IDs del cliente.
+            var orden = await _financeDb.Ordenes.AsNoTracking()
+                .Include(o => o.Items)
+                .FirstOrDefaultAsync(o => o.Id == request.OrdenId);
+            if (orden is null || orden.Estado != EstadoOrden.Entregada)
+                return BadRequest(new { mensaje = "La devolucion requiere una orden entregada existente." });
+
+            var cantidadVendida = orden.Items
+                .Where(i => i.ProductoId == request.ProductoId)
+                .Sum(i => i.Cantidad);
+            if (request.Cantidad <= 0 || cantidadVendida == 0 || request.Cantidad > cantidadVendida)
+                return BadRequest(new { mensaje = "Producto o cantidad no corresponden a la venta." });
+
+            // Excluir RMAs rechazados del saldo solicitado. Una comprobacion concurrente
+            // necesita una garantia transaccional adicional en PostgreSQL.
+            var cantidadDevuelta = await _catalogDb.DevolucionesRMA.AsNoTracking()
+                .Where(r => r.OrdenId == request.OrdenId &&
+                            r.ProductoId == request.ProductoId &&
+                            r.Estado != EstadoRMA.Rechazado)
+                .SumAsync(r => (int?)r.Cantidad) ?? 0;
+            if (request.Cantidad > cantidadVendida - cantidadDevuelta)
+                return BadRequest(new { mensaje = "La cantidad excede el saldo disponible para devolucion." });
+
             var rma = await _rmaService.RegistrarSolicitudRmaAsync(request);
-            return CreatedAtAction(nameof(Listar), new { id = rma.Id }, rma);
+            if (transaccion is not null)
+                await transaccion.CommitAsync();
+
+            return CreatedAtAction(nameof(Listar), new { id = rma.Id }, Mapear(rma));
         }
         catch (InvalidOperationException ex)
         {
@@ -50,8 +124,8 @@ public class RmaController : ControllerBase
     /// Ejecuta la inspección técnica de calidad en bodega y emite el dictamen (Re-stock, Scrap, Remate).
     /// </summary>
     [HttpPost("{id:guid}/inspeccionar")]
-    [Authorize(Roles = "Admin,Vendedor")]
-    [ProducesResponseType(typeof(DevolucionRMA), StatusCodes.Status200OK)]
+    [Authorize(Roles = "Admin")]
+    [ProducesResponseType(typeof(RmaResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Inspeccionar(Guid id, [FromBody] DictaminarRmaRequest request)
     {
@@ -63,7 +137,7 @@ public class RmaController : ControllerBase
                 return NotFound(new { mensaje = $"Solicitud RMA {id} no encontrada." });
             }
 
-            return Ok(rma);
+            return Ok(Mapear(rma));
         }
         catch (InvalidOperationException ex)
         {
@@ -75,10 +149,17 @@ public class RmaController : ControllerBase
     /// Lista el historial de devoluciones RMA registradas con filtro opcional por estado.
     /// </summary>
     [HttpGet]
-    [ProducesResponseType(typeof(IEnumerable<DevolucionRMA>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IEnumerable<RmaResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Listar([FromQuery] EstadoRMA? estado)
     {
         var items = await _rmaService.ListarRmaAsync(estado);
-        return Ok(items);
+        return Ok(items.Select(Mapear).ToList());
     }
+    private static RmaResponse Mapear(DevolucionRMA item) => new(
+        item.Id, item.NumeroRMA, item.OrdenId, item.ProductoId,
+        item.Cantidad, item.MotivoCliente, item.Estado,
+        item.Clasificacion, item.InspectorTecnico,
+        item.DictamenTecnico, item.PorcentajeRemateDescuento,
+        item.FechaSolicitud, item.FechaInspeccion);
+
 }

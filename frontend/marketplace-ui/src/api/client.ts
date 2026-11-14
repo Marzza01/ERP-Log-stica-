@@ -62,9 +62,15 @@ async function request<T>(
       const text = await res.text();
       try {
         parsedBody = JSON.parse(text);
-        errorMsg = parsedBody.mensaje || parsedBody.message || parsedBody.title || text;
+        const serverMessage = parsedBody && typeof parsedBody === 'object'
+          ? (parsedBody.mensaje || parsedBody.message || parsedBody.title) : null;
+        errorMsg = typeof serverMessage === 'string' && serverMessage.trim()
+          ? serverMessage.slice(0, 300) : `Error HTTP ${res.status}`;
       } catch {
-        errorMsg = text || res.statusText;
+        // No presentar páginas HTML de proxy (ni errores internos con trazas) como texto de usuario.
+        errorMsg = res.status >= 500
+          ? 'El servicio está temporalmente no disponible. Inténtalo de nuevo.'
+          : `No se pudo completar la solicitud (HTTP ${res.status}).`;
       }
     } catch {
       // Ignorar error al leer body

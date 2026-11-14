@@ -71,7 +71,41 @@ public sealed class EvaluadorConciliacionPago
             return Evaluacion(ordenId, DecisionConciliacionPago.SinEnvioConfirmado,
                 "El intento figura como preparado; debe investigarse antes de actuar.");
 
-        // Casos terminales: no realizar consultas externas innecesarias.
+        // "Completado" cierra el intento financiero, pero NO demuestra que
+        // la orden comercial haya sido aprobada. Detectar el fallo de cierre
+        // sin llamar al proveedor ni alterar ninguna entidad.
+        if (intento.Estado == EstadoIntentoPago.Completado)
+        {
+            var estadoOrden = await _db.Ordenes.AsNoTracking()
+                .Where(o => o.Id == ordenId)
+                .Select(o => (EstadoOrden?)o.Estado)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (estadoOrden is null or EstadoOrden.Pendiente or EstadoOrden.Cancelada)
+                return Evaluacion(ordenId, DecisionConciliacionPago.RequiereRevisionManual,
+                    "El intento de pago esta completado, pero la orden no existe, " +
+                    "sigue pendiente o esta cancelada. Verificar split, reserva y " +
+                    "situacion comercial antes de cualquier accion.",
+                    intento.TransaccionId);
+        }
+
+        // Cancelación pre-envío QA no representa respuesta bancaria.
+        // Nunca consultar la pasarela por un intento cancelado de esta forma.
+        if (intento.Estado == EstadoIntentoPago.CanceladoAntesEnvio)
+        {
+            var ordenCancelada = await _db.Ordenes.AsNoTracking()
+                .AnyAsync(o => o.Id == ordenId && o.Estado == EstadoOrden.Cancelada,
+                    cancellationToken);
+            var auditoria = await _db.CancelacionesPreEnvioQa.AsNoTracking()
+                .AnyAsync(a => a.OrdenId == ordenId &&
+                               a.IntentoPagoId == intento.Id, cancellationToken);
+            return ordenCancelada && auditoria
+                ? Evaluacion(ordenId, DecisionConciliacionPago.YaCerrado,
+                    "Cancelación administrativa previa al envío registrada en QA.")
+                : Evaluacion(ordenId, DecisionConciliacionPago.RequiereRevisionManual,
+                    "Cancelación previa al envío inconsistente; revisar la orden y la auditoría.");
+        }
+
+        // Casos terminales sin esta inconsistencia: no consultar proveedores.
         if (intento.Estado is EstadoIntentoPago.Rechazado or EstadoIntentoPago.Completado)
             return Evaluacion(ordenId, DecisionConciliacionPago.YaCerrado,
                 "El registro local esta cerrado; este evaluador no modifica su estado.",

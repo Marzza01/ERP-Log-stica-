@@ -15,6 +15,8 @@ export default function SinAccesoPage() {
   const handleVolver = () => {
     if (usuario?.rol === 'Comprador') {
       navigate('/checkout');
+    } else if (usuario?.rol === 'Vendedor') {
+      navigate('/productos');
     } else {
       navigate('/dashboard');
     }

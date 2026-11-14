@@ -21,7 +21,9 @@ public class FinanceDbContext : DbContext
     public DbSet<ItemOrden> ItemsOrden => Set<ItemOrden>();
     public DbSet<SplitPago> SplitsPago => Set<SplitPago>();
     public DbSet<IntentoPago> IntentosPago => Set<IntentoPago>();
+    public DbSet<IntentoReservaPago> IntentoReservasPago => Set<IntentoReservaPago>();
     public DbSet<ConciliacionPago> ConciliacionesPago => Set<ConciliacionPago>();
+    public DbSet<CancelacionPreEnvioQa> CancelacionesPreEnvioQa => Set<CancelacionPreEnvioQa>();
     public DbSet<ReembolsoPago> ReembolsosPago => Set<ReembolsoPago>();
     public DbSet<Liquidacion> Liquidaciones => Set<Liquidacion>();
 
@@ -29,6 +31,7 @@ public class FinanceDbContext : DbContext
     public DbSet<OrdenCompra> OrdenesCompra => Set<OrdenCompra>();
     public DbSet<ItemOrdenCompra> ItemsOrdenCompra => Set<ItemOrdenCompra>();
     public DbSet<FacturaProveedor> FacturasProveedor => Set<FacturaProveedor>();
+    public DbSet<ItemFacturaProveedor> ItemsFacturaProveedor => Set<ItemFacturaProveedor>();
     public DbSet<MatchTridireccional> MatchesTridireccionales => Set<MatchTridireccional>();
 
     // Contabilidad General (Libro Diario y Mayor)
@@ -127,6 +130,27 @@ public class FinanceDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        // ── Relación durable multi-SKU, ensayo P0 en sandbox ──────────────
+        modelBuilder.Entity<IntentoReservaPago>(entity =>
+        {
+            entity.ToTable("intento_reservas_pago", t =>
+            {
+                t.HasCheckConstraint("CK_intento_reservas_pago_cantidad", "\"Cantidad\" > 0");
+            });
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.Id).ValueGeneratedNever();
+            entity.Property(r => r.IntentoPagoId).IsRequired();
+            entity.Property(r => r.ReservaId).IsRequired();
+            entity.Property(r => r.ProductoId).IsRequired();
+            entity.Property(r => r.Cantidad).IsRequired();
+            entity.Property(r => r.Procedencia).HasMaxLength(32).IsRequired();
+            entity.Property(r => r.CreadoUtc).IsRequired();
+            entity.HasIndex(r => new { r.IntentoPagoId, r.ProductoId }).IsUnique();
+            entity.HasIndex(r => r.ReservaId).IsUnique();
+            entity.HasOne<IntentoPago>().WithMany().HasForeignKey(r => r.IntentoPagoId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         // ── Auditoría durable de conciliaciones ────────────────────────────────
         modelBuilder.Entity<ConciliacionPago>(entity =>
         {
@@ -142,6 +166,32 @@ public class FinanceDbContext : DbContext
         });
 
         // ── Reembolso íntegro idempotente por orden ──────────────────────────
+        // Auditoria durable de cancelacion prepago QA, SIN simular conciliacion bancaria.
+        modelBuilder.Entity<CancelacionPreEnvioQa>(entity =>
+        {
+            entity.ToTable("cancelaciones_pre_envio", t =>
+            {
+                t.HasCheckConstraint("CK_cancelaciones_pre_envio_reservas",
+                    "\"ReservasLiberadas\" >= 0");
+            });
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Id).ValueGeneratedNever();
+            entity.Property(c => c.OrdenId).IsRequired();
+            entity.Property(c => c.IntentoPagoId).IsRequired();
+            entity.Property(c => c.OperadorQaId).HasColumnName("OperadorId").IsRequired();
+            entity.Property(c => c.Motivo).HasConversion<string>()
+                .HasMaxLength(64).IsRequired();
+            entity.Property(c => c.ReservasLiberadas).IsRequired();
+            entity.Property(c => c.RegistradoUtc).IsRequired();
+            entity.HasIndex(c => c.OrdenId).IsUnique();
+            entity.HasIndex(c => c.IntentoPagoId).IsUnique();
+            entity.HasOne<Orden>().WithMany().HasForeignKey(c => c.OrdenId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<IntentoPago>().WithMany()
+                .HasForeignKey(c => c.IntentoPagoId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<ReembolsoPago>(entity =>
         {
             entity.ToTable("reembolsos_pago");
@@ -180,6 +230,14 @@ public class FinanceDbContext : DbContext
             entity.HasOne(s => s.Orden)
                   .WithOne(o => o.SplitPago)
                   .HasForeignKey<SplitPago>(s => s.OrdenId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Expansión 1:N: el split solo se reclama por esta FK; la FK
+            // vieja en Liquidacion.SplitPagoId queda como ancla histórica.
+            entity.HasIndex(s => s.LiquidacionId);
+            entity.HasOne(s => s.LiquidacionGrupo)
+                  .WithMany(l => l.SplitsPago)
+                  .HasForeignKey(s => s.LiquidacionId)
                   .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -270,6 +328,38 @@ public class FinanceDbContext : DbContext
                   .WithMany(p => p.Facturas)
                   .HasForeignKey(f => f.OrdenCompraId)
                   .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ── ItemFacturaProveedor (FIN-07) ─────────────────────────────────────
+        modelBuilder.Entity<ItemFacturaProveedor>(entity =>
+        {
+            entity.ToTable("items_factura_proveedor");
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.Id).ValueGeneratedOnAdd();
+            entity.Property(i => i.CantidadFacturada).IsRequired();
+            entity.Property(i => i.PrecioUnitarioFacturado).HasPrecision(18, 2).IsRequired();
+
+            // No se pueden declarar dos líneas del mismo item PO en una factura.
+            entity.HasIndex(i => new { i.FacturaProveedorId, i.ItemOrdenCompraId })
+                  .IsUnique();
+
+            entity.HasOne(i => i.FacturaProveedor)
+                  .WithMany(f => f.Items)
+                  .HasForeignKey(i => i.FacturaProveedorId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(i => i.ItemOrdenCompra)
+                  .WithMany()
+                  .HasForeignKey(i => i.ItemOrdenCompraId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_FIN07_factura_linea_cantidad",
+                    "\"CantidadFacturada\" > 0");
+                t.HasCheckConstraint("CK_FIN07_factura_linea_precio",
+                    "\"PrecioUnitarioFacturado\" > 0");
+            });
         });
 
         // ── MatchTridireccional ───────────────────────────────────────────────

@@ -298,52 +298,55 @@ public class CatalogLogisticsTests
         using var dbContext = CreateInMemoryDbContext();
         var service = new CatalogImportService(dbContext, NullLogger<CatalogImportService>.Instance);
 
-        var posiblesRutas = new[]
+        // Esta prueba NUNCA debe generar ni sobrescribir el CSV real del proyecto.
+        // Cada ejecución usa un directorio temporal distinto y lo elimina al finalizar.
+        var carpetaTemporal = Path.Combine(Path.GetTempPath(), "MarketplaceERP.Catalog.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(carpetaTemporal);
+        try
         {
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "docs", "data", "Catalogo_500_Productos.csv"),
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "MarketplaceERP.Catalog", "SeedData", "Catalogo_500_Productos.csv"),
-            Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..", "..", "..", "docs", "data", "Catalogo_500_Productos.csv")
-        };
+            var rutaCsv = Path.Combine(carpetaTemporal, "Catalogo_500_Productos.csv");
+            CatalogDataGenerator.GenerarCsv(rutaCsv);
 
-        string? rutaCsv = posiblesRutas.FirstOrDefault(File.Exists) 
-            ?? Path.Combine(AppContext.BaseDirectory, "Catalogo_500_Productos.csv");
+            var defaultVendedorId = Guid.NewGuid();
+            var defaultCategoriaId = Guid.NewGuid();
 
-        // Asegurar que el archivo tenga codificación UTF-8 pura
-        CatalogDataGenerator.GenerarCsv(rutaCsv);
+            // Act
+            var result = await service.ImportarCatalogoDesdeArchivoAsync(rutaCsv!, defaultVendedorId, defaultCategoriaId);
 
-        var defaultVendedorId = Guid.NewGuid();
-        var defaultCategoriaId = Guid.NewGuid();
+            // Assert
+            result.TotalProcesados.Should().Be(500);
+            result.Exitosos.Should().Be(500);
+            result.Errores.Should().Be(0);
 
-        // Act
-        var result = await service.ImportarCatalogoDesdeArchivoAsync(rutaCsv!, defaultVendedorId, defaultCategoriaId);
+            var totalEnBd = await dbContext.Productos.CountAsync();
+            totalEnBd.Should().Be(500);
 
-        // Assert
-        result.TotalProcesados.Should().Be(500);
-        result.Exitosos.Should().Be(500);
-        result.Errores.Should().Be(0);
+            var categorias = await dbContext.Productos.Select(p => p.CategoriaNombre).Distinct().ToListAsync();
+            categorias.Should().HaveCount(6);
+            categorias.Should().Contain(new[]
+            {
+                "Electrónica y Tecnología",
+                "Ropa y Accesorios",
+                "Alimentos y Bebidas",
+                "Ferretería e Industria",
+                "Hogar y Decoración",
+                "Salud y Cuidado Personal"
+            });
 
-        var totalEnBd = await dbContext.Productos.CountAsync();
-        totalEnBd.Should().Be(500);
+            // Verificar que todos tienen stock físico y código de ubicación WMS
+            var sinStock = await dbContext.Productos.Where(p => !p.Stocks.Any()).CountAsync();
+            sinStock.Should().Be(0);
 
-        var categorias = await dbContext.Productos.Select(p => p.CategoriaNombre).Distinct().ToListAsync();
-        categorias.Should().HaveCount(6);
-        categorias.Should().Contain(new[]
+            var ubicacionesGeneradas = await dbContext.UbicacionesAlmacen.CountAsync();
+            ubicacionesGeneradas.Should().BeGreaterThan(0);
+        }
+        finally
         {
-            "Electrónica y Tecnología",
-            "Ropa y Accesorios",
-            "Alimentos y Bebidas",
-            "Ferretería e Industria",
-            "Hogar y Decoración",
-            "Salud y Cuidado Personal"
-        });
-
-        // Verificar que todos tienen stock físico y código de ubicación WMS
-        var sinStock = await dbContext.Productos.Where(p => !p.Stocks.Any()).CountAsync();
-        sinStock.Should().Be(0);
-
-        var ubicacionesGeneradas = await dbContext.UbicacionesAlmacen.CountAsync();
-        ubicacionesGeneradas.Should().BeGreaterThan(0);
+            if (Directory.Exists(carpetaTemporal))
+                Directory.Delete(carpetaTemporal, recursive: true);
+        }
     }
+
     [Fact]
     public void StockFisico_CantidadDisponible_RestaReservadoYBloqueado()
     {

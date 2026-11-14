@@ -50,24 +50,225 @@ public class ContabilidadService : IContabilidadService
         _logger = logger;
     }
 
+    // ── FIN-01: Asiento manual ──────────────────────────────────────────────
+    /// <summary>
+    /// Registra las cuentas y los importes proporcionados, sin reutilizar el
+    /// generador de ventas ni fabricar movimientos de Caja/IVA.
+    /// El endpoint permanece protegido por PaymentOperationsGuard.
+    /// </summary>
+    public async Task<PartidaContable> GenerarAsientoManualAsync(
+        string concepto,
+        string tipoOperacion,
+        IEnumerable<LineaAsientoInput> lineas,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(concepto) || concepto.Trim().Length > 500)
+            throw new ArgumentException("El concepto es obligatorio y admite hasta 500 caracteres.");
+
+        var tipo = tipoOperacion?.Trim();
+        if (string.IsNullOrWhiteSpace(tipo) ||
+            !new[] { "Ajuste", "Correccion", "Reversion", "Cierre" }
+                .Contains(tipo, StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("El tipo de asiento manual no es válido.");
+
+        var detalle = lineas?.ToList() ?? new List<LineaAsientoInput>();
+        if (detalle.Count < 2 || detalle.Count > 100)
+            throw new ArgumentException("El asiento debe contener entre 2 y 100 líneas.");
+
+        decimal totalDebe = 0m;
+        decimal totalHaber = 0m;
+        var entidades = new List<LineaPartidaContable>(detalle.Count);
+
+        for (var i = 0; i < detalle.Count; i++)
+        {
+            var item = detalle[i];
+            if (item is null)
+                throw new ArgumentException($"La línea {i + 1} no puede ser nula.");
+            var codigo = item.CodigoCuenta?.Trim();
+            if (string.IsNullOrWhiteSpace(codigo) ||
+                !NombresCuenta.TryGetValue(codigo, out var nombre))
+                throw new ArgumentException($"Cuenta contable no reconocida en línea {i + 1}.");
+
+            if (item.Debe < 0m || item.Haber < 0m ||
+                (item.Debe > 0m && item.Haber > 0m) ||
+                (item.Debe == 0m && item.Haber == 0m))
+                throw new ArgumentException($"Montos Debe/Haber no válidos en línea {i + 1}.");
+
+            if (decimal.Round(item.Debe, 2) != item.Debe ||
+                decimal.Round(item.Haber, 2) != item.Haber)
+                throw new ArgumentException($"Solo se admiten dos decimales en línea {i + 1}.");
+
+            const decimal maximo = 9999999999999999.99m; // precision PostgreSQL numeric(18,2)
+            if (item.Debe > maximo || item.Haber > maximo)
+                throw new ArgumentException($"El monto de línea {i + 1} supera la precisión contable.");
+
+            var glosa = string.IsNullOrWhiteSpace(item.Glosa) ? concepto.Trim() : item.Glosa.Trim();
+            if (glosa.Length > 300)
+                throw new ArgumentException($"La glosa de línea {i + 1} supera 300 caracteres.");
+
+            totalDebe = checked(totalDebe + item.Debe);
+            totalHaber = checked(totalHaber + item.Haber);
+            entidades.Add(new LineaPartidaContable
+            {
+                Id = Guid.NewGuid(),
+                CodigoCuenta = codigo,
+                NombreCuenta = nombre,
+                Debe = item.Debe,
+                Haber = item.Haber,
+                Glosa = glosa
+            });
+        }
+
+        // Los totales también deben caber en numeric(18,2).
+        if (totalDebe > 9999999999999999.99m || totalHaber > 9999999999999999.99m)
+            throw new ArgumentException("El total del asiento supera la precisión contable.");
+
+        // No permitir un descuadre de un centavo por redondeo/tolerancia.
+        if (totalDebe == 0m || totalDebe != totalHaber)
+            throw new ArgumentException("El asiento debe tener montos positivos e iguales en Debe y Haber.");
+
+        var now = DateTime.UtcNow;
+        // Identificador único sin usar Count()+1, que colisiona entre peticiones.
+        // Un correlativo fiscal exigiría una secuencia PostgreSQL y revisión adicional.
+        var partida = new PartidaContable
+        {
+            Id = Guid.NewGuid(),
+            NumeroPartida = $"AST-{now:yyyy}-{Guid.NewGuid():N}",
+            Fecha = now,
+            Concepto = concepto.Trim(),
+            TipoOperacion = tipo!,
+            ReferenciaOrigenId = null,
+            DocumentoReferencia = string.Empty,
+            TotalDebe = totalDebe,
+            TotalHaber = totalHaber,
+            FechaRegistro = now,
+            Lineas = entidades
+        };
+
+        _dbContext.PartidasContables.Add(partida);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("Asiento manual {Numero} registrado con {Lineas} líneas.",
+            partida.NumeroPartida, entidades.Count);
+        return partida;
+    }
+
     // ── Asiento de Venta ─────────────────────────────────────────────────────
     /// <summary>
     /// Genera el asiento contable para una venta del OMS.
     /// Factura de Consumidor Final o Crédito Fiscal (diferencia en cuenta destino).
-    ///   DEBE: 1101 Caja / 1105 CxC por el total con IVA
-    ///   HABER: 4101 Ingresos por el subtotal sin IVA
+    ///   DEBE: 1101 Caja / 1105 CxC por el total de la orden
+    ///   HABER: 2108 Pasivo del vendedor, cuando existe SplitPago
+    ///   HABER: 4101 Comisión marketplace + envío (o subtotal + envío sin split)
     ///   HABER: 2105 IVA Débito Fiscal por el IVA
     /// </summary>
     public async Task<PartidaContable> GenerarAsientoVentaAsync(
         Guid ordenId, decimal montoVenta, decimal iva,
         string tipoComprobante, CancellationToken cancellationToken = default)
     {
-        decimal totalConIva = montoVenta + iva;
+        // El SplitPago distribuye el subtotal entre vendedor y marketplace.
+        // IVA y envío pertenecen a la orden y se contabilizan por separado.
+        var orden = await _dbContext.Ordenes.AsNoTracking()
+            .Include(o => o.SplitPago)
+            .SingleOrDefaultAsync(o => o.Id == ordenId, cancellationToken);
+        var envio = orden?.CostoEnvio ?? 0m;
+        var pasivoVendedor = 0m;
+        var ingresoVenta = montoVenta + envio;
+
+        if (orden?.SplitPago is { } split)
+        {
+            if (split.MontoTotal != orden.SubTotal ||
+                split.MontoTotal != montoVenta ||
+                split.MontoVendedor <= 0m ||
+                split.MontoMarketplace < 0m ||
+                split.MontoVendedor + split.MontoMarketplace != split.MontoTotal ||
+                orden.MontoTotal != montoVenta + iva + envio)
+            {
+                throw new InvalidOperationException(
+                    "El SplitPago no coincide con el subtotal o el total persistido de la orden; requiere conciliación manual.");
+            }
+
+            pasivoVendedor = split.MontoVendedor;
+            // La comisión es ingreso del marketplace; el envío conserva el
+            // tratamiento de ingreso adoptado en F149 hasta validación contable externa.
+            ingresoVenta = split.MontoMarketplace + envio;
+        }
+
+        decimal totalConIva = montoVenta + envio + iva;
+
+        // Proteccion para reintentos secuenciales. La concurrencia verdadera requiere
+        // adicionalmente un indice parcial UNIQUE (TipoOperacion=Venta, ReferenciaOrigenId)
+        // sobre una migracion validada contra datos historicos.
+        var existente = await _dbContext.PartidasContables
+            .Include(p => p.Lineas)
+            .FirstOrDefaultAsync(p => p.TipoOperacion == "Venta" &&
+                                      p.ReferenciaOrigenId == ordenId, cancellationToken);
+        if (existente is not null)
+        {
+            var ingreso = existente.Lineas
+                .Where(l => l.CodigoCuenta == INGRESOS_VENTAS).Sum(l => l.Haber);
+            var ivaRegistrado = existente.Lineas
+                .Where(l => l.CodigoCuenta == IVA_DEBITO).Sum(l => l.Haber);
+            var pasivoRegistrado = existente.Lineas
+                .Where(l => l.CodigoCuenta == PASIVO_VENDEDORES).Sum(l => l.Haber);
+            if (existente.TotalDebe != totalConIva ||
+                existente.TotalHaber != totalConIva ||
+                ingreso != ingresoVenta ||
+                ivaRegistrado != iva ||
+                pasivoRegistrado != pasivoVendedor)
+                throw new InvalidOperationException(
+                    "La orden ya tiene un asiento Venta con importes diferentes.");
+
+            return existente;
+        }
+
         bool esFacturaCredito = tipoComprobante.Contains("Crédito", StringComparison.OrdinalIgnoreCase)
                              || tipoComprobante.Contains("Credito", StringComparison.OrdinalIgnoreCase)
                              || tipoComprobante.Contains("CCF", StringComparison.OrdinalIgnoreCase);
         string cuentaActivo = esFacturaCredito ? CXC_CLIENTES : CAJA_BANCOS;
         string numeroPartida = await GenerarNumeroPartidaAsync("VTA", cancellationToken);
+
+        var lineas = new List<LineaPartidaContable>
+        {
+            new() { Id = Guid.NewGuid(), CodigoCuenta = cuentaActivo,
+                    NombreCuenta = NombresCuenta[cuentaActivo],
+                    Debe = totalConIva, Haber = 0m,
+                    Glosa = $"Cobro venta {tipoComprobante}" },
+        };
+
+        if (pasivoVendedor > 0m)
+        {
+            lineas.Add(new LineaPartidaContable
+            {
+                Id = Guid.NewGuid(),
+                CodigoCuenta = PASIVO_VENDEDORES,
+                NombreCuenta = NombresCuenta[PASIVO_VENDEDORES],
+                Debe = 0m,
+                Haber = pasivoVendedor,
+                Glosa = $"Obligación pendiente con vendedor de orden {orden?.NumeroOrden ?? ordenId.ToString("N")}"
+            });
+        }
+
+        lineas.Add(new LineaPartidaContable
+        {
+            Id = Guid.NewGuid(),
+            CodigoCuenta = INGRESOS_VENTAS,
+            NombreCuenta = NombresCuenta[INGRESOS_VENTAS],
+            Debe = 0m,
+            Haber = ingresoVenta,
+            Glosa = pasivoVendedor > 0m
+                ? "Comisión marketplace más envío"
+                : "Ingreso neto por venta y envío"
+        });
+        lineas.Add(new LineaPartidaContable
+        {
+            Id = Guid.NewGuid(),
+            CodigoCuenta = IVA_DEBITO,
+            NombreCuenta = NombresCuenta[IVA_DEBITO],
+            Debe = 0m,
+            Haber = iva,
+            Glosa = "IVA Débito Fiscal 13%"
+        });
 
         var partida = new PartidaContable
         {
@@ -81,21 +282,7 @@ public class ContabilidadService : IContabilidadService
             TotalDebe = totalConIva,
             TotalHaber = totalConIva,
             FechaRegistro = DateTime.UtcNow,
-            Lineas = new List<LineaPartidaContable>
-            {
-                new() { Id = Guid.NewGuid(), CodigoCuenta = cuentaActivo,
-                        NombreCuenta = NombresCuenta[cuentaActivo],
-                        Debe = totalConIva, Haber = 0m,
-                        Glosa = $"Cobro venta {tipoComprobante}" },
-                new() { Id = Guid.NewGuid(), CodigoCuenta = INGRESOS_VENTAS,
-                        NombreCuenta = NombresCuenta[INGRESOS_VENTAS],
-                        Debe = 0m, Haber = montoVenta,
-                        Glosa = "Ingreso neto por venta" },
-                new() { Id = Guid.NewGuid(), CodigoCuenta = IVA_DEBITO,
-                        NombreCuenta = NombresCuenta[IVA_DEBITO],
-                        Debe = 0m, Haber = iva,
-                        Glosa = "IVA Débito Fiscal 13%" },
-            }
+            Lineas = lineas
         };
 
         _dbContext.PartidasContables.Add(partida);
@@ -223,9 +410,12 @@ public class ContabilidadService : IContabilidadService
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-    private async Task<string> GenerarNumeroPartidaAsync(string prefijo, CancellationToken ct)
+    private static Task<string> GenerarNumeroPartidaAsync(string prefijo, CancellationToken ct)
     {
-        int total = await _dbContext.PartidasContables.CountAsync(ct);
-        return $"{prefijo}-{DateTime.UtcNow:yyyy}-{(total + 1):D6}";
+        // Count()+1 reutilizaba números tras bajas y en escrituras simultáneas.
+        // La referencia conserva el prefijo contable y el año, pero no depende
+        // de consultas ni de un contador compartido con otros tipos de asiento.
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult($"{prefijo}-{DateTime.UtcNow:yyyy}-{Guid.NewGuid():N}");
     }
 }

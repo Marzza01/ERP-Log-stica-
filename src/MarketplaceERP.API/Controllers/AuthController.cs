@@ -5,6 +5,7 @@
 
 using System.Security.Cryptography;
 using System.Text;
+using MarketplaceERP.API.Security;
 using MarketplaceERP.Core.Data;
 using MarketplaceERP.Core.Entities;
 using MarketplaceERP.Shared.Settings;
@@ -43,7 +44,8 @@ public class AuthController : ControllerBase
     private readonly ILogger<AuthController> _logger;
     private readonly PasswordHasher<Usuario> _passwordHasher;
     private static readonly Usuario _dummyUsuario = new() { Email = "dummy@security.internal" };
-    private static readonly string _dummyHash = new PasswordHasher<Usuario>().HashPassword(_dummyUsuario, "DummySecurityHashValue2026!");
+    private static readonly string _dummyHash = new PasswordHasher<Usuario>().HashPassword(
+        _dummyUsuario, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
 
     public AuthController(
         CoreDbContext coreDb,
@@ -100,15 +102,24 @@ public class AuthController : ControllerBase
             return Unauthorized(new { mensaje = "Credenciales inválidas." });
         }
 
-        var token = GenerarToken(usuario);
+        // Una cuenta histórica con rol en minúsculas conserva los permisos
+        // previstos. Roles desconocidos se rechazan sin emitir JWT.
+        var rolCanonico = UsuarioRoles.Canonizar(usuario.Rol);
+        if (rolCanonico is null)
+        {
+            _logger.LogWarning("Login rechazado por rol desconocido. Usuario={UsuarioId}", usuario.Id);
+            return Unauthorized(new { mensaje = "Credenciales inválidas." });
+        }
+
+        var token = GenerarToken(usuario, rolCanonico);
         var expiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpirationMinutes);
 
-        _logger.LogInformation("Login exitoso. Usuario={UsuarioId}, Rol={Role}", usuario.Id, usuario.Rol);
+        _logger.LogInformation("Login exitoso. Usuario={UsuarioId}, Rol={Role}", usuario.Id, rolCanonico);
 
-        return Ok(new LoginResponse(token, usuario.Rol, expiresAt, usuario.Nombre, usuario.Rol));
+        return Ok(new LoginResponse(token, rolCanonico, expiresAt, usuario.Nombre, rolCanonico));
     }
 
-    private string GenerarToken(Usuario usuario)
+    private string GenerarToken(Usuario usuario, string rolCanonico)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -119,13 +130,13 @@ public class AuthController : ControllerBase
             new(ClaimTypes.NameIdentifier, usuario.Id.ToString()),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new(ClaimTypes.Name, usuario.Email),
-            new(ClaimTypes.Role, usuario.Rol),
+            new(ClaimTypes.Role, rolCanonico),
             new(JwtRegisteredClaimNames.Iat,
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
                 ClaimValueTypes.Integer64)
         };
 
-        if (usuario.VendedorId.HasValue && usuario.Rol.Equals("Vendedor", StringComparison.OrdinalIgnoreCase))
+        if (usuario.VendedorId.HasValue && rolCanonico == "Vendedor")
         {
             claims.Add(new Claim("VendedorId", usuario.VendedorId.Value.ToString()));
         }

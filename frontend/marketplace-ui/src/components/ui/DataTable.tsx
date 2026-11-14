@@ -29,10 +29,11 @@ interface DataTableProps<T> {
   emptyAction?: React.ReactNode;
   compact?: boolean;
   onRowClick?: (row: T) => void;
+  serverPagination?: { page: number; total: number; onPageChange: (page: number) => void };
 }
 
 export default function DataTable<T>({
-  title, columns, data, loading, actions, rowKey, keyExtractor, pageSize = 20, emptyMessage, emptyText, emptyAction, compact = false, onRowClick,
+  title, columns, data, loading, actions, rowKey, keyExtractor, pageSize = 20, emptyMessage, emptyText, emptyAction, compact = false, onRowClick, serverPagination,
 }: DataTableProps<T>) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -61,28 +62,29 @@ export default function DataTable<T>({
   const emptyMsg = emptyMessage ?? emptyText ?? 'No hay registros que coincidan con la búsqueda';
 
   const filtered = useMemo(() => {
-    if (!search) return data;
+    if (serverPagination || !search) return data;
     return data.filter(row =>
       JSON.stringify(row).toLowerCase().includes(search.toLowerCase())
     );
-  }, [data, search]);
+  }, [data, search, serverPagination]);
 
   const sorted = useMemo(() => {
-    if (!sortKey) return filtered;
+    if (serverPagination || !sortKey) return filtered;
     return [...filtered].sort((a, b) => {
       const av = (a as Record<string, unknown>)[sortKey];
       const bv = (b as Record<string, unknown>)[sortKey];
       const cmp = String(av ?? '').localeCompare(String(bv ?? ''), undefined, { numeric: true });
       return sortDir === 'asc' ? cmp : -cmp;
     });
-  }, [filtered, sortKey, sortDir]);
+  }, [filtered, sortKey, sortDir, serverPagination]);
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const paged = sorted.slice((page - 1) * pageSize, page * pageSize);
+  const totalPages = Math.max(1, Math.ceil((serverPagination?.total ?? sorted.length) / pageSize));
+  const effectivePage = serverPagination?.page ?? page;
+  const paged = serverPagination ? sorted : sorted.slice((page - 1) * pageSize, page * pageSize);
 
   React.useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
+    if (!serverPagination && page > totalPages) setPage(totalPages);
+  }, [page, totalPages, serverPagination]);
 
   const handleSort = (key: string) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -101,7 +103,7 @@ export default function DataTable<T>({
       <div className="table-toolbar">
         <span className="table-title">{title ?? ''}</span>
         <div className="table-actions">
-          <div className="search-input">
+          {!serverPagination && <div className="search-input">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input
               ref={searchInputRef}
@@ -121,7 +123,7 @@ export default function DataTable<T>({
                 ✕
               </button>
             )}
-          </div>
+          </div>}
           {actions}
         </div>
       </div>
@@ -135,13 +137,13 @@ export default function DataTable<T>({
                 return (
                   <th
                     key={k}
-                    onClick={() => col.sortable !== false && handleSort(k)}
+                    onClick={() => !serverPagination && col.sortable !== false && handleSort(k)}
                     className={col.className}
-                    style={{ cursor: col.sortable !== false ? 'pointer' : 'default' }}
+                    style={{ cursor: !serverPagination && col.sortable !== false ? 'pointer' : 'default' }}
                   >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       {col.header}
-                      {col.sortable !== false && sortKey === k && (
+                      {!serverPagination && col.sortable !== false && sortKey === k && (
                         sortDir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />
                       )}
                     </span>
@@ -208,12 +210,12 @@ export default function DataTable<T>({
       </div>
 
       <div className="table-footer">
-        <span className="td-num">{filtered.length} registro{filtered.length !== 1 ? 's' : ''}</span>
+        <span className="td-num">{serverPagination?.total ?? filtered.length} registro{(serverPagination?.total ?? filtered.length) !== 1 ? 's' : ''}</span>
         {totalPages > 1 && (
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <button className="btn btn-secondary btn-sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>←</button>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Página {page} de {totalPages}</span>
-            <button className="btn btn-secondary btn-sm" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>→</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => serverPagination ? serverPagination.onPageChange(Math.max(1, effectivePage - 1)) : setPage(p => Math.max(1, p - 1))} disabled={effectivePage === 1}>←</button>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Página {effectivePage} de {totalPages}</span>
+            <button className="btn btn-secondary btn-sm" onClick={() => serverPagination ? serverPagination.onPageChange(Math.min(totalPages, effectivePage + 1)) : setPage(p => Math.min(totalPages, p + 1))} disabled={effectivePage === totalPages}>→</button>
           </div>
         )}
       </div>
