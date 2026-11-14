@@ -56,13 +56,13 @@ jobs:
       - name: Restore NuGet packages
         run: dotnet restore MarketplaceERP.sln
 
-      # F273: la API desplegable no debe incluir NuGet High/Critical conocidos.
+      # F273: ningún proyecto de la solución debe resolver NuGet vulnerables.
       # La auditoría es de lectura: no ejecuta actualización automática.
-      - name: Audit runtime API NuGet dependencies (fail closed)
+      - name: Audit full solution NuGet dependencies (fail closed)
         shell: bash
         run: |
           set -euo pipefail
-          dotnet list src/MarketplaceERP.API/MarketplaceERP.API.csproj package             --vulnerable --include-transitive --format json > "$RUNNER_TEMP/nuget-audit.json"
+          dotnet list MarketplaceERP.sln package --vulnerable --include-transitive --format json > "$RUNNER_TEMP/nuget-audit.json"
           jq -e '[.projects[].frameworks[] | ((.topLevelPackages // []) + (.transitivePackages // []))[] |
             select(((.vulnerabilities // []) | length) > 0)] | length == 0'             "$RUNNER_TEMP/nuget-audit.json" > /dev/null
           echo "F273_NUGET_AUDIT_PASS"
