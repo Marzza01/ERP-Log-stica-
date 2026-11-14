@@ -53,6 +53,7 @@ La tabla de relación 1:N ya existe en Neon STAGING aislado; esta implementació
 ## Evidencia local
 
 - 5/5 pruebas HTTP multi-SKU con PostgreSQL efímero: aprobación, rechazo/compensación, resultado incierto, stock insuficiente/rollback y pagos deshabilitados.
+- El seguimiento operativo valida de solo lectura la correspondencia 1:N entre líneas, intento y reservas, y alerta ante mapas o estados inconsistentes. Las mismas cinco pruebas comprueban seguimiento sin falsos positivos para aprobación, rechazo e incertidumbre.
 - 37/37 pruebas de matriz de autorización, incluyendo el endpoint nuevo.
 - 43 aserciones frontend de estado e idempotencia V1/V2.
 - Frontend: lint, build, tests de autenticación y P3 aprobados.
@@ -61,7 +62,7 @@ La tabla de relación 1:N ya existe en Neon STAGING aislado; esta implementació
 ## Pendientes para cerrar el Bloque C
 
 - Validar el endpoint en Render STAGING con pagos deshabilitados y comprobar que no escribe datos.
-- Extender el preflight/recuperación para leer el mapa 1:N. No liberar reservas ante pagos inciertos sin evidencia del proveedor.
+- Extender el preflight administrativo de cierre para leer el mapa 1:N; el seguimiento operativo ya lo valida en modo lectura. No liberar reservas ante pagos inciertos sin evidencia verificable del proveedor.
 - Ejecutar los recorridos B2B/B2C y matriz de permisos en el despliegue.
 - Revisar logs y evidencias, actualizar Issue #65 y preparar PR #60.
 - No fusionar a `main` hasta completar las puertas de validación.

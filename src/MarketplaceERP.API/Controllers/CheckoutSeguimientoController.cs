@@ -190,6 +190,60 @@ public sealed class CheckoutSeguimientoController : ControllerBase
         if (reembolso?.Estado == EstadoReembolsoPago.Finalizado && orden.Estado != EstadoOrden.Cancelada)
             alertas.Add("REEMBOLSO_FINALIZADO_ORDEN_NO_CANCELADA");
 
+        // Checkout comercial V2: validar de solo lectura el mapa 1:N entre
+        // intento, líneas y reservas. No inferir una reserva única desde ReservaId.
+        var esCheckoutMultiSku = intento is not null &&
+            !intento.ReservaId.HasValue &&
+            !string.IsNullOrWhiteSpace(orden.IdempotencyKey) &&
+            string.Equals(intento.ReferenciaOperacion, $"PAY-{orden.Id:N}", StringComparison.Ordinal);
+
+        if (esCheckoutMultiSku)
+        {
+            var items = await _finance.ItemsOrden.AsNoTracking()
+                .Where(i => i.OrdenId == orden.Id)
+                .ToListAsync(ct);
+            var links = await _finance.IntentoReservasPago.AsNoTracking()
+                .Where(x => x.IntentoPagoId == intento!.Id)
+                .ToListAsync(ct);
+
+            var mapaValido = items.Count is >= 2 and <= 20 &&
+                links.Count == items.Count &&
+                reservas.Count == links.Count &&
+                items.Select(i => i.ProductoId).Distinct().Count() == items.Count &&
+                links.Select(l => l.ProductoId).Distinct().Count() == links.Count &&
+                links.Select(l => l.ReservaId).Distinct().Count() == links.Count &&
+                links.All(l => l.Procedencia == "CheckoutMultiSkuV2" &&
+                    items.Any(i => i.ProductoId == l.ProductoId &&
+                                   i.Cantidad == l.Cantidad)) &&
+                reservas.All(r => links.Any(l => l.ReservaId == r.Id &&
+                    l.ProductoId == r.ProductoId &&
+                    l.Cantidad == r.CantidadOriginal));
+
+            if (!mapaValido)
+            {
+                alertas.Add("CHECKOUT_MULTISKU_MAPA_RESERVAS_INCONSISTENTE");
+            }
+            else
+            {
+                EstadoReserva? estadoEsperado = intento!.Estado switch
+                {
+                    EstadoIntentoPago.Enviado or EstadoIntentoPago.Incierto or
+                    EstadoIntentoPago.RequiereConciliacion or EstadoIntentoPago.Aprobado
+                        => EstadoReserva.Pendiente,
+                    EstadoIntentoPago.Completado => EstadoReserva.Confirmada,
+                    EstadoIntentoPago.Rechazado => EstadoReserva.Liberada,
+                    _ => null
+                };
+
+                if (estadoEsperado.HasValue &&
+                    reservas.Any(r => r.Estado != estadoEsperado.Value ||
+                        (estadoEsperado == EstadoReserva.Liberada
+                            ? r.CantidadLiberada != r.CantidadOriginal || r.CantidadConsumida != 0
+                            : r.CantidadLiberada != 0 || r.CantidadConsumida != 0)))
+                    alertas.Add("CHECKOUT_MULTISKU_RESERVAS_EN_ESTADO_INESPERADO");
+            }
+        }
+
         var estadoReserva = reservas.Count == 0 ? "SinReserva" :
             reservas.Select(r => r.Estado).Distinct().Count() == 1 ?
                 reservas[0].Estado.ToString() : "Mixta";

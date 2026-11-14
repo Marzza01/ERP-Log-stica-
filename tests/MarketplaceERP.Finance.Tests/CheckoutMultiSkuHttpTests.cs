@@ -17,6 +17,8 @@ using MarketplaceERP.Shared.DTOs;
 using MarketplaceERP.Shared.Settings;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -216,6 +218,26 @@ public sealed class CheckoutMultiSkuHttpTests : IAsyncLifetime
                 await retry.Content.ReadAsStringAsync());
             gateway.Verify(x => x.ProcesarPagoAsync(It.IsAny<PagoRequest>()), Times.Once);
         }
+
+        // El seguimiento operativo debe reconocer el mapa 1:N sin falsos positivos
+        // tanto para una compra aprobada como para rechazo o conciliación pendiente.
+        var seguimientoController = new CheckoutSeguimientoController(finance, catalog)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        new[] { new Claim(ClaimTypes.Role, "Admin") }, "test"))
+                }
+            }
+        };
+        var seguimientoAction = await seguimientoController.Seguimiento(
+            order.Id, CancellationToken.None);
+        var seguimiento = Assert.IsType<SeguimientoCheckoutDto>(
+            Assert.IsType<OkObjectResult>(seguimientoAction).Value);
+        Assert.DoesNotContain("CHECKOUT_MULTISKU_MAPA_RESERVAS_INCONSISTENTE", seguimiento.Alertas);
+        Assert.DoesNotContain("CHECKOUT_MULTISKU_RESERVAS_EN_ESTADO_INESPERADO", seguimiento.Alertas);
     }
 
     [Fact]
@@ -343,6 +365,18 @@ public sealed class CheckoutMultiSkuHttpTests : IAsyncLifetime
 
         await using var root = new NpgsqlConnection(_rootConnection);
         await root.OpenAsync();
+
+        // Esta base fue creada exclusivamente por esta prueba y el nombre
+        // conserva el prefijo temporal. Cerrar conexiones residuales del
+        // TestServer/EF antes de eliminarla; nunca se toca una base compartida.
+        await using (var terminate = new NpgsqlCommand(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity " +
+            "WHERE datname = @db AND pid <> pg_backend_pid()", root))
+        {
+            terminate.Parameters.AddWithValue("db", _database);
+            await terminate.ExecuteNonQueryAsync();
+        }
+
         await using (var count = new NpgsqlCommand(
             "SELECT count(*) FROM pg_stat_activity WHERE datname = @db", root))
         {
