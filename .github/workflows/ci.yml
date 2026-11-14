@@ -63,7 +63,8 @@ jobs:
         run: |
           set -euo pipefail
           dotnet list MarketplaceERP.sln package --vulnerable --include-transitive --format json > "$RUNNER_TEMP/nuget-audit.json"
-          jq -e '[.projects[].frameworks[] | ((.topLevelPackages // []) + (.transitivePackages // []))[] |
+          jq -e '(.projects | type == "array" and length > 0)' "$RUNNER_TEMP/nuget-audit.json" > /dev/null
+          jq -e '[.projects[] | (.frameworks // [])[] | ((.topLevelPackages // []) + (.transitivePackages // []))[] |
             select(((.vulnerabilities // []) | length) > 0)] | length == 0'             "$RUNNER_TEMP/nuget-audit.json" > /dev/null
           echo "F273_NUGET_AUDIT_PASS"
 
