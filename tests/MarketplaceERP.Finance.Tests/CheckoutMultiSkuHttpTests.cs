@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using MarketplaceERP.API.Controllers;
 using MarketplaceERP.API.Security;
+using MarketplaceERP.API.Services;
 using MarketplaceERP.Catalog.Data;
 using MarketplaceERP.Catalog.Entities;
 using MarketplaceERP.Core.Interfaces;
@@ -238,6 +239,29 @@ public sealed class CheckoutMultiSkuHttpTests : IAsyncLifetime
             Assert.IsType<OkObjectResult>(seguimientoAction).Value);
         Assert.DoesNotContain("CHECKOUT_MULTISKU_MAPA_RESERVAS_INCONSISTENTE", seguimiento.Alertas);
         Assert.DoesNotContain("CHECKOUT_MULTISKU_RESERVAS_EN_ESTADO_INESPERADO", seguimiento.Alertas);
+
+        if (escenario == "approved")
+        {
+            // El preflight administrativo era 1:1 y rechazaba los 2 SKU
+            // pese a tener pago, split y reservas correctamente conciliados.
+            // Es lectura de datos simulados en una base PG local efímera:
+            // NO es una autorización de cierre ni un cobro real.
+            var preflight = new CierreCheckoutPreflight(finance, catalog);
+            var consistente = await preflight.EvaluarAsync(order.Id);
+            Assert.Contains("ORDEN_NO_PENDIENTE", consistente.Bloqueos);
+            Assert.DoesNotContain("ITEMS_O_PRECIO_NO_COINCIDEN", consistente.Bloqueos);
+            Assert.DoesNotContain("INTENTO_NO_CONCILIADO", consistente.Bloqueos);
+            Assert.DoesNotContain("MAPA_RESERVAS_MULTISKU_INCONSISTENTE", consistente.Bloqueos);
+            Assert.DoesNotContain("RESERVA_NO_CONCILIADA", consistente.Bloqueos);
+            Assert.DoesNotContain("SALDOS_WMS_INCONSISTENTES", consistente.Bloqueos);
+
+            // Si cambia una cantidad del mapa 1:N, el preflight falla cerrado.
+            var enlaceAlterado = await finance.IntentoReservasPago.FirstAsync();
+            enlaceAlterado.Cantidad += 1;
+            await finance.SaveChangesAsync();
+            var inconsistente = await preflight.EvaluarAsync(order.Id);
+            Assert.Contains("MAPA_RESERVAS_MULTISKU_INCONSISTENTE", inconsistente.Bloqueos);
+        }
     }
 
     [Fact]
@@ -370,7 +394,7 @@ public sealed class CheckoutMultiSkuHttpTests : IAsyncLifetime
         // conserva el prefijo temporal. Cerrar conexiones residuales del
         // TestServer/EF antes de eliminarla; nunca se toca una base compartida.
         await using (var terminate = new NpgsqlCommand(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity " +
+            "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity " +
             "WHERE datname = @db AND pid <> pg_backend_pid()", root))
         {
             terminate.Parameters.AddWithValue("db", _database);

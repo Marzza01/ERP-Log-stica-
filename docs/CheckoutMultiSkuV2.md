@@ -1,6 +1,6 @@
 # Checkout comercial B2C multi-SKU V2
 
-**Estado:** implementado y validado localmente en `MarketplaceERP-Candidate-Work`. Aún no está desplegado ni promovido a `main`.
+**Estado (13-nov-2026):** checkout comercial V2 desplegado en Render STAGING (`dep-dbrr0e6i0phs73b8d9lg`) y Vercel Preview (`dpl_7Giu5xw86tiXRDzpgHRgK3ySJV1x`), ambos en SHA `5922003`. No se ha promovido a `main` ni producción. La extensión del preflight 1:N descrita abajo se probó LOCALMENTE y requiere CI del nuevo commit.
 
 ## Contrato HTTP
 
@@ -59,10 +59,17 @@ La tabla de relación 1:N ya existe en Neon STAGING aislado; esta implementació
 - Frontend: lint, build, tests de autenticación y P3 aprobados.
 - La ejecución completa de la solución alcanzó 659 pruebas aprobadas en Finance antes de que el test runner cancelara cuatro pruebas por bloqueo de un testhost; no se declara la suite completa como PASS.
 
+## Preflight administrativo de solo lectura para multi-SKU (F266)
+
+- `CierreCheckoutPreflight` reconoce **solo órdenes comerciales** `CHK2-*`, diferenciándolas del simulador QA `QA-V2-*`; mantiene la regla 1:1 de V1.
+- Comprueba 2–20 SKU distintos y su subtotal, un único intento conciliado, relación 1:N sin duplicados ni enlaces huérfanos, cantidades originales, productos del vendedor correcto, reservas confirmadas y saldos físicos WMS suficientes.
+- Un mapa adulterado bloquea el cierre con `MAPA_RESERVAS_MULTISKU_INCONSISTENTE`; estados de pago incierto, intentos incompletos, reembolsos, liquidaciones o logística iniciada siguen bloqueados. **No cambia estados ni reserva/libera inventario.** El prototipo administrativo sigue fuera de DI/HTTP y no es una autorización de cobro ni de cierre productivo.
+- Pruebas POST/PG de multi-SKU local: **5/5 PASS** (incluye caso de modificación intencionada del mapa). Regresión V1 + recuperación QA + multi-SKU QA local: **21/21 PASS**. La base temporal se limita al prefijo `ci_checkout_http_multisku_` y el teardown espera la desconexión efectiva de sus sesiones; sin operaciones contra Neon.
+
 ## Pendientes para cerrar el Bloque C
 
-- Validar el endpoint en Render STAGING con pagos deshabilitados y comprobar que no escribe datos.
-- Extender el preflight administrativo de cierre para leer el mapa 1:N; el seguimiento operativo ya lo valida en modo lectura. No liberar reservas ante pagos inciertos sin evidencia verificable del proveedor.
+- Validar en Render STAGING el POST con token de comprador auténtico, con `Payments:Provider=Disabled` y HTTP **503**, y comparar conteos de Neon antes/después sin crear órdenes.
+- Certificar el preflight 1:N en CI del SHA final y comprobar el despliegue de ese SHA. No liberar reservas ante pagos inciertos sin confirmación verificable del proveedor.
 - Ejecutar los recorridos B2B/B2C y matriz de permisos en el despliegue.
 - Revisar logs y evidencias, actualizar Issue #65 y preparar PR #60.
 - No fusionar a `main` hasta completar las puertas de validación.
