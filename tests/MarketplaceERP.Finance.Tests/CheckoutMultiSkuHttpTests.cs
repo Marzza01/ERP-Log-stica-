@@ -287,6 +287,55 @@ public sealed class CheckoutMultiSkuHttpTests : IAsyncLifetime
         Assert.Empty(await finance.IntentosPago.ToListAsync());
     }
 
+    [Fact]
+    public async Task HttpV2Comercial_ProtegeRoles_YNoEscribeConPagosDeshabilitados()
+    {
+        // HTTP TestServer real contra PostgreSQL efímero. Las credenciales
+        // son JWT sintéticos del host aislado, nunca tokens de STAGING.
+        var commission = new Mock<ICommissionService>(MockBehavior.Strict);
+        using var server = CreateHost(new PagoServiceDisabled(), commission.Object, disabled: true);
+        const string endpoint = "/api/checkout/v2/comprar";
+        var solicitud = new { items = new[] {
+            new { productoId = Guid.NewGuid(), cantidad = 1 },
+            new { productoId = Guid.NewGuid(), cantidad = 1 }
+        } };
+
+        using (var anonimo = server.CreateClient())
+        {
+            anonimo.DefaultRequestHeaders.Add("Idempotency-Key", "F267-CHECKOUT-ROLES-ANON");
+            using var respuesta = await anonimo.PostAsJsonAsync(endpoint, solicitud);
+            Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+        }
+
+        foreach (var rol in new[] { "Admin", "Vendedor" })
+        {
+            using var ajeno = server.CreateClient();
+            ajeno.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", Token(Guid.NewGuid(), rol));
+            ajeno.DefaultRequestHeaders.Add("Idempotency-Key", "F267-CHECKOUT-ROLES-" + rol);
+            using var respuesta = await ajeno.PostAsJsonAsync(endpoint, solicitud);
+            Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+        }
+
+        using (var comprador = server.CreateClient())
+        {
+            comprador.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", Token(Guid.NewGuid(), "Comprador"));
+            comprador.DefaultRequestHeaders.Add("Idempotency-Key", "F267-CHECKOUT-ROLES-BUYER");
+            using var respuesta = await comprador.PostAsJsonAsync(endpoint, solicitud);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, respuesta.StatusCode);
+            Assert.Contains("PagosDeshabilitados", await respuesta.Content.ReadAsStringAsync());
+        }
+
+        await using var finance = NewFinance();
+        await using var catalog = NewCatalog();
+        Assert.Empty(await finance.Ordenes.ToListAsync());
+        Assert.Empty(await finance.IntentosPago.ToListAsync());
+        Assert.Empty(await finance.IntentoReservasPago.ToListAsync());
+        Assert.Empty(await catalog.ReservasStock.ToListAsync());
+        commission.VerifyNoOtherCalls();
+    }
+
     private async Task SeedCatalogAsync(
         Guid seller, Guid productA, Guid productB, Guid location, bool secondWithoutStock)
     {
