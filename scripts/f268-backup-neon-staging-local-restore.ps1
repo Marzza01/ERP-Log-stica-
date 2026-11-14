@@ -5,7 +5,9 @@
 param(
   [switch]$Ejecutar,
   [switch]$SoloPreflight,
-  [switch]$UsarCredencialLocalGuardada
+  [switch]$UsarCredencialLocalGuardada,
+  [string]$BackupExistente = '',
+  [string]$Sha256Esperado = ''
 )
 $ErrorActionPreference = 'Stop'
 $hostStaging = 'ep-sparkling-smoke-bbcm2qma.c-15.us-east-1.aws.neon.tech'
@@ -15,16 +17,11 @@ $repo = Split-Path $PSScriptRoot -Parent
 $p5Script = Join-Path $PSScriptRoot 'p5-backup-restore-safe.ps1'
 $huellas = Join-Path $PSScriptRoot 'p2-huellas-37-tablas-readonly.sql'
 $huellasExtras = Join-Path $PSScriptRoot 'f268-finance-tablas-extra-readonly.sql'
-$inventorySql = @'
-SELECT (SELECT COUNT(*) FROM pg_tables WHERE schemaname IN ('core','catalog','finance'))::text
-       || '|' || (SELECT COUNT(*) FROM core."__EFMigrationsHistory")::text
-       || '|' || (SELECT COUNT(*) FROM catalog."__EFMigrationsHistory")::text
-       || '|' || (SELECT COUNT(*) FROM finance."__EFMigrationsHistory")::text;
-'@
+$inventoryFile = Join-Path $PSScriptRoot 'f268-inventario-readonly.sql'
 $backupDir = Join-Path $env:USERPROFILE 'Documents\Logistica (ERP)\_Codex_F220_Cierre_20261112\F268_BACKUPS_PRIVADOS'
 $oldEnvironment = @{}
 $protectedKeys = @('PGHOST','PGPORT','PGUSER','PGPASSWORD','PGDATABASE',
-  'PGSSLMODE','P5_SOURCE_PGHOST','P5_SOURCE_PGPORT','P5_SOURCE_PGUSER',
+  'PGSSLMODE','PGTZ','P5_SOURCE_PGHOST','P5_SOURCE_PGPORT','P5_SOURCE_PGUSER',
   'P5_SOURCE_PGPASSWORD','P5_SOURCE_PGDATABASE')
 foreach($key in $protectedKeys) {
   $oldEnvironment[$key] = [Environment]::GetEnvironmentVariable($key,'Process')
@@ -87,12 +84,42 @@ function Checked([string]$program,[string[]]$args) {
   }
 }
 
+function Comparar-HuellasPorNombre([string]$origen,[string]$destino,[int]$esperadas) {
+  # ORDER BY tabla puede variar por la colación de Neon Linux vs Windows.
+  # Comparar por nombre, conteo y hash de cada tabla sin confiar en el orden.
+  $mapas = @()
+  foreach($contenido in @($origen,$destino)) {
+    $mapa = @{}
+    foreach($linea in ($contenido.Trim() -split "\r?\n")) {
+      $partes = $linea.Split('|')
+      if($partes.Count -ne 3 -or [string]::IsNullOrWhiteSpace($partes[0])) {
+        throw 'Formato de huellas inválido: se esperaba tabla|filas|md5'
+      }
+      if($mapa.ContainsKey($partes[0])) { throw 'Huellas duplicadas para la misma tabla' }
+      $mapa[$partes[0]] = $partes[1] + '|' + $partes[2]
+    }
+    if($mapa.Count -ne $esperadas) {
+      throw "Cantidad de huellas inesperada: $($mapa.Count) en lugar de $esperadas."
+    }
+    $mapas += ,$mapa
+  }
+  foreach($nombre in $mapas[0].Keys) {
+    if(-not $mapas[1].ContainsKey($nombre) -or $mapas[0][$nombre] -ne $mapas[1][$nombre]) {
+      return $false
+    }
+  }
+  return $true
+}
+
 $temporal = $null
 try {
+  # Neon STAGING responde GMT; usar la misma zona en PostgreSQL LOCAL.
+  # PGTZ afecta solo a esta sesión del proceso; se restaura al salir.
+  $env:PGTZ = 'GMT'
   $pgPath = 'C:\Program Files\PostgreSQL\18\bin'
   if (Test-Path $pgPath) { $env:PATH = $pgPath + ';' + $env:PATH }
   foreach($tool in @('pg_dump','pg_restore','psql')) { RequireTool $tool }
-  foreach($file in @($p5Script,$huellas,$huellasExtras)) {
+  foreach($file in @($p5Script,$huellas,$huellasExtras,$inventoryFile)) {
     if (-not (Test-Path $file)) { throw "Falta archivo de control: $file" }
   }
   if (-not $Ejecutar -or $SoloPreflight) {
@@ -119,17 +146,42 @@ try {
   if (-not (Test-Path $backupDir)) {
     New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
   }
-  $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-  $destino = Join-Path $backupDir ("erp-staging-f268-" + $stamp + "-" + [guid]::NewGuid().ToString('N') + ".dump")
-  # Backup del P5 usa la fuente SOLO para SELECT/pg_dump y compara DB:
-  & $p5Script -Mode Backup -BackupFile $destino
-  if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Backup P5 terminó con error.' }
-  if (-not (Test-Path $destino) -or -not (Test-Path "$destino.fingerprints.txt")) {
+  if (-not [string]::IsNullOrWhiteSpace($BackupExistente)) {
+    # Reutilizar un backup ya creado SOLO bajo el directorio privado de F268.
+    # Exigir el SHA-256 que el operador obtuvo en la salida del intento anterior.
+    if ($Sha256Esperado -notmatch '^[0-9a-fA-F]{64}$') {
+      throw 'Para reutilizar backup se requiere -Sha256Esperado con 64 caracteres hexadecimales.'
+    }
+    $destino = [System.IO.Path]::GetFullPath($BackupExistente)
+    $carpetaExistente = [System.IO.Path]::GetDirectoryName($destino).TrimEnd('\')
+    $carpetaPermitida = [System.IO.Path]::GetFullPath($backupDir).TrimEnd('\')
+    if (-not [string]::Equals($carpetaExistente,$carpetaPermitida,
+          [System.StringComparison]::OrdinalIgnoreCase) -or
+        (Split-Path $destino -Leaf) -notmatch '^erp-staging-f268-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}\.dump$') {
+      throw 'Backup fuera del directorio privado o nombre F268 inesperado.'
+    }
+    Write-Output 'F268_MODO=REUTILIZAR_BACKUP_PRIVADO_VERIFICADO'
+  } else {
+    if (-not [string]::IsNullOrWhiteSpace($Sha256Esperado)) {
+      throw '-Sha256Esperado exige -BackupExistente.'
+    }
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+    $destino = Join-Path $backupDir ("erp-staging-f268-" + $stamp + "-" + [guid]::NewGuid().ToString('N') + ".dump")
+    # P5 usa Neon STAGING solo para SELECT/pg_dump; nunca modifica el origen.
+    & $p5Script -Mode Backup -BackupFile $destino
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Backup P5 terminó con error.' }
+  }
+  if (-not (Test-Path -LiteralPath $destino) -or
+      -not (Test-Path -LiteralPath "$destino.fingerprints.txt")) {
     throw 'Respaldo o huellas ausentes'
   }
-  $digest = (Get-FileHash -Path $destino -Algorithm SHA256).Hash
-  if ((& pg_restore --list $destino | Measure-Object -Line).Lines -lt 40) {
-    throw 'El archivo no contiene el inventario mínimo del esquema'
+  $digest = (Get-FileHash -LiteralPath $destino -Algorithm SHA256).Hash
+  if ($BackupExistente -and $digest -ne $Sha256Esperado.ToUpperInvariant()) {
+    throw 'SHA256 no coincide con el respaldo original: cancelar antes de restaurar.'
+  }
+  $contenido = @(& pg_restore --list $destino)
+  if ($LASTEXITCODE -ne 0 -or $contenido.Count -lt 40) {
+    throw 'El archivo no contiene un inventario de respaldo válido.'
   }
   Write-Output 'F268_BACKUP_LOGICO=OK'
   Write-Output ('F268_SHA256='+$digest)
@@ -143,7 +195,7 @@ try {
   $env:PGDATABASE = $baseStaging
   $env:PGPASSWORD = $env:P5_SOURCE_PGPASSWORD
   $env:PGSSLMODE = 'require'
-  $metadataOrigen = (& psql -X -A -t -v ON_ERROR_STOP=1 -c $inventorySql | Out-String).Trim()
+  $metadataOrigen = (& psql -X -A -t -v ON_ERROR_STOP=1 -f $inventoryFile | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or $metadataOrigen -ne '39|2|7|10') {
     throw 'El inventario STAGING no coincide con 39 tablas y migraciones 2/7/10.'
   }
@@ -172,14 +224,16 @@ try {
   $restaurado = (& psql -X -A -t -v ON_ERROR_STOP=1 -f $huellas | Out-String).Trim()
   if ($LASTEXITCODE -ne 0) { throw 'No se calcularon huellas de restauración' }
   $original = (Get-Content -Raw "$destino.fingerprints.txt").Trim()
-  if ($restaurado -ne $original) { throw 'HUELLAS DISTINTAS: no certificar restauración' }
-  $metadataDestino = (& psql -X -A -t -v ON_ERROR_STOP=1 -c $inventorySql | Out-String).Trim()
+  if (-not (Comparar-HuellasPorNombre $original $restaurado 37)) {
+    throw 'HUELLAS DISTINTAS: no certificar restauración'
+  }
+  $metadataDestino = (& psql -X -A -t -v ON_ERROR_STOP=1 -f $inventoryFile | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or $metadataDestino -ne $metadataOrigen) {
     throw 'RESTAURACION INCOMPLETA: tablas o historiales EF difieren.'
   }
   $extrasDestino = (& psql -X -A -t -v ON_ERROR_STOP=1 -f $huellasExtras | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or
-      $extrasDestino -ne (Get-Content -Raw "$destino.finance-extra.txt").Trim()) {
+      -not (Comparar-HuellasPorNombre (Get-Content -Raw "$destino.finance-extra.txt").Trim() $extrasDestino 2)) {
     throw 'HUELLAS FINANCE 1:N/PREENVIO DISTINTAS: no certificar.'
   }
   Write-Output 'F268_RESTORE_LOCAL=39_tablas_y_huellas_con_historiales_2_7_10'
