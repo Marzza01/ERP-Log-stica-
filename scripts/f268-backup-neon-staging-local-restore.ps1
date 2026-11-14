@@ -13,6 +13,13 @@ $endpointId = 'ep-sparkling-smoke-bbcm2qma'
 $repo = Split-Path $PSScriptRoot -Parent
 $p5Script = Join-Path $PSScriptRoot 'p5-backup-restore-safe.ps1'
 $huellas = Join-Path $PSScriptRoot 'p2-huellas-37-tablas-readonly.sql'
+$huellasExtras = Join-Path $PSScriptRoot 'f268-finance-tablas-extra-readonly.sql'
+$inventorySql = @'
+SELECT (SELECT COUNT(*) FROM pg_tables WHERE schemaname IN ('core','catalog','finance'))::text
+       || '|' || (SELECT COUNT(*) FROM core."__EFMigrationsHistory")::text
+       || '|' || (SELECT COUNT(*) FROM catalog."__EFMigrationsHistory")::text
+       || '|' || (SELECT COUNT(*) FROM finance."__EFMigrationsHistory")::text;
+'@
 $backupDir = Join-Path $env:USERPROFILE 'Documents\Logistica (ERP)\_Codex_F220_Cierre_20261112\F268_BACKUPS_PRIVADOS'
 $oldEnvironment = @{}
 $protectedKeys = @('PGHOST','PGPORT','PGUSER','PGPASSWORD','PGDATABASE',
@@ -62,7 +69,7 @@ try {
   $pgPath = 'C:\Program Files\PostgreSQL\18\bin'
   if (Test-Path $pgPath) { $env:PATH = $pgPath + ';' + $env:PATH }
   foreach($tool in @('pg_dump','pg_restore','psql')) { RequireTool $tool }
-  foreach($file in @($p5Script,$huellas)) {
+  foreach($file in @($p5Script,$huellas,$huellasExtras)) {
     if (-not (Test-Path $file)) { throw "Falta archivo de control: $file" }
   }
   if (-not $Ejecutar -or $SoloPreflight) {
@@ -105,6 +112,25 @@ try {
   Write-Output ('F268_SHA256='+$digest)
   Write-Output ('F268_ARCHIVO='+$destino)
 
+  # Inventario actual: 39 tablas (37 históricas más 2 Finance),
+  # historial Core2/Catalog7/Finance10. Fallar cerrado si difiere.
+  $env:PGHOST = $hostStaging
+  $env:PGPORT = '5432'
+  $env:PGUSER = $rol
+  $env:PGDATABASE = $baseStaging
+  $env:PGPASSWORD = $env:P5_SOURCE_PGPASSWORD
+  $env:PGSSLMODE = 'require'
+  $metadataOrigen = (& psql -X -A -t -v ON_ERROR_STOP=1 -c $inventorySql | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $metadataOrigen -ne '39|2|7|10') {
+    throw 'El inventario STAGING no coincide con 39 tablas y migraciones 2/7/10.'
+  }
+  $extrasOrigen = (& psql -X -A -t -v ON_ERROR_STOP=1 -f $huellasExtras | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $extrasOrigen) {
+    throw 'No se obtuvieron huellas de las 2 tablas Finance adicionales.'
+  }
+  $extrasOrigen | Out-File -FilePath "$destino.finance-extra.txt" -Encoding ascii
+  Write-Output 'F268_INVENTARIO_ORIGEN=39_tablas_migraciones_2_7_10'
+
   # Restauración de prueba EXCLUSIVAMENTE a BD efímera en localhost.
   # Se verifica el prefijo y se borra solo la base creada en ESTE proceso.
   Set-LocalPostgresFromTests
@@ -124,7 +150,16 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'No se calcularon huellas de restauración' }
   $original = (Get-Content -Raw "$destino.fingerprints.txt").Trim()
   if ($restaurado -ne $original) { throw 'HUELLAS DISTINTAS: no certificar restauración' }
-  Write-Output 'F268_RESTORE_LOCAL=37_huellas_iguales'
+  $metadataDestino = (& psql -X -A -t -v ON_ERROR_STOP=1 -c $inventorySql | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $metadataDestino -ne $metadataOrigen) {
+    throw 'RESTAURACION INCOMPLETA: tablas o historiales EF difieren.'
+  }
+  $extrasDestino = (& psql -X -A -t -v ON_ERROR_STOP=1 -f $huellasExtras | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or
+      $extrasDestino -ne (Get-Content -Raw "$destino.finance-extra.txt").Trim()) {
+    throw 'HUELLAS FINANCE 1:N/PREENVIO DISTINTAS: no certificar.'
+  }
+  Write-Output 'F268_RESTORE_LOCAL=39_tablas_y_huellas_con_historiales_2_7_10'
   Write-Output 'F268_RESULTADO=BACKUP_Y_RESTORE_VERIFICADOS'
 }
 finally {
