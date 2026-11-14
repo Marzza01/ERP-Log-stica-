@@ -1,4 +1,22 @@
 # PR #60 | Puerta de release y alineación a main
+
+> **CORTE ACTUALIZADO — 14-nov-2026, El Salvador.** Este bloque tiene prioridad
+> sobre los SHAs históricos del informe original. C todavía NO-GO para integración;
+> no implica autorización para merge, pagos reales ni cambios a Production.
+
+## 0. Estado actualizado de la puerta C
+- Candidato: `staging/catalog-500-neon-test@38903dc060e801ea4d42f23e978568d805e2aeab` antes de F279; `main@e04c90696e59d86390216a8b51bf00e876cfebc5` sin cambios.
+- GitHub Actions `43563394363`: **4/4 PASS**, 766/766 .NET y E2E Chromium correcto.
+- Render STAGING `dep-dbrvmvjl550s73f1r4h0` LIVE y Vercel Preview `dpl_Ef2JspANMkAUprimgYc1ETPXXR2J` READY con SHA `38903dc`. Preview `API_STAGING_ORIGIN` coincide con API STAGING.
+- F268: backup Neon STAGING de 39 tablas, SHA-256 `C69BD5673F086E1AEDA9C284EE015A17C446CABEEF7AC8C16199F225C77111B7`, restauración y 39 huellas coherentes en PostgreSQL temporal local: **PASS**; limpieza: PASS.
+- F277: roles Comprador/Vendedor reales 200 login, 403 acceso indebido, 200 catálogo, checkout 403 Vendedor / 503 PagosDeshabilitados Comprador. Zero compras/pagos.
+- F278: comparación Neon original/main (37 tablas, migraciones Core2/Catalog6/Finance6) vs Neon STAGING aislado (39, Core2/Catalog7/Finance10): +2 tablas, +15 columnas, +13 índices, cinco migraciones adicionales, sin columnas/índices removidos. Preflights de duplicados WMS/FIN08, reservas legacy, migraciones QA y FIN09: cero incidencias sobre ambas ramas. **La rama Neon original/main aún NO está demostrada como la base usada por Render Production.**
+- F279: se añadieron dos pruebas de reinicio de TestServer con PostgreSQL compartido entre instancias y pasarela simulada estricta para resultado `aprobado` o `incierto`, ambas **2/2 PASS local**; comprueban que la idempotencia persiste tras reiniciar la aplicación. Su aprobación en CI del nuevo commit requiere confirmación posterior; no es corte físico de red ni pasarela real.
+- Rutas pendientes: identificar `DATABASE_URL` efectivo de Render Production **sin divulgar secreto**, respaldo reciente y restore aislado de Production, rollback config/render/vercel/schema, E2E con roles reales en Preview SSO, pruebas integrales B2B/B2C y recuperación física/red.
+- Baseline Production sin cambios: Vercel `main@e04c9069` deployment `dpl_4C15u8Ai87uGNuuVyfMyfsZSgvmv`; Render `integracion/main-reconciliacion-20261102@77e9a16e`, deployment `dep-dbp5kgu7bikc73d68ajg`, AutoDeploy ON. La promoción automática de Vercel podría crear versiones cruzadas: **barrera de producción necesaria**.
+- Evidencia consolidada: Issue #65, comentarios F268/F276/F278, PR #60. No marcar controles compuestos solo porque una prueba parcial aprobó. El número de casillas 110/123 no mide el esfuerzo restante.
+
+---
 Fecha del corte: 13-nov-2026 (El Salvador). Documento operativo, no aprobación de merge.
 Repositorio: Marzza01/ERP-Log-stica-. No crear ramas Git nuevas.
 

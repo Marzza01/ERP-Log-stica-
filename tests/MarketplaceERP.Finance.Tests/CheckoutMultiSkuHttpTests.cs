@@ -336,6 +336,95 @@ public sealed class CheckoutMultiSkuHttpTests : IAsyncLifetime
         commission.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HttpV2Comercial_ReinicioServidor_MismaIdempotenciaNoReenviaPasarela(
+        bool resultadoIncierto)
+    {
+        // Se inicia otro TestServer con la MISMA base PostgreSQL efimera:
+        // prueba persistencia real, no solo cache de memoria del proceso.
+        var seller = Guid.NewGuid();
+        var buyer = Guid.NewGuid();
+        var productA = Guid.NewGuid();
+        var productB = Guid.NewGuid();
+        await SeedCatalogAsync(seller, productA, productB, Guid.NewGuid(), false);
+
+        var primeraPasarela = new Mock<IPaymentGateway>(MockBehavior.Strict);
+        if (resultadoIncierto)
+            primeraPasarela.Setup(x => x.ProcesarPagoAsync(It.IsAny<PagoRequest>()))
+                .ThrowsAsync(new IOException("Simulacion QA: timeout tras envio al proveedor"));
+        else
+            primeraPasarela.Setup(x => x.ProcesarPagoAsync(It.IsAny<PagoRequest>()))
+                .ReturnsAsync(new PagoResult(true, "QA-RESTART-PAYMENT-ONCE", null));
+
+        var comision = new Mock<ICommissionService>(MockBehavior.Strict);
+        comision.Setup(x => x.CalcularComisionAsync(seller, 20m)).ReturnsAsync(2m);
+        var key = "QA-RESTART-" + Guid.NewGuid().ToString("N");
+        var token = Token(buyer, "Comprador");
+        var payload = new
+        {
+            items = new[]
+            {
+                new { productoId = productB, cantidad = 1 },
+                new { productoId = productA, cantidad = 1 }
+            }
+        };
+
+        async Task<(HttpStatusCode Status, string Body)> ComprarAsync(TestServer server)
+        {
+            using var client = server.CreateClient();
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", token);
+            client.DefaultRequestHeaders.Add("Idempotency-Key", key);
+            using var response = await client.PostAsJsonAsync("/api/checkout/v2/comprar", payload);
+            return (response.StatusCode, await response.Content.ReadAsStringAsync());
+        }
+
+        using (var primerServidor = CreateHost(primeraPasarela.Object, comision.Object, disabled: false))
+        {
+            var primera = await ComprarAsync(primerServidor);
+            Assert.Equal(resultadoIncierto ? HttpStatusCode.Conflict : HttpStatusCode.OK,
+                primera.Status);
+            Assert.Contains(resultadoIncierto ? "PagoPendienteConciliacion" : "QA-RESTART-PAYMENT-ONCE",
+                primera.Body);
+        }
+        primeraPasarela.Verify(x => x.ProcesarPagoAsync(It.IsAny<PagoRequest>()), Times.Once);
+
+        // Si el reintento llama otra vez a la pasarela, el mock estricto
+        // sin setup falla y demuestra que la idempotencia no es durable.
+        var segundaPasarela = new Mock<IPaymentGateway>(MockBehavior.Strict);
+        using (var segundoServidor = CreateHost(segundaPasarela.Object, comision.Object, disabled: false))
+        {
+            var repetida = await ComprarAsync(segundoServidor);
+            Assert.Equal(resultadoIncierto ? HttpStatusCode.Conflict : HttpStatusCode.OK,
+                repetida.Status);
+            if (resultadoIncierto)
+                Assert.Contains("CheckoutEnProcesoNoReemitir", repetida.Body);
+            else
+                Assert.Contains("QA-RESTART-PAYMENT-ONCE", repetida.Body);
+        }
+        segundaPasarela.VerifyNoOtherCalls();
+
+        await using var finance = NewFinance();
+        var orden = await finance.Ordenes.AsNoTracking().SingleAsync();
+        var intento = await finance.IntentosPago.AsNoTracking().SingleAsync();
+        Assert.Equal(2, await finance.ItemsOrden.CountAsync());
+        Assert.Equal(2, await finance.IntentoReservasPago.CountAsync());
+        Assert.Equal(resultadoIncierto ? EstadoOrden.Pendiente : EstadoOrden.Aprobada,
+            orden.Estado);
+        Assert.Equal(resultadoIncierto ? EstadoIntentoPago.Incierto : EstadoIntentoPago.Completado,
+            intento.Estado);
+
+        await using var catalog = NewCatalog();
+        var reservas = await catalog.ReservasStock.AsNoTracking().ToListAsync();
+        Assert.Equal(2, reservas.Count);
+        Assert.All(reservas, r => Assert.Equal(
+            resultadoIncierto ? EstadoReserva.Pendiente : EstadoReserva.Confirmada, r.Estado));
+        Assert.All(await catalog.StockFisico.AsNoTracking().ToListAsync(),
+            stock => Assert.Equal(1, stock.CantidadReservada));
+    }
+
     private async Task SeedCatalogAsync(
         Guid seller, Guid productA, Guid productB, Guid location, bool secondWithoutStock)
     {
