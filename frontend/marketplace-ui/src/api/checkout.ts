@@ -19,6 +19,11 @@ export interface CheckoutResultado {
   montoMarketplace: number;
 }
 
+export interface CheckoutMultiSkuItem {
+  productoId: string;
+  cantidad: number;
+}
+
 export interface CheckoutSeguimiento {
   ordenId: string;
   numeroOrden: string;
@@ -55,6 +60,12 @@ export const checkoutApi = {
     apiClient.post<CheckoutResultado>(
       '/api/checkout',
       { productoId, cantidad },
+      { 'Idempotency-Key': claveIdempotencia },
+    ),
+  comprarMultiSku: (items: CheckoutMultiSkuItem[], claveIdempotencia: string) =>
+    apiClient.post<CheckoutResultado>(
+      '/api/checkout/v2/comprar',
+      { items: items.map(item => ({ productoId: item.productoId, cantidad: item.cantidad })) },
       { 'Idempotency-Key': claveIdempotencia },
     ),
   seguimiento: (ordenId: string) =>

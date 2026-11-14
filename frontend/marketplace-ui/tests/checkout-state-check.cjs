@@ -78,4 +78,50 @@ assert.throws(() => p.borrarPendiente('uno@example.test', 'CLAVE_DISTINTA'),
 assert.equal(p.leerPendiente('uno@example.test').clave, actualizado.clave);
 p.borrarPendiente('uno@example.test', actualizado.clave);
 assert.equal(p.leerPendiente('uno@example.test'), null);
-console.log('Checkout: 31 aserciones de estado/idempotencia aprobadas.');
+
+// Estado del checkout comercial V2: clave separada, payload multi-SKU y bloqueo cruzado.
+const cartSource = fs.readFileSync(path.join(__dirname, '../src/pages/checkout/checkoutCartV2.ts'), 'utf8');
+const cartCompiled = ts.transpileModule(cartSource, {
+  fileName: 'checkoutCartV2.ts',
+  reportDiagnostics: true,
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, strict: true },
+});
+const cartFaults = cartCompiled.diagnostics?.filter(d => d.category === ts.DiagnosticCategory.Error) ?? [];
+assert.equal(cartFaults.length, 0, 'El módulo de persistencia multi-SKU debe ser válido');
+const cartExports = {};
+vm.runInNewContext(cartCompiled.outputText, {
+  exports: cartExports,
+  localStorage,
+  require: mod => {
+    if (mod === './carritoV2Qa') return v2Exports;
+    throw new Error('Módulo inesperado: ' + mod);
+  },
+});
+const cart = cartExports;
+const uuid2 = '2ee729b9-614b-4a29-b3aa-d51d3f5079bf';
+const multi = {
+  clave: 'MULTISKU-12345678',
+  items: [{ productoId: uuid, cantidad: 2 }, { productoId: uuid2, cantidad: 1 }],
+  creadoUtc: '2026-11-13T00:00:00Z',
+};
+assert.equal(cart.leerPendienteV2('multi-v2@example.test'), null);
+cart.guardarPendienteV2('multi-v2@example.test', multi);
+assert.equal(cart.leerPendienteV2('multi-v2@example.test').items.length, 2);
+assert.equal(v2Exports.hayOperacionPendiente('multi-v2@example.test'), true);
+assert.throws(() => cart.guardarPendienteV2('multi-v2@example.test', multi),
+  /INTENTO_PREVIO_SIN_CONCILIAR/);
+const multiUpdated = { ...multi, ordenId: uuid2 };
+cart.actualizarPendienteV2('multi-v2@example.test', multiUpdated);
+assert.equal(cart.leerPendienteV2('multi-v2@example.test').ordenId, uuid2);
+assert.throws(() => cart.actualizarPendienteV2('multi-v2@example.test',
+  { ...multiUpdated, items: [{ productoId: uuid, cantidad: 3 }, { productoId: uuid2, cantidad: 1 }] }),
+  /ACTUALIZACION_V2_NO_AUTORIZADA/);
+cart.borrarPendienteV2('multi-v2@example.test', multi.clave);
+assert.equal(cart.leerPendienteV2('multi-v2@example.test'), null);
+assert.equal(v2Exports.hayOperacionPendiente('multi-v2@example.test'), false);
+storage.set('logimkt_checkout_b2c_v2:corrupt-v2@example.test:pendiente', '{corrupt');
+assert.equal(cart.leerPendienteV2('corrupt-v2@example.test'), null);
+assert.equal(v2Exports.hayOperacionPendiente('corrupt-v2@example.test'), true);
+assert.throws(() => cart.guardarPendienteV2('corrupt-v2@example.test', multi),
+  /INTENTO_PREVIO_SIN_CONCILIAR/);
+console.log('Checkout: 43 aserciones de estado/idempotencia V1/V2 aprobadas.');

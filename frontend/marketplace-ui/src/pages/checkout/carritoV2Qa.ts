@@ -30,6 +30,7 @@ export interface PendienteV2 {
 
 const PREFIX_V1 = 'logimkt_checkout_b2c_v1:';
 const PREFIX_V2 = 'logimkt_checkout_b2c_v2_qa:';
+const PREFIX_V2_COMERCIAL = 'logimkt_checkout_b2c_v2:';
 const GUID = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i;
 const CLAVE = /^[A-Za-z0-9_-]{8,128}$/;
 const MAX_SKU = 20;
@@ -105,7 +106,8 @@ export function hayOperacionPendiente(cuenta: string): boolean {
   if (!cuenta?.trim()) return true;
   try {
     return localStorage.getItem(key(cuenta, PREFIX_V1)) !== null ||
-      localStorage.getItem(key(cuenta, PREFIX_V2)) !== null;
+      localStorage.getItem(key(cuenta, PREFIX_V2)) !== null ||
+      localStorage.getItem(key(cuenta, PREFIX_V2_COMERCIAL)) !== null;
   } catch {
     return true;
   }

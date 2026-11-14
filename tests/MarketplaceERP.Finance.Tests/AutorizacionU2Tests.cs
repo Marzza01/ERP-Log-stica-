@@ -185,16 +185,18 @@ public class AutorizacionU2Tests
         {
             actions++;
             var publicLogin = controller == typeof(AuthController) && action.Name == nameof(AuthController.Login);
-            // Las dos acciones V2 solo existen en sandbox QA y conservan
-            // exactamente la misma matriz de Comprador que checkout V1.
-            // El acceso de Admin, Vendedor y anónimo debe seguir prohibido.
+            // Checkout V1, cotización QA aislada y checkout comercial multi-SKU
+            // conservan la matriz exclusiva de Comprador. La simulación QA sigue
+            // restringida al sandbox; Admin y Vendedor no pueden ejecutar cobros.
             var buyerCheckout =
                 (controller == typeof(CheckoutController) &&
                     action.Name == nameof(CheckoutController.ProcesarCheckout)) ||
                 (controller == typeof(CheckoutV2QaQuoteController) &&
                     action.Name == nameof(CheckoutV2QaQuoteController.CotizarSoloQa)) ||
                 (controller == typeof(CheckoutV2QaSimulatedController) &&
-                    action.Name == nameof(CheckoutV2QaSimulatedController.ComprarSimulado));
+                    action.Name == nameof(CheckoutV2QaSimulatedController.ComprarSimulado)) ||
+                (controller == typeof(CheckoutMultiSkuController) &&
+                    action.Name == nameof(CheckoutMultiSkuController.Comprar));
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
             var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
             var sellerOwnOrders = controller == typeof(OrdenesController) && (
@@ -246,14 +248,13 @@ public class AutorizacionU2Tests
             }
         }
         // Base original: 23 controladores / 85 acciones / 86 rutas.
-        // SOLO en sandbox: +2 endpoints QA de comprador y +1 endpoint
-        // de referencias reales de producto para Admin/Vendedor.
+        // Sandbox QA: +2 endpoints de comprador y referencias reales de producto.
+        // OMS evaluación: +1 controlador y +2 rutas exclusivas de Admin.
+        // F103: +2 GET de Vendedor. Checkout comercial V2: +1 controlador/acción/ruta.
         // Ninguna autorización queda implícita.
-        // OMS evaluación: +1 controlador y +2 rutas, ambas exclusivamente Admin.
-        Assert.Equal(26, controllers.Length);
-        // F103 agrega dos GET exclusivos de Vendedor sin ampliar rutas Admin.
-        Assert.Equal(92, actions);
-        Assert.Equal(93, routes); // Productos/GetAlertasStock tiene dos alias.
+        Assert.Equal(27, controllers.Length);
+        Assert.Equal(93, actions);
+        Assert.Equal(94, routes); // Productos/GetAlertasStock tiene dos alias.
     }
 
     [Theory]
