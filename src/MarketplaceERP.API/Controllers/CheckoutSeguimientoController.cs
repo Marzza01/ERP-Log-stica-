@@ -190,11 +190,15 @@ public sealed class CheckoutSeguimientoController : ControllerBase
         if (reembolso?.Estado == EstadoReembolsoPago.Finalizado && orden.Estado != EstadoOrden.Cancelada)
             alertas.Add("REEMBOLSO_FINALIZADO_ORDEN_NO_CANCELADA");
 
-        // Checkout comercial V2: validar de solo lectura el mapa 1:N entre
-        // intento, líneas y reservas. No inferir una reserva única desde ReservaId.
+        // Solo el checkout COMERCIAL V2 usa el prefijo de orden CHK2-.
+        // El simulador QA usa QA-V2- y puede dejar mapas 1:N incompletos
+        // tras fallos pre-envío intencionales; su auditoría independiente
+        // determina si la cancelación y compensación son válidas.
         var esCheckoutMultiSku = intento is not null &&
             !intento.ReservaId.HasValue &&
             !string.IsNullOrWhiteSpace(orden.IdempotencyKey) &&
+            orden.NumeroOrden.StartsWith("CHK2-", StringComparison.Ordinal) &&
+            orden.NumeroOrden.EndsWith("-" + orden.Id.ToString("N"), StringComparison.Ordinal) &&
             string.Equals(intento.ReferenciaOperacion, $"PAY-{orden.Id:N}", StringComparison.Ordinal);
 
         if (esCheckoutMultiSku)
