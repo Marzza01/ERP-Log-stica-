@@ -4,7 +4,8 @@
 [CmdletBinding()]
 param(
   [switch]$Ejecutar,
-  [switch]$SoloPreflight
+  [switch]$SoloPreflight,
+  [switch]$UsarCredencialLocalGuardada
 )
 $ErrorActionPreference = 'Stop'
 $hostStaging = 'ep-sparkling-smoke-bbcm2qma.c-15.us-east-1.aws.neon.tech'
@@ -36,10 +37,32 @@ function RequireTool([string]$name) {
 }
 
 function Set-LocalPostgresFromTests {
-  # TEST_PG_CONNECTION señala que ya existe un laboratorio PostgreSQL
-  # autorizado. NO se imprime ni parsea su secreto en este script.
-  if ([string]::IsNullOrWhiteSpace($env:TEST_PG_CONNECTION)) {
+  # Laboratorio LOCAL autorizado; no imprimir el connection string ni secretos.
+  $conexionLocal = $env:TEST_PG_CONNECTION
+  if ([string]::IsNullOrWhiteSpace($conexionLocal)) {
+    $conexionLocal = [Environment]::GetEnvironmentVariable('TEST_PG_CONNECTION','User')
+  }
+  if ([string]::IsNullOrWhiteSpace($conexionLocal)) {
     throw 'No existe laboratorio PostgreSQL autorizado (TEST_PG_CONNECTION).'
+  }
+  if ([string]::IsNullOrWhiteSpace($script:localPgPassword) -and $UsarCredencialLocalGuardada) {
+    # Este modo es opt-in; solo admite postgres@localhost:5432/postgres.
+    # NUNCA muestra ni guarda en disco la contraseña. No usa Neon para restaurar.
+    $campos = @{}
+    foreach ($parte in $conexionLocal.Split(';')) {
+      $par = $parte.Split('=',2)
+      if ($par.Count -eq 2) { $campos[$par[0].Trim().ToLowerInvariant()] = $par[1] }
+    }
+    $hostOK = $campos['host'] -in @('localhost','127.0.0.1','::1')
+    $identidadOK = $campos['port'] -eq '5432' -and
+      $campos['database'] -eq 'postgres' -and $campos['username'] -eq 'postgres'
+    if (-not $hostOK -or -not $identidadOK -or
+        [string]::IsNullOrWhiteSpace($campos['password'])) {
+      throw 'La credencial guardada no corresponde al laboratorio PostgreSQL local autorizado.'
+    }
+    $script:localPgPassword = $campos['password']
+    $campos.Remove('password')
+    Write-Output 'F268_CREDENCIAL_LOCAL=guardada_validada_sin_mostrar'
   }
   if ([string]::IsNullOrWhiteSpace($script:localPgPassword)) {
     $localSegura = Read-Host 'Contraseña de PostgreSQL LOCAL (oculta)' -AsSecureString
