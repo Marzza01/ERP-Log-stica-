@@ -19,6 +19,7 @@ public class FinanceDbContext : DbContext
 
     public DbSet<Orden> Ordenes => Set<Orden>();
     public DbSet<ItemOrden> ItemsOrden => Set<ItemOrden>();
+    public DbSet<MarketplaceOrderMetadata> MarketplaceOrders => Set<MarketplaceOrderMetadata>();
     public DbSet<SplitPago> SplitsPago => Set<SplitPago>();
     public DbSet<IntentoPago> IntentosPago => Set<IntentoPago>();
     public DbSet<IntentoReservaPago> IntentoReservasPago => Set<IntentoReservaPago>();
@@ -108,6 +109,32 @@ public class FinanceDbContext : DbContext
                   .WithMany(o => o.Items)
                   .HasForeignKey(i => i.OrdenId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Metadata de pedidos externos LOGIMKT ───────────────────────────
+        modelBuilder.Entity<MarketplaceOrderMetadata>(entity =>
+        {
+            entity.ToTable("marketplace_order_metadata");
+            entity.HasKey(m => m.OrderId);
+            entity.Property(m => m.OrderId).ValueGeneratedNever();
+            entity.Property(m => m.ExternalOrderCode).HasMaxLength(50).IsRequired();
+            entity.Property(m => m.CustomerName).HasMaxLength(300).IsRequired();
+            entity.Property(m => m.CustomerEmail).HasMaxLength(254).IsRequired();
+            entity.Property(m => m.CustomerPhone).HasMaxLength(30);
+            entity.Property(m => m.Company).HasMaxLength(250);
+            entity.Property(m => m.TaxId).HasMaxLength(50);
+            entity.Property(m => m.RequestedPaymentMethod).HasMaxLength(50).IsRequired();
+            entity.Property(m => m.PaymentStatus).HasMaxLength(50).IsRequired();
+            entity.Property(m => m.CreatedAtUtc).HasDefaultValueSql("NOW()");
+            entity.Property(m => m.ExternalReturnCode).HasMaxLength(50);
+            entity.Property(m => m.ReturnReason).HasMaxLength(500);
+            entity.Property(m => m.ReturnRmaIdsJson).HasMaxLength(2000);
+            entity.Property(m => m.ReturnStatus).HasMaxLength(40);
+            entity.HasIndex(m => m.ExternalOrderCode).IsUnique();
+            entity.HasIndex(m => m.ExternalReturnCode).IsUnique();
+            entity.HasOne(m => m.Order).WithOne()
+                .HasForeignKey<MarketplaceOrderMetadata>(m => m.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ── Intento de pago, registro durable previo a la pasarela ─────────

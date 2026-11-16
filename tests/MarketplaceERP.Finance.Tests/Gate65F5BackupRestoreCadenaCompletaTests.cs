@@ -22,7 +22,7 @@ public sealed class Gate65F5BackupRestoreCadenaCompletaTests : IAsyncLifetime
     private const string Fin08 = "20261110024500_FIN08UnicidadAsientosVentaLiquidacion";
     private const string Fin09 = "20261110050932_FIN09LiquidacionUnoAMuchosExpandir";
     // F483 adds a non-commercial, append-only inbox after FIN09.
-    private const string LatestFinance = "20261116062428_F601ComprasArchivosDurable";
+    private const string LatestFinance = "20261116192457_F666LogimktMarketplaceIntegration";
     private readonly string _src = "gate65_f5_src_" + Guid.NewGuid().ToString("N");
     private readonly string _dst = "gate65_f5_dst_" + Guid.NewGuid().ToString("N");
     private readonly string _dump = Path.Combine(AppContext.BaseDirectory,

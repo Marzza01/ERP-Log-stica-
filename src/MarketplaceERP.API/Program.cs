@@ -112,6 +112,7 @@ builder.Services.AddScoped<MarketplaceERP.Catalog.Services.CodigoBarrasAsignacio
 // F470: Admin two-person rotation is enabled only with BOTH barcode flags.
 builder.Services.AddScoped<MarketplaceERP.Catalog.Services.RotacionEanService>();
 builder.Services.AddScoped<MarketplaceERP.API.Services.OrdenEvaluacionService>();
+builder.Services.AddScoped<MarketplaceERP.API.Services.MarketplaceIntegrationService>();
 
 builder.Services.AddControllers(options =>
     {
