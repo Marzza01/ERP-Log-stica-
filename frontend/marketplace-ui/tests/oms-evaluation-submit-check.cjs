@@ -25,7 +25,7 @@ function loadClient(responseFactory) {
     localStorage: { getItem: () => 'qa-token', removeItem: () => {} },
     fetch: async (url, options) => {
       captured = { url, options };
-      return responseFactory();
+      return responseFactory(url, options);
     },
   };
   vm.runInNewContext(compiled.outputText, context);
@@ -48,6 +48,37 @@ test('OMS: HTTP 201 sin cuerpo confirma la orden y conserva Idempotency-Key', as
   assert.deepEqual(JSON.parse(request.options.body), payload);
 });
 
+test('OMS: recupera el ID persistido después de HTTP 201 sin cuerpo', async () => {
+  const responses = [
+    { ok: true, status: 201, statusText: 'Created', text: async () => '' },
+    { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({
+      id: 'f70ef5ff-fcd5-4f2d-aefb-522eb1b1777d',
+      numeroOrden: 'TEST-20261116-f70ef5ff',
+      estado: 'Pendiente',
+      montoTotal: 33.25,
+    }) },
+  ];
+  const requests = [];
+  const client = loadClient((url, options) => {
+    requests.push({ url, options });
+    return responses.shift();
+  });
+  const payload = { compradorId: 'buyer', vendedorId: 'seller', items: [{ productoId: 'sku', cantidad: 1 }] };
+  const headers = { 'Idempotency-Key': 'oms-idempotency-123456' };
+
+  await client.apiClient.postVoid('/api/ordenes', payload, headers);
+  const recovered = await client.apiClient.post('/api/ordenes/evaluacion/resultado', payload, headers);
+
+  assert.equal(recovered.id, 'f70ef5ff-fcd5-4f2d-aefb-522eb1b1777d');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].url, '/api/ordenes');
+  assert.equal(requests[1].url, '/api/ordenes/evaluacion/resultado');
+  for (const request of requests) {
+    assert.equal(request.options.headers['Idempotency-Key'], headers['Idempotency-Key']);
+    assert.deepEqual(JSON.parse(request.options.body), payload);
+  }
+});
+
 test('OMS: un rechazo HTTP no se interpreta como creación confirmada', async () => {
   const client = loadClient(() => ({
     ok: false, status: 409, statusText: 'Conflict',
@@ -59,11 +90,13 @@ test('OMS: un rechazo HTTP no se interpreta como creación confirmada', async ()
   );
 });
 
-test('OMS: el formulario no accede a result.id después de un 2xx y limpia el pendiente', () => {
+test('OMS: el formulario solo limpia el pendiente tras recuperar y validar el ID', () => {
   assert.ok(componentSource.includes("await apiClient.postVoid('/api/ordenes'"));
-  assert.ok(!componentSource.includes('result.id'));
+  assert.ok(componentSource.includes("apiClient.post<ResultadoOrden>('/api/ordenes/evaluacion/resultado'"));
+  assert.ok(componentSource.includes('if (!esGuid(result?.id)'));
   assert.ok(componentSource.includes('localStorage.removeItem(storageKey);'));
-  assert.ok(componentSource.includes('setPending(null); setOpen(false); onCreated();'));
+  assert.ok(componentSource.includes('setPending(null); setOpen(false); setLastCreated(result); onCreated();'));
+  assert.ok(componentSource.indexOf('if (!esGuid(result?.id)') < componentSource.indexOf('localStorage.removeItem(storageKey);'));
 });
 
 console.log('OMS evaluación: pruebas de confirmación HTTP, idempotencia y desbloqueo aprobadas.');
