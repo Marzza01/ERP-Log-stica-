@@ -91,6 +91,13 @@ const navGroups: NavGroup[] = [
         allowedRoles: ['Admin'],
       },
       {
+        to: '/conteos/escaner',
+        icon: <ClipboardCheck size={16} />,
+        label: 'Escáner de conteos',
+        shortLabel: 'Escáner',
+        allowedRoles: ['Admin'],
+      },
+      {
         to: '/alertas-inventario',
         icon: <BellRing size={16} />,
         label: 'Alertas de inventario',
@@ -140,6 +147,8 @@ const navGroups: NavGroup[] = [
         allowedRoles: ['Admin'],
       },
       { to: '/productos',     icon: <Package size={16} />,  label: 'Productos',      shortLabel: 'Productos', allowedRoles: ['Admin', 'Vendedor'] },
+      { to: '/productos/etiquetas', icon: <Package size={16} />, label: 'Etiquetas y códigos de barras', shortLabel: 'Etiquetas', allowedRoles: ['Admin', 'Vendedor'] },
+      { to: '/productos/rotaciones', icon: <RotateCcw size={16} />, label: 'Rotaciones EAN', shortLabel: 'Rot. EAN', allowedRoles: ['Admin'] },
     ],
   },
 ];
