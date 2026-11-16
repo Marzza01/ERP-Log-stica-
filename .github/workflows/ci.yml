@@ -182,6 +182,11 @@ jobs:
         working-directory: frontend/marketplace-ui
         run: npm run test:checkout
 
+      # F666: a confirmed OMS 201 may have an empty body behind the proxy.
+      - name: Test OMS evaluation submit and pending unlock
+        working-directory: frontend/marketplace-ui
+        run: node tests/oms-evaluation-submit-check.cjs
+
       # F396: pure barcode / scanner contracts from colleague fork; no DB or external network.
       - name: F396 EAN-13 and scan result tests
         working-directory: frontend/marketplace-ui

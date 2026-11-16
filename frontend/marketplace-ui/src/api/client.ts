@@ -180,8 +180,8 @@ export const apiClient = {
   post: <T>(path: string, body?: unknown, headers?: HeadersInit) =>
     request<T>(path, { method: 'POST', body: body !== undefined ? JSON.stringify(body) : undefined, headers }),
   // Comandos que solo requieren saber si el servidor aceptó la operación.
-  postVoid: (path: string, body?: unknown) =>
-    request<void>(path, { method: 'POST', body: body !== undefined ? JSON.stringify(body) : undefined }, true),
+  postVoid: (path: string, body?: unknown, headers?: HeadersInit) =>
+    request<void>(path, { method: 'POST', body: body !== undefined ? JSON.stringify(body) : undefined, headers }, true),
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PUT', body: body !== undefined ? JSON.stringify(body) : undefined }),
   putVoid: (path: string, body?: unknown) =>

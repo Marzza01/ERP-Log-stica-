@@ -7,6 +7,11 @@ type Opcion = { id: string; nombre: string };
 type Producto = Opcion & { vendedorId: string; sku: string; precioB2C: number; precioB2B: number };
 type Opciones = { compradores: Opcion[]; vendedores: Opcion[]; productos: Producto[] };
 type Solicitud = { key: string; payload: Omit<CrearOrdenRequest, 'tipoCliente'> & { tipoCliente: 0 | 1 } };
+type ResultadoOrden = { id: string; numeroOrden: string; estado: string; montoTotal: number };
+
+const esGuid = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
 export default function NuevaOrdenEvaluacion({ actorId, onCreated }: { actorId: string; onCreated: () => void }) {
   const storageKey = `erp_oms_evaluacion_v1:${actorId}`;
@@ -24,6 +29,7 @@ export default function NuevaOrdenEvaluacion({ actorId, onCreated }: { actorId: 
   const [canCorrect, setCanCorrect] = useState(false);
   const [availability, setAvailability] = useState('Comprobando disponibilidad…');
   const [refreshOptions, setRefreshOptions] = useState(0);
+  const [lastCreated, setLastCreated] = useState<ResultadoOrden | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -53,7 +59,7 @@ export default function NuevaOrdenEvaluacion({ actorId, onCreated }: { actorId: 
   }, [storageKey, refreshOptions]);
 
   const send = async () => {
-    if (busyRef.current || !options) return;
+    if (busyRef.current || (!pending && !options)) return;
     busyRef.current = true;
     setBusy(true); setError(''); setCanCorrect(false);
     try {
@@ -68,11 +74,37 @@ export default function NuevaOrdenEvaluacion({ actorId, onCreated }: { actorId: 
       // Persistir ANTES de enviar: un cierre/timeout reutiliza exactamente la misma clave y cuerpo.
       localStorage.setItem(storageKey, JSON.stringify(operation));
       setPending(operation);
-      const result = await apiClient.post<{ id: string }>('/api/ordenes', operation.payload,
-        { 'Idempotency-Key': operation.key });
-      if (typeof result.id !== 'string') throw new Error('Respuesta sin identificador; reintenta la misma solicitud.');
+
+      let creationFailure: unknown = null;
+      try {
+        await apiClient.postVoid('/api/ordenes', operation.payload,
+          { 'Idempotency-Key': operation.key });
+      } catch (failure) {
+        // Un timeout/5xx no demuestra que el commit haya fallado. Conciliar
+        // primero evita duplicar la orden si el backend alcanzó a confirmarla.
+        creationFailure = failure;
+      }
+
+      let result: ResultadoOrden;
+      try {
+        result = await apiClient.post<ResultadoOrden>('/api/ordenes/evaluacion/resultado',
+          operation.payload, { 'Idempotency-Key': operation.key });
+      } catch (recoveryFailure) {
+        if (recoveryFailure instanceof ApiError && recoveryFailure.status === 404) {
+          if (creationFailure) throw creationFailure;
+          throw new Error('El servidor aceptó la solicitud, pero todavía no se pudo recuperar su identificador. La solicitud quedó guardada; reintenta la misma operación sin crear otra.');
+        }
+        throw recoveryFailure;
+      }
+
+      if (!esGuid(result?.id) || typeof result.numeroOrden !== 'string' ||
+          !result.numeroOrden.trim() || typeof result.estado !== 'string') {
+        throw new Error('No se recibió un identificador válido de la orden. La solicitud quedó guardada para recuperarla sin duplicados.');
+      }
+
+      // Solo después de verificar el ID persistido se libera el bloqueo local.
       localStorage.removeItem(storageKey);
-      setPending(null); setOpen(false); onCreated();
+      setPending(null); setOpen(false); setLastCreated(result); onCreated();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Solicitud pendiente de verificación.');
       // Solo los rechazos inequívocos anteriores al commit permiten cambiar el cuerpo.
@@ -87,9 +119,12 @@ export default function NuevaOrdenEvaluacion({ actorId, onCreated }: { actorId: 
     new Set(lines.map(line => line.productoId)).size === lines.length;
 
   return <>
-    <button className="btn btn-primary" disabled={!!availability || !options} title={availability}
+    <button className="btn btn-primary" disabled={!pending && (!!availability || !options)} title={pending ? "Revisar solicitud pendiente" : availability}
       onClick={() => setOpen(true)}>{pending ? 'Revisar orden pendiente' : '+ Nueva Orden'}</button>
     {availability && <span role="status" style={{ maxWidth: 240, fontSize: 12 }}>{availability}</span>}
+    {lastCreated && <span role="status" style={{ maxWidth: 320, fontSize: 12 }}>
+      Orden confirmada: {lastCreated.numeroOrden} · {lastCreated.estado}
+    </span>}
     {!!availability && <button type="button" className="btn btn-secondary"
       onClick={() => setRefreshOptions(value => value + 1)}>Reintentar</button>}
     <Modal title="Nueva orden de evaluación" open={open} onClose={() => { if (!busy) setOpen(false); }} size="lg">

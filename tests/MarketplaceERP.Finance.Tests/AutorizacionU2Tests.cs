@@ -277,12 +277,15 @@ public class AutorizacionU2Tests
         }
         // Base original: 23 controladores / 85 acciones / 86 rutas.
         // Sandbox QA: +2 endpoints de comprador y referencias reales de producto.
-        // OMS evaluación: +1 controlador y +2 rutas exclusivas de Admin.
+        // OMS evaluación: +1 controlador y +2 rutas iniciales exclusivas de Admin.
         // F103: +2 GET de Vendedor. Checkout comercial V2: +1 controlador/acción/ruta.
-        // F401: +1 controlador de códigos de barras con 2 GET Admin/Vendedor.\n        // F399: +1 controlador Admin-only con 8 endpoints de sesiones escaneadas.`n        // Ninguna autorización queda implícita.
+        // F401: +1 controlador de códigos de barras con 2 GET Admin/Vendedor.
+        // F399: +1 controlador Admin-only con 8 endpoints de sesiones escaneadas.
+        // F666: +1 acción/ruta Admin-only para conciliar una orden por clave idempotente.
+        // Ninguna autorización queda implícita.
         Assert.Equal(31, controllers.Length);
-        Assert.Equal(121, actions); // OMS options already exist in OrdenEvaluacionController.
-        Assert.Equal(122, routes); // No duplicate route; preserve authorized endpoint count.
+        Assert.Equal(122, actions); // Incluye OMS options, cancel y la nueva conciliación.
+        Assert.Equal(123, routes); // Todas las acciones y alias permanecen cubiertos.
     }
 
     [Theory]
