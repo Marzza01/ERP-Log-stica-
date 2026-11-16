@@ -70,7 +70,7 @@ export default function NuevaOrdenEvaluacion({ actorId, onCreated }: { actorId: 
       setPending(operation);
       // El endpoint confirma la operación con HTTP 201 después del commit. No dependemos
       // de que el proxy conserve el cuerpo JSON: un 2xx basta y evita dejar un
-      // intento ya confirmado bloqueado por result.id cuando el body viene vacío.
+      // intento ya confirmado bloqueado cuando el body viene vacío.
       await apiClient.postVoid('/api/ordenes', operation.payload,
         { 'Idempotency-Key': operation.key });
       localStorage.removeItem(storageKey);
