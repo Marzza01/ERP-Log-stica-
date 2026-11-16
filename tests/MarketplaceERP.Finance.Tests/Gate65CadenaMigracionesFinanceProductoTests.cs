@@ -20,7 +20,7 @@ public sealed class Gate65CadenaMigracionesFinanceProductoTests : IAsyncLifetime
     private const string Fin08 = "20261110024500_FIN08UnicidadAsientosVentaLiquidacion";
     private const string Fin09 = "20261110050932_FIN09LiquidacionUnoAMuchosExpandir";
     // F483 adds a non-commercial, append-only inbox after FIN09.
-    private const string LatestFinance = "20261116062428_F601ComprasArchivosDurable";
+    private const string LatestFinance = "20261116192457_F666LogimktMarketplaceIntegration";
 
     private readonly string _dbName = "gate65_chain_" + Guid.NewGuid().ToString("N");
     private string? _adminConnection;

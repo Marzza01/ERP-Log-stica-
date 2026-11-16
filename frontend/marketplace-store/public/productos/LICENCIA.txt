@@ -1,0 +1,3 @@
+Ilustraciones 3D: Fluent Emoji de Microsoft (https://github.com/microsoft/fluentui-emoji),
+distribuidas en el paquete npm @lobehub/fluent-emoji-3d. Licencia MIT.
+Se asignan a cada producto en src/lib/product-image.ts y se copian con scripts/imagenes-productos.mjs.

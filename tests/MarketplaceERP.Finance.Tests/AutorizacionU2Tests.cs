@@ -204,6 +204,10 @@ public class AutorizacionU2Tests
             // Checkout V1, cotización QA aislada y checkout comercial multi-SKU
             // conservan la matriz exclusiva de Comprador. La simulación QA sigue
             // restringida al sandbox; Admin y Vendedor no pueden ejecutar cobros.
+            var marketplaceCreate = controller == typeof(MarketplaceIntegrationController) &&
+                action.Name == nameof(MarketplaceIntegrationController.CreateOrder);
+            var marketplaceRead = controller == typeof(MarketplaceIntegrationController) &&
+                action.Name == nameof(MarketplaceIntegrationController.GetOrder);
             var buyerCheckout =
                 (controller == typeof(CheckoutController) &&
                     action.Name == nameof(CheckoutController.ProcesarCheckout)) ||
@@ -212,9 +216,11 @@ public class AutorizacionU2Tests
                 (controller == typeof(CheckoutV2QaSimulatedController) &&
                     action.Name == nameof(CheckoutV2QaSimulatedController.ComprarSimulado)) ||
                 (controller == typeof(CheckoutMultiSkuController) &&
-                    action.Name == nameof(CheckoutMultiSkuController.Comprar));
+                    action.Name == nameof(CheckoutMultiSkuController.Comprar)) ||
+                marketplaceCreate;
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
-            var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
+            var buyerOrder = (controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener)) ||
+                marketplaceRead;
             var sellerOwnOrders = controller == typeof(OrdenesController) && (
                 action.Name == nameof(OrdenesController.ListarMisOrdenes) ||
                 action.Name == nameof(OrdenesController.ObtenerMiOrden));
@@ -282,10 +288,11 @@ public class AutorizacionU2Tests
         // F401: +1 controlador de códigos de barras con 2 GET Admin/Vendedor.
         // F399: +1 controlador Admin-only con 8 endpoints de sesiones escaneadas.
         // F666: +1 acción/ruta Admin-only para conciliar una orden por clave idempotente.
+        // LOGIMKT: +2 controladores y 8 rutas (Comprador/Admin y Admin-only).
         // Ninguna autorización queda implícita.
-        Assert.Equal(31, controllers.Length);
-        Assert.Equal(122, actions); // Incluye OMS options, cancel y la nueva conciliación.
-        Assert.Equal(123, routes); // Todas las acciones y alias permanecen cubiertos.
+        Assert.Equal(33, controllers.Length);
+        Assert.Equal(130, actions);
+        Assert.Equal(131, routes);
     }
 
     [Theory]
