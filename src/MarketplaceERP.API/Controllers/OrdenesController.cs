@@ -287,7 +287,7 @@ public class OrdenesController : ControllerBase
     // ── PUT /api/ordenes/{id}/estado ──────────────────────────────────────────
     /// <summary>Transiciona la orden entre estados del OMS.</summary>
     [HttpPut("{id:guid}/estado", Name = "TransicionarEstadoOrden")]
-    [PaymentOperationsGuard]
+    [StagingOmsTransitionGuard]
     [Authorize(Roles = "Admin")]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

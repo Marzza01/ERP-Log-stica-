@@ -132,11 +132,16 @@ public class RailwayPreparationTests
             (typeof(CheckoutController), new[] { "ProcesarCheckout" }),
             (typeof(LiquidacionesController), new[] { "Generar", "ProcesarPago" }),
             (typeof(CheckoutRecuperacionController), new[] { "Conciliar", "Reembolsar" }),
-            (typeof(OrdenesController), new[] { "TransicionarEstado" }),
             (typeof(ContabilidadController), new[] { "AsientoManual" })
         })
             foreach (var action in actions)
                 Assert.NotNull(controller.GetMethod(action)!.GetCustomAttributes(typeof(PaymentOperationsGuardAttribute), true).SingleOrDefault());
+
+        // OMS conserva un guard pre-acción; la excepción exige staging Neon aislado
+        // y opt-in explícito, sin habilitar pasarelas o liquidaciones.
+        var omsTransition = typeof(OrdenesController).GetMethod("TransicionarEstado")!;
+        Assert.Single(omsTransition.GetCustomAttributes(typeof(StagingOmsTransitionGuardAttribute), true));
+        Assert.Empty(omsTransition.GetCustomAttributes(typeof(PaymentOperationsGuardAttribute), true));
     }
 
     [Theory]

@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import DataTable from '../../components/ui/DataTable';
 import NuevaOrdenEvaluacion from './NuevaOrdenEvaluacion';
-import { apiClient } from '../../api/client';
+import { apiClient, ApiError } from '../../api/client';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
@@ -23,6 +23,17 @@ const TRANSICIONES: Partial<Record<EstadoOrden, EstadoOrden[]>> = {
   Enviada: ['Entregada'],
 };
 const UNCERTAIN_PREFIX = 'erp_orden_estado_incierto_v1:';
+
+// Solo un ACK válido o un rechazo explícito previo al controlador permite retirar el bloqueo.
+function liberarBloqueoConfirmado(id: string): Set<string> | null {
+  try {
+    window.localStorage.removeItem(UNCERTAIN_PREFIX + id);
+    const ids = readUncertainIds();
+    return ids !== null && !ids.has(id) ? ids : null;
+  } catch {
+    return null;
+  }
+}
 
 interface OrdenVista {
   id: string;
@@ -196,6 +207,37 @@ export default function OrdenesPage() {
     } finally { savingRef.current = false; setSaving(false); }
   };
 
+  const verificarBloqueo = async (orden: OrdenVista) => {
+    if (!isAdmin || savingRef.current || uncertainIds === null || !uncertainIds.has(orden.id)) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const confirmado = parseOrden(await ordenesApi.obtener(orden.id), true);
+      if (!confirmado || confirmado.id !== orden.id) {
+        toast.warning('Bloqueo conservado', 'La API no confirmó el estado actual de esta orden.');
+        return;
+      }
+      if (!window.confirm(
+        'El ERP confirma que la orden ' + confirmado.numeroOrden + ' está en estado ' + confirmado.estado +
+        '. Verifica este estado antes de continuar. ¿Quieres retirar el bloqueo local y permitir una NUEVA transición desde este estado? No se repetirá automáticamente ninguna operación.'
+      )) return;
+      const libres = liberarBloqueoConfirmado(orden.id);
+      setUncertainIds(libres);
+      if (libres === null) {
+        toast.warning('Bloqueo conservado', 'No se pudo actualizar de forma segura el almacenamiento de este navegador.');
+        return;
+      }
+      setSelectedOrden(confirmado);
+      toast.success('Orden reconciliada', 'El estado actual fue verificado. Puedes realizar una nueva transición si corresponde.');
+      await load();
+    } catch {
+      toast.warning('Bloqueo conservado', 'No se pudo confirmar el estado en el servidor. No se ha retirado la protección.');
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
   const abrirTransicion = (orden: OrdenVista) => {
     if (!isAdmin || savingRef.current || uncertainIds === null || uncertainIds.has(orden.id)) return;
     const siguientes = TRANSICIONES[orden.estado];
@@ -248,12 +290,27 @@ export default function OrdenesPage() {
       if (isRecord(resultado) && resultado.id === id
         && parseEstado(resultado.estadoAnterior) === estadoAnterior
         && parseEstado(resultado.nuevoEstado) === target) {
-        toast.success('Estado confirmado por la API', 'La orden ' + actual.numeroOrden + ' pasó a ' + target + '.');
+        const libres = liberarBloqueoConfirmado(id);
+        setUncertainIds(libres);
+        if (libres !== null) {
+          toast.success('Estado confirmado por la API', 'La orden ' + actual.numeroOrden + ' pasó a ' + target + '.');
+        } else {
+          toast.warning('Cambio confirmado; bloqueo local', 'El estado cambió, pero el navegador no pudo liberar la marca de seguridad.');
+        }
       } else {
         toast.warning('Resultado incierto', 'La respuesta no confirmó el cambio. No se permitirá repetir esta transición desde esta pantalla.');
       }
-    } catch {
-      if (enviada) {
+    } catch (error) {
+      const apiError = error instanceof ApiError ? error : null;
+      const rechazoDelGuard = enviada && apiError?.status === 503 &&
+        isRecord(apiError.data) &&
+        (apiError.data.tipo === 'OmsStagingNoAutorizado' || apiError.data.tipo === 'PagosDeshabilitados');
+      if (rechazoDelGuard) {
+        // Ambos filtros responden antes de ejecutar la transición; no hubo escritura.
+        const libres = liberarBloqueoConfirmado(id);
+        setUncertainIds(libres);
+        toast.error('OMS bloqueado en Desarrollo', apiError?.message || 'La configuración del servidor impide avanzar estados.');
+      } else if (enviada) {
         toast.warning('Resultado incierto', 'No se pudo confirmar el resultado. No se permitirá repetir esta transición desde esta pantalla.');
       } else {
         toast.error('No se pudo leer el estado actual', 'No se envió ningún cambio de estado.');
@@ -363,6 +420,12 @@ export default function OrdenesPage() {
             {selectedOrden.numeroOrden.startsWith('TEST-') && selectedOrden.estado === 'Pendiente' && (
               <button className="btn btn-secondary" disabled={saving} onClick={() => void cancelarEvaluacion(selectedOrden.id)}>
                 Cancelar evaluación y liberar reservas
+              </button>
+            )}
+            {!selectedOrden.numeroOrden.startsWith('TEST-') && uncertainIds?.has(selectedOrden.id) && (
+              <button className="btn btn-secondary" disabled={saving}
+                onClick={() => void verificarBloqueo(selectedOrden)}>
+                Verificar estado en ERP y desbloquear
               </button>
             )}
             {!selectedOrden.numeroOrden.startsWith('TEST-') && !!TRANSICIONES[selectedOrden.estado]?.length && (
