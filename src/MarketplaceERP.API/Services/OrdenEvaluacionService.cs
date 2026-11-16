@@ -27,19 +27,34 @@ public sealed class OrdenEvaluacionService(
     public void ValidateTarget()
     {
         if (!configuration.GetValue<bool>("Orders:StagingEvaluation:Enabled") ||
-            !string.Equals(configuration["Payments:Provider"], "Disabled", StringComparison.OrdinalIgnoreCase) ||
             !DateTimeOffset.TryParse(configuration["Orders:StagingEvaluation:ExpiresAtUtc"],
                 CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var expiry) ||
             expiry <= DateTimeOffset.UtcNow ||
             expiry > DateTimeOffset.UtcNow.AddHours(24))
             throw new EvaluacionOrdenException(503, "Creación de órdenes de evaluación no autorizada.");
 
+        ValidateRecoveryTarget();
+
+        // No permitir StockServiceMock u otra implementación que no escriba en Catalog.
+        if (stock.GetType().FullName != "MarketplaceERP.Catalog.Services.StockService")
+            throw new EvaluacionOrdenException(503, "Reservas persistentes no disponibles.");
+    }
+
+    /// <summary>
+    /// Read-only recovery must remain available after the temporary creation
+    /// window expires, but only against the isolated staging database. This
+    /// lets a browser reconcile a committed/cancelled order without reopening
+    /// order creation or touching production.
+    /// </summary>
+    private void ValidateRecoveryTarget()
+    {
+        if (!string.Equals(configuration["Payments:Provider"], "Disabled", StringComparison.OrdinalIgnoreCase))
+            throw new EvaluacionOrdenException(503, "Recuperación de órdenes no autorizada en este destino.");
+
         var descriptor = new Npgsql.NpgsqlConnectionStringBuilder(finance.Database.GetDbConnection().ConnectionString);
         var localHost = descriptor.Host is "localhost" or "127.0.0.1" or "::1";
         var isolatedTestDatabase = descriptor.Database?.StartsWith("ci_oms_evaluation_", StringComparison.Ordinal) == true;
-        // GitHub Actions usa una BD postgres local recién creada para el E2E
-        // de F105. Este permiso exige simultáneamente CI + GITHUB_ACTIONS,
-        // Development, loopback:5432 y ausencia de identidad/configuración Render.
+        // GitHub Actions usa una BD postgres local recién creada para el E2E.
         var githubActionsDatabase = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"),
                 "true", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase) &&
@@ -48,19 +63,16 @@ public sealed class OrdenEvaluacionService(
             (isolatedTestDatabase || githubActionsDatabase) &&
             string.IsNullOrWhiteSpace(configuration["RENDER_SERVICE_NAME"]) &&
             string.IsNullOrWhiteSpace(configuration["Deployment:Target"]);
-        if (!localRehearsal)
-        {
-            if (configuration["RENDER_SERVICE_NAME"] != StagingDatabaseTargetGuard.ServiceName ||
-                configuration["Deployment:Target"] != StagingDatabaseTargetGuard.TargetMarker ||
-                configuration[StagingDatabaseTargetGuard.ApprovedHostConfiguration] != IsolatedHost)
-                throw new EvaluacionOrdenException(503, "Destino de evaluación no autorizado.");
-            StagingDatabaseTargetGuard.ValidateRuntime(configuration,
-                configuration["RENDER_SERVICE_NAME"], environment.EnvironmentName,
-                finance.Database.GetDbConnection().ConnectionString);
-        }
-        // No permitir StockServiceMock u otra implementación que no escriba en Catalog.
-        if (stock.GetType().FullName != "MarketplaceERP.Catalog.Services.StockService")
-            throw new EvaluacionOrdenException(503, "Reservas persistentes no disponibles.");
+        if (localRehearsal) return;
+
+        if (configuration["RENDER_SERVICE_NAME"] != StagingDatabaseTargetGuard.ServiceName ||
+            configuration["Deployment:Target"] != StagingDatabaseTargetGuard.TargetMarker ||
+            configuration[StagingDatabaseTargetGuard.ApprovedHostConfiguration] != IsolatedHost)
+            throw new EvaluacionOrdenException(503, "Destino de recuperación no autorizado.");
+
+        StagingDatabaseTargetGuard.ValidateRuntime(configuration,
+            configuration["RENDER_SERVICE_NAME"], environment.EnvironmentName,
+            finance.Database.GetDbConnection().ConnectionString);
     }
 
     /// <summary>
@@ -97,13 +109,69 @@ public sealed class OrdenEvaluacionService(
         return new OrdenEvaluacionOpcionesResponse(compradores, vendedores, productos);
     }
 
+    /// <summary>
+    /// Recover the result of one exact Admin evaluation request. This is
+    /// read-only: it never creates an order or changes stock. The original
+    /// payload hash and actor-scoped idempotency key must both match.
+    /// </summary>
+    public async Task<OrdenEvaluacionResultado?> GetStatusAsync(
+        CrearOrdenRequest request, Guid actor, string key, CancellationToken ct)
+    {
+        ValidateRecoveryTarget();
+        ValidateOperationIdentity(actor, key);
+        if (request is null || request.CompradorId == Guid.Empty || request.VendedorId == Guid.Empty ||
+            !Enum.IsDefined(request.TipoCliente) || request.Items is null ||
+            request.Items.Count is < 1 or > 20 || request.Items.Any(i => i is null ||
+                i.ProductoId == Guid.Empty || i.Cantidad is < 1 or > 10000) ||
+            request.Items.Select(i => i.ProductoId).Distinct().Count() != request.Items.Count ||
+            string.IsNullOrWhiteSpace(request.DireccionEntrega) || request.DireccionEntrega.Length > 500 ||
+            (request.CostoEnvio.HasValue && request.CostoEnvio != 5m))
+            throw new EvaluacionOrdenException(400, "Solicitud original inválida para recuperación.");
+
+        var expectedHash = ComputePayloadHash(request);
+        var operationKey = ComputeOperationKey(actor, key);
+        var previous = await finance.Ordenes.AsNoTracking()
+            .Where(o => o.IdempotencyKey == operationKey)
+            .Select(o => new
+            {
+                o.Id, o.NumeroOrden, o.Estado, o.MontoTotal, o.CheckoutPayloadHash
+            })
+            .SingleOrDefaultAsync(ct);
+
+        if (previous is null) return null;
+        if (!string.Equals(previous.CheckoutPayloadHash, expectedHash, StringComparison.Ordinal))
+            throw new EvaluacionOrdenException(409, "La clave ya pertenece a otra solicitud.");
+
+        return new OrdenEvaluacionResultado(
+            previous.Id, previous.NumeroOrden, previous.Estado.ToString(), previous.MontoTotal);
+    }
+
+    private static void ValidateOperationIdentity(Guid actor, string key)
+    {
+        if (actor == Guid.Empty || string.IsNullOrWhiteSpace(key) || key.Length is < 16 or > 100 ||
+            key.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-'))
+            throw new EvaluacionOrdenException(400, "Clave de idempotencia inválida.");
+    }
+
+    private static string ComputeOperationKey(Guid actor, string key) =>
+        "OMS:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(actor + ":" + key)));
+
+    private static string ComputePayloadHash(CrearOrdenRequest request)
+    {
+        var normalized = new
+        {
+            request.CompradorId, request.VendedorId, request.TipoCliente,
+            DireccionEntrega = request.DireccionEntrega.Trim(),
+            Items = request.Items.OrderBy(i => i.ProductoId).Select(i => new { i.ProductoId, i.Cantidad })
+        };
+        return Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(normalized)));
+    }
+
     public async Task<Orden> CreateAsync(CrearOrdenRequest request, Guid actor, string key,
         CancellationToken ct)
     {
         ValidateTarget();
-        if (actor == Guid.Empty || key.Length is < 16 or > 100 ||
-            key.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-'))
-            throw new EvaluacionOrdenException(400, "Clave de idempotencia inválida.");
+        ValidateOperationIdentity(actor, key);
         if (request.CompradorId == Guid.Empty || request.VendedorId == Guid.Empty ||
             !Enum.IsDefined(request.TipoCliente) || request.Items is null ||
             request.Items.Count is < 1 or > 20 || request.Items.Any(i => i is null ||
@@ -113,14 +181,8 @@ public sealed class OrdenEvaluacionService(
             (request.CostoEnvio.HasValue && request.CostoEnvio != 5m))
             throw new EvaluacionOrdenException(400, "Comprador, vendedor, dirección o líneas inválidos.");
 
-        var normalized = new
-        {
-            request.CompradorId, request.VendedorId, request.TipoCliente,
-            DireccionEntrega = request.DireccionEntrega.Trim(),
-            Items = request.Items.OrderBy(i => i.ProductoId).Select(i => new { i.ProductoId, i.Cantidad })
-        };
-        var hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(normalized)));
-        var operationKey = "OMS:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(actor + ":" + key)));
+        var hash = ComputePayloadHash(request);
+        var operationKey = ComputeOperationKey(actor, key);
 
         var originalConnection = catalog.Database.GetDbConnection();
         catalog.Database.SetDbConnection(finance.Database.GetDbConnection(), contextOwnsConnection: false);
@@ -236,6 +298,7 @@ public sealed class OrdenEvaluacionService(
     }
 }
 
+public sealed record OrdenEvaluacionResultado(Guid Id, string NumeroOrden, string Estado, decimal MontoTotal);
 public sealed record OrdenEvaluacionOpcion(Guid Id, string Nombre);
 public sealed record OrdenEvaluacionProducto(Guid Id, string Nombre, Guid VendedorId,
     string Sku, decimal PrecioB2C, decimal PrecioB2B);
