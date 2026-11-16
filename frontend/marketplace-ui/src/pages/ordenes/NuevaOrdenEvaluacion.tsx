@@ -59,7 +59,7 @@ export default function NuevaOrdenEvaluacion({ actorId, onCreated }: { actorId: 
   }, [storageKey, refreshOptions]);
 
   const send = async () => {
-    if (busyRef.current || !options) return;
+    if (busyRef.current || (!pending && !options)) return;
     busyRef.current = true;
     setBusy(true); setError(''); setCanCorrect(false);
     try {
@@ -119,7 +119,7 @@ export default function NuevaOrdenEvaluacion({ actorId, onCreated }: { actorId: 
     new Set(lines.map(line => line.productoId)).size === lines.length;
 
   return <>
-    <button className="btn btn-primary" disabled={!!availability || !options} title={availability}
+    <button className="btn btn-primary" disabled={!pending && (!!availability || !options)} title={pending ? "Revisar solicitud pendiente" : availability}
       onClick={() => setOpen(true)}>{pending ? 'Revisar orden pendiente' : '+ Nueva Orden'}</button>
     {availability && <span role="status" style={{ maxWidth: 240, fontSize: 12 }}>{availability}</span>}
     {lastCreated && <span role="status" style={{ maxWidth: 320, fontSize: 12 }}>
