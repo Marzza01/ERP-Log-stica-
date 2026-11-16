@@ -97,6 +97,8 @@ test('OMS: el formulario solo limpia el pendiente tras recuperar y validar el ID
   assert.ok(componentSource.includes('localStorage.removeItem(storageKey);'));
   assert.ok(componentSource.includes('setPending(null); setOpen(false); setLastCreated(result); onCreated();'));
   assert.ok(componentSource.indexOf('if (!esGuid(result?.id)') < componentSource.indexOf('localStorage.removeItem(storageKey);'));
+  assert.ok(componentSource.includes('if (busyRef.current || (!pending && !options)) return;'));
+  assert.ok(componentSource.includes('disabled={!pending && (!!availability || !options)}'));
 });
 
 console.log('OMS evaluación: pruebas de confirmación HTTP, idempotencia y desbloqueo aprobadas.');
