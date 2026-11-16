@@ -68,9 +68,11 @@ export default function NuevaOrdenEvaluacion({ actorId, onCreated }: { actorId: 
       // Persistir ANTES de enviar: un cierre/timeout reutiliza exactamente la misma clave y cuerpo.
       localStorage.setItem(storageKey, JSON.stringify(operation));
       setPending(operation);
-      const result = await apiClient.post<{ id: string }>('/api/ordenes', operation.payload,
+      // El endpoint confirma la operación con HTTP 201 después del commit. No dependemos
+      // de que el proxy conserve el cuerpo JSON: un 2xx basta y evita dejar un
+      // intento ya confirmado bloqueado por result.id cuando el body viene vacío.
+      await apiClient.postVoid('/api/ordenes', operation.payload,
         { 'Idempotency-Key': operation.key });
-      if (typeof result.id !== 'string') throw new Error('Respuesta sin identificador; reintenta la misma solicitud.');
       localStorage.removeItem(storageKey);
       setPending(null); setOpen(false); onCreated();
     } catch (failure) {
