@@ -138,6 +138,15 @@ public class AutorizacionU2Tests
     }
 
     [Fact]
+    public async Task EvaluationOrderOptions_OnlyAllowAdminToReadOptions()
+    {
+        Assert.Equal(401, await Probe(typeof(OrdenEvaluacionController), "Options", null));
+        Assert.Equal(403, await Probe(typeof(OrdenEvaluacionController), "Options", "Comprador"));
+        Assert.Equal(403, await Probe(typeof(OrdenEvaluacionController), "Options", "Vendedor"));
+        Assert.Equal(200, await Probe(typeof(OrdenEvaluacionController), "Options", "Admin"));
+    }
+
+    [Fact]
     public async Task OrderCreation_RequiresAdminWithoutExecutingOrderLogic()
     {
         Assert.Equal(401, await Probe(typeof(OrdenesController), "Crear", null));
@@ -195,6 +204,10 @@ public class AutorizacionU2Tests
             // Checkout V1, cotización QA aislada y checkout comercial multi-SKU
             // conservan la matriz exclusiva de Comprador. La simulación QA sigue
             // restringida al sandbox; Admin y Vendedor no pueden ejecutar cobros.
+            var marketplaceCreate = controller == typeof(MarketplaceIntegrationController) &&
+                action.Name == nameof(MarketplaceIntegrationController.CreateOrder);
+            var marketplaceRead = controller == typeof(MarketplaceIntegrationController) &&
+                action.Name == nameof(MarketplaceIntegrationController.GetOrder);
             var buyerCheckout =
                 (controller == typeof(CheckoutController) &&
                     action.Name == nameof(CheckoutController.ProcesarCheckout)) ||
@@ -203,9 +216,11 @@ public class AutorizacionU2Tests
                 (controller == typeof(CheckoutV2QaSimulatedController) &&
                     action.Name == nameof(CheckoutV2QaSimulatedController.ComprarSimulado)) ||
                 (controller == typeof(CheckoutMultiSkuController) &&
-                    action.Name == nameof(CheckoutMultiSkuController.Comprar));
+                    action.Name == nameof(CheckoutMultiSkuController.Comprar)) ||
+                marketplaceCreate;
             var buyerTracking = controller == typeof(CheckoutSeguimientoController) && action.Name == nameof(CheckoutSeguimientoController.Seguimiento);
-            var buyerOrder = controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener);
+            var buyerOrder = (controller == typeof(OrdenesController) && action.Name == nameof(OrdenesController.Obtener)) ||
+                marketplaceRead;
             var sellerOwnOrders = controller == typeof(OrdenesController) && (
                 action.Name == nameof(OrdenesController.ListarMisOrdenes) ||
                 action.Name == nameof(OrdenesController.ObtenerMiOrden));
@@ -268,12 +283,16 @@ public class AutorizacionU2Tests
         }
         // Base original: 23 controladores / 85 acciones / 86 rutas.
         // Sandbox QA: +2 endpoints de comprador y referencias reales de producto.
-        // OMS evaluación: +1 controlador y +2 rutas exclusivas de Admin.
+        // OMS evaluación: +1 controlador y +2 rutas iniciales exclusivas de Admin.
         // F103: +2 GET de Vendedor. Checkout comercial V2: +1 controlador/acción/ruta.
-        // F401: +1 controlador de códigos de barras con 2 GET Admin/Vendedor.\n        // F399: +1 controlador Admin-only con 8 endpoints de sesiones escaneadas.`n        // Ninguna autorización queda implícita.
-        Assert.Equal(31, controllers.Length);
-        Assert.Equal(121, actions); // F660 supplier registration plus main SKU endpoints, both retained.
-        Assert.Equal(122, routes); // Includes F660 POST /api/proveedores and main product aliases.
+        // F401: +1 controlador de códigos de barras con 2 GET Admin/Vendedor.
+        // F399: +1 controlador Admin-only con 8 endpoints de sesiones escaneadas.
+        // F666: +1 acción/ruta Admin-only para conciliar una orden por clave idempotente.
+        // LOGIMKT: +2 controladores y 8 rutas (Comprador/Admin y Admin-only).
+        // Ninguna autorización queda implícita.
+        Assert.Equal(33, controllers.Length);
+        Assert.Equal(130, actions);
+        Assert.Equal(131, routes);
     }
 
     [Theory]

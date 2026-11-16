@@ -531,6 +531,83 @@ namespace MarketplaceERP.Finance.Migrations
                     b.ToTable("liquidaciones", "finance");
                 });
 
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.MarketplaceOrderMetadata", b =>
+                {
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Company")
+                        .HasMaxLength(250)
+                        .HasColumnType("character varying(250)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("CustomerEmail")
+                        .IsRequired()
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)");
+
+                    b.Property<string>("CustomerName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("CustomerPhone")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("ExternalOrderCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ExternalReturnCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("PaymentStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RequestedPaymentMethod")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ReturnReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("ReturnRequestedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReturnRmaIdsJson")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("ReturnStatus")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("TaxId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.HasKey("OrderId");
+
+                    b.HasIndex("ExternalOrderCode")
+                        .IsUnique();
+
+                    b.HasIndex("ExternalReturnCode")
+                        .IsUnique();
+
+                    b.ToTable("marketplace_order_metadata", "finance");
+                });
+
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.MatchTridireccional", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1140,6 +1217,17 @@ namespace MarketplaceERP.Finance.Migrations
                         .IsRequired();
 
                     b.Navigation("SplitPago");
+                });
+
+            modelBuilder.Entity("MarketplaceERP.Finance.Entities.MarketplaceOrderMetadata", b =>
+                {
+                    b.HasOne("MarketplaceERP.Finance.Entities.Orden", "Order")
+                        .WithOne()
+                        .HasForeignKey("MarketplaceERP.Finance.Entities.MarketplaceOrderMetadata", "OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Order");
                 });
 
             modelBuilder.Entity("MarketplaceERP.Finance.Entities.MatchTridireccional", b =>

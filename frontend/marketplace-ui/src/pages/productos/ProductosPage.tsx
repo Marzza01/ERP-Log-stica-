@@ -172,6 +172,18 @@ export default function ProductosPage() {
     validacionSku.estado === 'disponible';
   const estadoSkuActual = validacionSku?.sku === skuActual && validacionSku?.editingId === editingId
     ? validacionSku.estado : 'verificando';
+  const vendedorAltaValido = !!opcionesAlta?.vendedores.some(v => v.id === form.vendedorId);
+  const categoriaAltaValida = !!opcionesAlta?.categorias.some(c => c.id === form.categoriaId);
+  const puedeGuardar = !saving && skuDisponibleConfirmado &&
+    (!!editingId || (vendedorAltaValido && categoriaAltaValida));
+  const motivoBloqueo = !skuActual ? 'Ingresa el código SKU.' :
+    estadoSkuActual === 'ocupado' ? 'El SKU ya está registrado.' :
+    estadoSkuActual === 'error' ? 'No se pudo verificar el SKU; revisa la conexión.' :
+    !skuDisponibleConfirmado ? 'Verificando la disponibilidad del SKU...' :
+    !editingId && !opcionesAlta ? 'No se han cargado las referencias de Core.' :
+    !editingId && !vendedorAltaValido ? 'Selecciona un vendedor activo.' :
+    !editingId && !opcionesAlta?.categorias.length ? 'No hay categorías registradas en Core. Solicita su configuración.' :
+    !editingId && !categoriaAltaValida ? 'Selecciona una categoría.' : '';
 
   const totalDisponibles = productos.reduce((acc, p) => acc + (p.stock?.cantidadDisponible ?? 0), 0);
   const totalReservados = productos.reduce((acc, p) => acc + (p.stock?.cantidadReservada ?? 0), 0);
@@ -186,7 +198,7 @@ export default function ProductosPage() {
       sku: '',
       nombre: '',
       descripcion: '',
-      categoriaNombre: 'Tecnología',
+      categoriaNombre: '',
       subcategoria: 'General',
       precioB2C: 0,
       precioB2B: 0,
@@ -646,30 +658,15 @@ export default function ProductosPage() {
                 )}
                 {!opcionesAlta && !errorOpciones && <p>Verificando vendedores y categorías reales...</p>}
                 {opcionesAlta && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                    <label>
-                      Vendedor activo
-                      <select required value={form.vendedorId ?? ''}
-                        onChange={e => setForm(f => ({ ...f, vendedorId: e.target.value }))}
-                        style={{ display: 'block', width: '100%' }}>
-                        <option value="">Seleccionar vendedor</option>
-                        {opcionesAlta.vendedores.map(v => <option key={v.id} value={v.id}>{v.nombre}</option>)}
-                      </select>
-                    </label>
-                    <label>
-                      Categoría de Core
-                      <select required value={form.categoriaId ?? ''}
-                        onChange={e => {
-                          const categoria = opcionesAlta.categorias.find(c => c.id === e.target.value);
-                          setForm(f => ({ ...f, categoriaId: e.target.value,
-                            categoriaNombre: categoria?.nombre ?? '' }));
-                        }}
-                        style={{ display: 'block', width: '100%' }}>
-                        <option value="">Seleccionar categoría</option>
-                        {opcionesAlta.categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                      </select>
-                    </label>
-                  </div>
+                  <label>
+                    Vendedor activo
+                    <select required value={form.vendedorId ?? ''}
+                      onChange={e => setForm(f => ({ ...f, vendedorId: e.target.value }))}
+                      style={{ display: 'block', width: '100%' }}>
+                      <option value="">Seleccionar vendedor</option>
+                      {opcionesAlta.vendedores.map(v => <option key={v.id} value={v.id}>{v.nombre}</option>)}
+                    </select>
+                  </label>
                 )}
               </div>
             )}
@@ -732,21 +729,42 @@ export default function ProductosPage() {
                 <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
                   Categoría
                 </label>
-                <select
-                  value={form.categoriaNombre}
-                  disabled={!editingId || !opcionesAlta}
-                  onChange={e => setForm(f => ({ ...f, categoriaNombre: e.target.value,
-                    categoriaId: opcionesAlta?.categorias.find(c => c.nombre === e.target.value)?.id ?? f.categoriaId }))}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
-                >
-                  {(!editingId || !opcionesAlta?.categorias.some(c => c.nombre === form.categoriaNombre)) && (
-                    <option value={form.categoriaNombre}>
-                      {editingId ? `${form.categoriaNombre} (valor histórico)` :
-                        form.categoriaId ? form.categoriaNombre : 'Selecciona la categoría de Core arriba'}
-                    </option>
-                  )}
-                  {editingId && opcionesAlta?.categorias.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-                </select>
+                {editingId ? (
+                  <select
+                    value={form.categoriaNombre}
+                    disabled={!opcionesAlta}
+                    onChange={e => setForm(f => ({ ...f, categoriaNombre: e.target.value,
+                      categoriaId: opcionesAlta?.categorias.find(c => c.nombre === e.target.value)?.id ?? f.categoriaId }))}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                  >
+                    {!opcionesAlta?.categorias.some(c => c.nombre === form.categoriaNombre) && (
+                      <option value={form.categoriaNombre}>{form.categoriaNombre} (valor histórico)</option>
+                    )}
+                    {opcionesAlta?.categorias.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+                  </select>
+                ) : (
+                  <>
+                    <select
+                      required
+                      value={form.categoriaId ?? ''}
+                      disabled={!opcionesAlta || opcionesAlta.categorias.length === 0}
+                      onChange={e => {
+                        const categoria = opcionesAlta?.categorias.find(c => c.id === e.target.value);
+                        setForm(f => ({ ...f, categoriaId: e.target.value,
+                          categoriaNombre: categoria?.nombre ?? '' }));
+                      }}
+                      style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', boxSizing: 'border-box' }}
+                    >
+                      <option value="">Seleccionar categoría</option>
+                      {opcionesAlta?.categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                    {opcionesAlta && opcionesAlta.categorias.length === 0 && (
+                      <p role="alert" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>
+                        No hay categorías registradas en Core. No es posible crear un producto hasta configurarlas.
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
 
               <div>
@@ -782,6 +800,11 @@ export default function ProductosPage() {
               />
             </div>
 
+            {!saving && !puedeGuardar && motivoBloqueo && (
+              <p role="status" aria-live="polite" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: 0 }}>
+                {motivoBloqueo}
+              </p>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
               <button
                 type="button"
@@ -799,17 +822,16 @@ export default function ProductosPage() {
               </button>
               <button
                 type="submit"
-                disabled={saving || !skuDisponibleConfirmado || (!editingId && (!opcionesAlta ||
-                  !opcionesAlta.vendedores.some(v => v.id === form.vendedorId) ||
-                  !opcionesAlta.categorias.some(c => c.id === form.categoriaId)))}
+                disabled={!puedeGuardar}
                 style={{
                   padding: '0.5rem 1.25rem',
                   borderRadius: '6px',
                   border: 'none',
-                  background: 'var(--accent)',
+                  background: puedeGuardar ? 'var(--accent)' : 'var(--text-muted)',
                   color: '#fff',
                   fontWeight: 600,
-                  cursor: saving || !skuDisponibleConfirmado ? 'not-allowed' : 'pointer',
+                  opacity: puedeGuardar ? 1 : 0.7,
+                  cursor: puedeGuardar ? 'pointer' : 'not-allowed',
                 }}
               >
                 {saving ? 'Guardando...' : (editingId ? 'Guardar Cambios' : 'Registrar SKU')}

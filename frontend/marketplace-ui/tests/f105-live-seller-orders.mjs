@@ -168,6 +168,24 @@ try {
   assert.equal(orders.length,3);
   assert.equal(orders.filter(o=>o.owner===0).length,2);
   const [a1,a2,b1]=orders;
+  // F665: real browser + real Admin JWT + real isolated PostgreSQL.
+  // Load evaluation options and complete the modal without submitting a PO.
+  await page.goto(origin + '/ordenes');
+  const newOrder = page.getByRole('button', { name: '+ Nueva Orden' });
+  await newOrder.waitFor({ timeout: 25000 });
+  await page.waitForFunction(() => {
+    const btn = [...document.querySelectorAll('button')]
+      .find(b => b.textContent?.trim() === '+ Nueva Orden');
+    return Boolean(btn && !btn.disabled);
+  }, null, { timeout: 20000 });
+  await newOrder.click();
+  const omsModal = page.locator('.modal');
+  await omsModal.getByRole('combobox', { name: 'Comprador' }).selectOption({ index: 1 });
+  await omsModal.getByRole('combobox', { name: 'Vendedor' }).selectOption({ index: 1 });
+  await omsModal.getByRole('combobox', { name: 'Producto 1' }).selectOption({ index: 1 });
+  assert.equal(await omsModal.getByRole('button', { name: 'Crear y reservar' }).isEnabled(), true);
+  await omsModal.locator('.modal-header .icon-btn').click();
+  record('F665_ADMIN_OMS_OPTIONS_AND_NEW_ORDER_FORM_READONLY');
   const global=await page.evaluate(async()=>{
     const token=localStorage.getItem('erp_token');
     const res=await fetch('/api/ordenes',{headers:{Authorization:'Bearer '+token}});

@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+/*
+  Identidad LOGIMKT: la estética de una etiqueta de envío.
+  Azul cuscatleco para la marca, papel frío como fondo, kraft (cartón) para etiquetas
+  y amarillo de señalización logística para la acción principal.
+*/
+@theme inline {
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+
+  --color-azul: #0b3d91;
+  --color-azul-oscuro: #072a66;
+  --color-azul-claro: #e6edf8;
+  --color-tinta: #15223b;
+  --color-gris: #5b6577;
+  --color-linea: #d6dbe4;
+  --color-papel: #f3f5f8;
+  --color-kraft: #d9b68c;
+  --color-kraft-claro: #f1e4d2;
+  --color-kraft-oscuro: #8a6438;
+  --color-senal: #ffc233;
+  --color-senal-oscuro: #f0ad00;
+  --color-ok: #1f8a70;
+  --color-alerta: #c2410c;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1;
+}
+
+/* Titulares anchos: la tipografía de las cajas y rótulos de bodega. */
+.display {
+  font-stretch: 125%;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 0.98;
+}
+
+.ancho {
+  font-stretch: 112%;
+}
+
+.estrecho {
+  font-stretch: 75%;
+}
+
+/* Cinta de embalaje sobre las etiquetas */
+.cinta {
+  background: repeating-linear-gradient(-45deg, #cfa678 0 10px, #d9b68c 10px 20px);
+}
+
+/* Borde perforado de etiqueta (troquel) */
+.troquel {
+  background-image: radial-gradient(circle at 6px 50%, var(--color-papel) 5px, transparent 5.5px);
+  background-size: 12px 12px;
+  background-repeat: repeat-y;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-senal-oscuro);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .etiqueta-entrada {
+    animation: etiqueta 700ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  @keyframes etiqueta {
+    from {
+      transform: translateY(-14px) rotate(-4deg);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0) rotate(-1.5deg);
+      opacity: 1;
+    }
+  }
+}
+
+/* Fondo de las imágenes de producto: color de la categoría con luz arriba y piso suave. */
+.visual {
+  background:
+    radial-gradient(60% 18% at 50% 86%, rgb(21 34 59 / 0.1), transparent 70%),
+    radial-gradient(90% 70% at 50% 30%, rgb(255 255 255 / 0.75), transparent 70%),
+    var(--tono, #eef2f7);
+}

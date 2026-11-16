@@ -1,38 +1,56 @@
 using System.Security.Claims;
 using MarketplaceERP.API.Services;
-using MarketplaceERP.Catalog.Data;
-using MarketplaceERP.Core.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace MarketplaceERP.API.Controllers;
 
 [ApiController, Authorize(Roles = "Admin"), Route("api/ordenes/evaluacion")]
 public sealed class OrdenEvaluacionController(
-    OrdenEvaluacionService orders, CoreDbContext core, CatalogDbContext catalog,
-    ILogger<OrdenEvaluacionController> logger) : ControllerBase
+    OrdenEvaluacionService orders, ILogger<OrdenEvaluacionController> logger) : ControllerBase
 {
     [HttpGet("opciones")]
     public async Task<IActionResult> Options(CancellationToken ct)
     {
         Response.Headers.CacheControl = "no-store";
-        try { orders.ValidateTarget(); }
+        try { return Ok(await orders.GetOptionsAsync(ct)); }
         catch (EvaluacionOrdenException ex) { return StatusCode(ex.StatusCode, new { mensaje = ex.Message }); }
-        return Ok(new
+    }
+
+    /// <summary>
+    /// Read-only reconciliation of a previously submitted request. The caller
+    /// must send the original payload and the same Idempotency-Key; this endpoint
+    /// never creates an order or reserves inventory.
+    /// </summary>
+    [HttpPost("resultado")]
+    public async Task<IActionResult> Result([FromBody] CrearOrdenRequest request, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var identities = User.FindAll(ClaimTypes.NameIdentifier).Select(c => c.Value).ToArray();
+        if (identities.Length == 0 || identities.Any(value =>
+                !Guid.TryParse(value, out var actorId) || actorId == Guid.Empty) ||
+            identities.Select(Guid.Parse).Distinct().Count() != 1)
+            return Unauthorized();
+
+        var keys = Request.Headers["Idempotency-Key"];
+        if (keys.Count != 1 || string.IsNullOrWhiteSpace(keys[0]))
+            return BadRequest(new { mensaje = "Idempotency-Key es obligatoria para recuperar la solicitud." });
+
+        try
         {
-            compradores = await core.Compradores.AsNoTracking().Where(b => b.EstaActivo)
-                .OrderBy(b => b.NombreCompleto).Take(100)
-                .Select(b => new { b.Id, nombre = b.NombreCompleto }).ToListAsync(ct),
-            vendedores = await core.Vendedores.AsNoTracking().Where(s => s.EstaActivo)
-                .OrderBy(s => s.NombreEmpresa).Take(100)
-                .Select(s => new { s.Id, nombre = s.NombreEmpresa }).ToListAsync(ct),
-            productos = await catalog.Productos.AsNoTracking()
-                .Where(p => p.EstaPublicado && p.EstadoProducto == "Activo" && p.Moneda == "USD")
-                .OrderBy(p => p.Sku).Take(500)
-                .Select(p => new { p.Id, p.VendedorId, p.Sku, p.Nombre, p.PrecioB2C, p.PrecioB2B })
-                .ToListAsync(ct)
-        });
+            var result = await orders.GetStatusAsync(request, Guid.Parse(identities[0]), keys[0]!, ct);
+            if (result is null)
+                return NotFound(new
+                {
+                    codigo = "SOLICITUD_NO_REGISTRADA",
+                    mensaje = "Todavía no existe una orden confirmada para esta solicitud."
+                });
+            return Ok(result);
+        }
+        catch (EvaluacionOrdenException ex)
+        {
+            return StatusCode(ex.StatusCode, new { mensaje = ex.Message });
+        }
     }
 
     [HttpPost("{id:guid}/cancelar")]

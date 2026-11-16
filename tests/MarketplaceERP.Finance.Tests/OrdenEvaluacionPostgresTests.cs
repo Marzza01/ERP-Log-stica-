@@ -68,7 +68,31 @@ public sealed class OrdenEvaluacionPostgresTests
                     PrecioB2C = 25m, PrecioB2B = 250m, VendedorId = seller, CategoriaId = Guid.NewGuid() });
                 catalog.StockFisico.Add(new StockFisico { Id = Guid.NewGuid(), ProductoId = id, CantidadTotal = 20 });
             }
+            // An active catalog record with no WMS stock must NOT be offered
+            // as an orderable product in the Admin form.
+            catalog.Productos.Add(new Producto {
+                Id = Guid.NewGuid(), Sku = "F665-OUT-OF-STOCK", Nombre = "Sin existencias",
+                PrecioB2C = 10m, PrecioB2B = 100m,
+                VendedorId = seller, CategoriaId = Guid.NewGuid()
+            });
             await catalog.SaveChangesAsync();
+        }
+        // GET /api/ordenes/evaluacion/opciones must return only live,
+        // in-stock master data under the same bounded staging QA gate.
+        using (var check = provider.CreateScope())
+        {
+            var evaluation = check.ServiceProvider.GetRequiredService<OrdenEvaluacionService>();
+            var options = await evaluation.GetOptionsAsync(default);
+            var foundBuyer = Assert.Single(options.Compradores);
+            Assert.Equal(buyer, foundBuyer.Id);
+            var foundSeller = Assert.Single(options.Vendedores);
+            Assert.Equal(seller, foundSeller.Id);
+            Assert.Equal(products, options.Productos.Select(p => p.Id).OrderBy(x => x).ToArray());
+            Assert.All(options.Productos, p => {
+                Assert.Equal(seller, p.VendedorId);
+                Assert.Equal(25m, p.PrecioB2C);
+                Assert.Equal(250m, p.PrecioB2B);
+            });
         }
         var actor = Guid.NewGuid();
         CrearOrdenRequest Request(int quantity = 1, TipoCliente channel = TipoCliente.B2C) => new(
@@ -85,12 +109,26 @@ public sealed class OrdenEvaluacionPostgresTests
             using var scope = provider.CreateScope();
             await scope.ServiceProvider.GetRequiredService<OrdenEvaluacionService>().CancelAsync(id, default);
         }
+        async Task<OrdenEvaluacionResultado?> Lookup(CrearOrdenRequest request, string key, Guid? lookupActor = null)
+        {
+            using var scope = provider.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<OrdenEvaluacionService>()
+                .GetStatusAsync(request, lookupActor ?? actor, key, default);
+        }
 
         var firstKey = Guid.NewGuid().ToString();
         var first = await Create(Request(), firstKey);
         Assert.Equal(61.50m, first.MontoTotal); Assert.All(first.Items, i => Assert.Equal(25m, i.PrecioUnitario));
         Assert.Equal(first.Id, (await Create(Request(), firstKey)).Id);
+        var recoveredFirst = await Lookup(Request(), firstKey);
+        Assert.NotNull(recoveredFirst);
+        Assert.Equal(first.Id, recoveredFirst.Id);
+        Assert.Equal(first.NumeroOrden, recoveredFirst.NumeroOrden);
+        Assert.Equal("Pendiente", recoveredFirst.Estado);
+        Assert.Null(await Lookup(Request(), Guid.NewGuid().ToString()));
+        Assert.Null(await Lookup(Request(), firstKey, Guid.NewGuid()));
         Assert.Equal(409, (await Assert.ThrowsAsync<EvaluacionOrdenException>(() => Create(Request(2), firstKey))).StatusCode);
+        Assert.Equal(409, (await Assert.ThrowsAsync<EvaluacionOrdenException>(() => Lookup(Request(2), firstKey))).StatusCode);
         var sameKey = Guid.NewGuid().ToString();
         var same = await Task.WhenAll(Create(Request(), sameKey), Create(Request(), sameKey));
         Assert.Equal(same[0].Id, same[1].Id);
@@ -125,6 +163,10 @@ public sealed class OrdenEvaluacionPostgresTests
         // Compensación conjunta e idempotente; repetir creación no reactiva una cancelada.
         await Cancel(first.Id); await Cancel(first.Id);
         Assert.Equal(EstadoOrden.Cancelada, (await Create(Request(), firstKey)).Estado);
+        var recoveredCancelled = await Lookup(Request(), firstKey);
+        Assert.NotNull(recoveredCancelled);
+        Assert.Equal(first.Id, recoveredCancelled.Id);
+        Assert.Equal("Cancelada", recoveredCancelled.Estado);
         await Cancel(same[0].Id); await Cancel(b2b.Id);
         // Dos órdenes compiten por las últimas unidades; solo una puede ganar.
         async Task<Orden?> Compete() { try { return await Create(Request(20), Guid.NewGuid().ToString()); }
@@ -144,7 +186,20 @@ public sealed class OrdenEvaluacionPostgresTests
         config["Payments:Provider"] = "Real";
         Assert.Equal(503, (await Assert.ThrowsAsync<EvaluacionOrdenException>(() =>
             Create(Request(), Guid.NewGuid().ToString()))).StatusCode);
+        using (var denied = provider.CreateScope())
+        {
+            var service = denied.ServiceProvider.GetRequiredService<OrdenEvaluacionService>();
+            Assert.Equal(503, (await Assert.ThrowsAsync<EvaluacionOrdenException>(() =>
+                service.GetOptionsAsync(default))).StatusCode);
+        }
         config["Payments:Provider"] = "Disabled";
+        // Read-only reconciliation remains available after the temporary write window expires.
+        config["Orders:StagingEvaluation:ExpiresAtUtc"] = DateTimeOffset.UtcNow.AddMinutes(-1).ToString("O");
+        var afterExpiry = await Lookup(Request(), firstKey);
+        Assert.NotNull(afterExpiry);
+        Assert.Equal("Cancelada", afterExpiry.Estado);
+        Assert.Equal(503, (await Assert.ThrowsAsync<EvaluacionOrdenException>(() =>
+            Create(Request(), Guid.NewGuid().ToString()))).StatusCode);
         env.SetupGet(e => e.EnvironmentName).Returns("Production");
         Assert.Equal(503, (await Assert.ThrowsAsync<EvaluacionOrdenException>(() =>
             Create(Request(), Guid.NewGuid().ToString()))).StatusCode);
