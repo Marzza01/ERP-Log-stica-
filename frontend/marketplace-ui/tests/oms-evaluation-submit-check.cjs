@@ -60,9 +60,10 @@ test('OMS: un rechazo HTTP no se interpreta como creación confirmada', async ()
 });
 
 test('OMS: el formulario no accede a result.id después de un 2xx y limpia el pendiente', () => {
-  assert.match(componentSource, /await apiClient\\.postVoid\\('\\/api\\/ordenes'/);
-  assert.doesNotMatch(componentSource, /result\\.id/);
-  assert.match(componentSource, /localStorage\\.removeItem\\(storageKey\\);\\s*setPending\\(null\\);\\s*setOpen\\(false\\);/);
+  assert.ok(componentSource.includes("await apiClient.postVoid('/api/ordenes'"));
+  assert.ok(!componentSource.includes('result.id'));
+  assert.ok(componentSource.includes('localStorage.removeItem(storageKey);'));
+  assert.ok(componentSource.includes('setPending(null); setOpen(false); onCreated();'));
 });
 
 console.log('OMS evaluación: pruebas de confirmación HTTP, idempotencia y desbloqueo aprobadas.');
