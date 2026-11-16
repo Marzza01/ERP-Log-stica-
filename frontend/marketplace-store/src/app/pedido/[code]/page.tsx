@@ -44,9 +44,12 @@ export default async function PedidoPage({ params, searchParams }: PageProps<"/p
               </p>
             </>
           )}
-          {sp.parcial && (
-            <p className="mt-2 text-sm text-amber-800">Algunos productos no tenían stock suficiente y se surtieron parcialmente.</p>
-          )}
+        </div>
+      )}
+      {!sp.nuevo && o.status === "Pendiente ERP" && (
+        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <strong>Pedido pendiente de confirmación del ERP.</strong> La disponibilidad y la reserva de inventario siguen en validación.
+          No se ha confirmado la compra ni se ha realizado un cobro. Conserva este código y vuelve a consultar el seguimiento.
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
